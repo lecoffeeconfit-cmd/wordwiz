@@ -1,11 +1,21 @@
 {
   "expo": {
     "name": "WordWiz",
-    "slug": "WordWiz",
+    "slug": "wordwiz",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
+    "backgroundColor": "#F7FAFC",
+    "plugins": [
+      [
+        "expo-notifications",
+        {
+          "color": "#58CC62",
+          "defaultChannel": "daily-review"
+        }
+      ]
+    ],
     "ios": {
       "supportsTablet": true
     },
