@@ -1,14 +1,12 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Platform, Text, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BottomTabs } from '../components';
 import {
   ANALYTICS_KEY,
-  AUTH_SESSION_KEY,
-  AUTH_USERS_KEY,
   DEFAULT_REMINDER,
   EMPTY_ANALYTICS,
   QUIZ_KEY,
@@ -27,16 +25,27 @@ import {
   WordsScreen,
 } from '../screens';
 import {
-  createStoredUser,
   normalizeEmail,
-  scrubStoredUsers,
-  toSafeUser,
+  sendSupabasePasswordReset,
+  signInWithOAuthProvider,
+  signInWithSupabase,
+  signOutWithSupabase,
+  signUpWithSupabase,
+  supabase,
+  toAuthUser,
   validateEmail,
   validateName,
   validatePassword,
-  verifyStoredPassword,
   cancelReminder,
+  deleteCloudWord,
+  fetchUserLearningData,
+  saveCloudCardReview,
+  saveCloudQuizAttempt,
+  saveCloudReminderSettings,
+  saveCloudWord,
+  saveCloudWordReviews,
   scheduleDailyReminder,
+  seedUserLearningData,
 } from '../services';
 import { styles } from '../styles';
 import type {
@@ -48,11 +57,11 @@ import type {
   QuizProgress,
   ReminderSettings,
   SortMode,
-  StoredUser,
   Tab,
   Word,
   WordDetails,
 } from '../types';
+import type { Provider } from '@supabase/supabase-js';
 import { getDayKey } from '../utils';
 
 export default function AppContent() {
@@ -62,46 +71,30 @@ export default function AppContent() {
   const [sortMode, setSortMode] = useState<SortMode>('alphabetical');
   const [quizProgress, setQuizProgress] = useState<QuizProgress | null>(null);
   const [analytics, setAnalytics] = useState<AnalyticsData>(EMPTY_ANALYTICS);
-  const [authUsers, setAuthUsers] = useState<StoredUser[]>([]);
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
   const [reminderSettings, setReminderSettings] =
     useState<ReminderSettings>(DEFAULT_REMINDER);
   const [isReady, setIsReady] = useState(false);
   const [showAddWord, setShowAddWord] = useState(false);
   const [legalPage, setLegalPage] = useState<LegalPage | null>(null);
+  const cloudHydratedUserId = useRef<string | null>(null);
+  const cloudWarningShown = useRef(false);
 
   useEffect(() => {
     async function loadData() {
       try {
-        const [
-          savedWords,
-          savedQuiz,
-          savedAnalytics,
-          savedReminder,
-          savedUsers,
-          savedSession,
-        ] =
+        const [savedWords, savedQuiz, savedAnalytics, savedReminder, sessionResult] =
           await Promise.all([
             AsyncStorage.getItem(WORDS_KEY),
             AsyncStorage.getItem(QUIZ_KEY),
             AsyncStorage.getItem(ANALYTICS_KEY),
             AsyncStorage.getItem(REMINDER_KEY),
-            AsyncStorage.getItem(AUTH_USERS_KEY),
-            AsyncStorage.getItem(AUTH_SESSION_KEY),
+            supabase.auth.getSession(),
           ]);
 
-        const parsedUsers: StoredUser[] = savedUsers
-          ? JSON.parse(savedUsers)
-          : [];
-        const parsedSession: AuthUser | null = savedSession
-          ? JSON.parse(savedSession)
-          : null;
-
-        setAuthUsers(scrubStoredUsers(parsedUsers));
         setCurrentUser(
-          parsedSession &&
-            parsedUsers.some((user) => user.id === parsedSession.id)
-            ? parsedSession
+          sessionResult.data.session?.user
+            ? toAuthUser(sessionResult.data.session.user)
             : null,
         );
         setWords(savedWords ? JSON.parse(savedWords) : STARTER_WORDS);
@@ -122,25 +115,79 @@ export default function AppContent() {
     }
 
     loadData();
+
+    const { data: authListener } = supabase.auth.onAuthStateChange(
+      (_event, session) => {
+        setCurrentUser(session?.user ? toAuthUser(session.user) : null);
+      },
+    );
+
+    return () => {
+      authListener.subscription.unsubscribe();
+    };
   }, []);
 
   useEffect(() => {
-    if (isReady) {
-      AsyncStorage.setItem(AUTH_USERS_KEY, JSON.stringify(authUsers));
-    }
-  }, [authUsers, isReady]);
-
-  useEffect(() => {
-    if (!isReady) {
+    if (!isReady || !currentUser) {
       return;
     }
 
-    if (currentUser) {
-      AsyncStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(currentUser));
-    } else {
-      AsyncStorage.removeItem(AUTH_SESSION_KEY);
+    if (cloudHydratedUserId.current === currentUser.id) {
+      return;
     }
-  }, [currentUser, isReady]);
+
+    const userId = currentUser.id;
+    let isActive = true;
+
+    async function hydrateCloudData() {
+      try {
+        const cloudData = await fetchUserLearningData(userId);
+
+        if (!isActive) {
+          return;
+        }
+
+        if (cloudData.words.length > 0) {
+          setWords(cloudData.words);
+          setQuizProgress(cloudData.quizProgress);
+          setAnalytics(cloudData.analytics);
+          if (cloudData.reminderSettings) {
+            setReminderSettings((currentSettings) => ({
+              ...currentSettings,
+              ...cloudData.reminderSettings,
+            }));
+          }
+        } else {
+          const seededWords = await seedUserLearningData({
+            userId,
+            words,
+            analytics,
+            reminderSettings,
+          });
+
+          if (isActive && seededWords.length > 0) {
+            setWords(seededWords);
+          }
+        }
+
+        cloudHydratedUserId.current = userId;
+      } catch {
+        if (!cloudWarningShown.current) {
+          cloudWarningShown.current = true;
+          Alert.alert(
+            'Cloud sync needs setup',
+            'WordWiz is still working locally. To enable production cloud data, run supabase/wordwiz_schema.sql in Supabase so the words, quiz, review, and reminder tables exist with RLS.',
+          );
+        }
+      }
+    }
+
+    hydrateCloudData();
+
+    return () => {
+      isActive = false;
+    };
+  }, [currentUser?.id, isReady]);
 
   useEffect(() => {
     if (isReady) {
@@ -181,9 +228,10 @@ export default function AppContent() {
 
   async function login(email: string, password: string) {
     const cleanEmail = normalizeEmail(email);
-    const user = authUsers.find((item) => item.email === cleanEmail);
+    const emailError = validateEmail(cleanEmail);
+    const passwordError = validatePassword(password);
 
-    if (!user) {
+    if (emailError || passwordError) {
       Alert.alert(
         'Could not log in',
         'Check your email and password.',
@@ -191,31 +239,19 @@ export default function AppContent() {
       return false;
     }
 
-    const result = await verifyStoredPassword(user, password);
-
-    if (!result.valid) {
+    try {
+      const user = await signInWithSupabase(cleanEmail, password);
+      if (user) {
+        setCurrentUser(user);
+      }
+      return Boolean(user);
+    } catch {
       Alert.alert(
         'Could not log in',
-        'Check your email and password.',
+        'Check your email and password. If email confirmation is on, confirm your email first.',
       );
       return false;
     }
-
-    const migratedUser = result.migratedUser;
-    if (migratedUser) {
-      setAuthUsers((currentUsers) =>
-        scrubStoredUsers(
-          currentUsers.map((item) =>
-            item.id === migratedUser.id ? migratedUser : item,
-          ),
-        ),
-      );
-      setCurrentUser(toSafeUser(migratedUser));
-      return true;
-    }
-
-    setCurrentUser(toSafeUser(user));
-    return true;
   }
 
   async function createAccount(name: string, email: string, password: string) {
@@ -230,40 +266,80 @@ export default function AppContent() {
       return false;
     }
 
-    if (
-      authUsers.some((user) => user.email.toLowerCase() === cleanEmail)
-    ) {
+    try {
+      const user = await signUpWithSupabase({
+        name,
+        email: cleanEmail,
+        password,
+      });
+
+      if (user) {
+        setCurrentUser(user);
+      } else {
+        Alert.alert(
+          'Check your email',
+          'Your account was created. Confirm your email before logging in.',
+        );
+      }
+      return true;
+    } catch {
       Alert.alert(
         'Could not create account',
         'Try logging in or use a different email.',
       );
       return false;
     }
-
-    const newUser = await createStoredUser({
-      name,
-      email: cleanEmail,
-      password,
-    });
-
-    setAuthUsers((currentUsers) => [newUser, ...currentUsers]);
-    setCurrentUser(toSafeUser(newUser));
-    return true;
   }
 
-  function forgotPassword(email: string) {
-    Alert.alert(
-      'Reset help',
-      'If a local WordWiz account exists for that email, use the password saved on this device or create a new local profile. Production reset emails need a backend auth service.',
-    );
+  async function forgotPassword(email: string) {
+    const emailError = validateEmail(email);
+
+    if (emailError) {
+      Alert.alert('Check your email', emailError);
+      return;
+    }
+
+    try {
+      await sendSupabasePasswordReset(email);
+    } catch {
+      // Keep this response generic so the UI does not reveal whether an email exists.
+    } finally {
+      Alert.alert(
+        'Reset email requested',
+        'If an account exists for that email, Supabase will send password reset instructions.',
+      );
+    }
   }
 
-  function logout() {
-    setCurrentUser(null);
-    setActiveTab('home');
+  async function loginWithOAuth(provider: Provider, label: string) {
+    try {
+      const user = await signInWithOAuthProvider(provider);
+      if (user) {
+        setCurrentUser(user);
+      }
+      return true;
+    } catch {
+      Alert.alert(
+        `${label} sign-in unavailable`,
+        `Make sure the ${label} provider is enabled in Supabase and try again.`,
+      );
+      return false;
+    }
   }
 
-  function addWord(
+  async function logout() {
+    try {
+      await signOutWithSupabase();
+    } catch {
+      Alert.alert('Could not log out', 'Please try again.');
+    } finally {
+      setCurrentUser(null);
+      cloudHydratedUserId.current = null;
+      setActiveTab('home');
+    }
+  }
+
+  async function addWord(
     term: string,
     definition: string,
     example: string,
@@ -274,7 +350,7 @@ export default function AppContent() {
       (word) => word.term.toLowerCase() === cleanTerm.toLowerCase(),
     );
     const wordData: Word = {
-      id: existingWord?.id ?? `${Date.now()}`,
+      id: existingWord?.id ?? createUuid(),
       term: cleanTerm,
       definition: definition.trim(),
       simpleDefinition: details.simpleDefinition?.trim(),
@@ -289,11 +365,22 @@ export default function AppContent() {
       createdAt: existingWord?.createdAt ?? new Date().toISOString(),
       reviews: existingWord?.reviews ?? 0,
     };
+    let savedWord = wordData;
+
+    if (currentUser && cloudHydratedUserId.current === currentUser.id) {
+      try {
+        savedWord = await saveCloudWord(currentUser.id, wordData);
+      } catch {
+        showCloudSaveWarning();
+      }
+    }
 
     setWords((currentWords) =>
       existingWord
-        ? currentWords.map((word) => (word.id === existingWord.id ? wordData : word))
-        : [wordData, ...currentWords],
+        ? currentWords.map((word) =>
+            word.id === existingWord.id ? savedWord : word,
+          )
+        : [savedWord, ...currentWords],
     );
     setShowAddWord(false);
     setActiveTab('words');
@@ -303,6 +390,12 @@ export default function AppContent() {
     setWords((currentWords) =>
       currentWords.filter((word) => word.id !== wordToRemove.id),
     );
+
+    if (currentUser && cloudHydratedUserId.current === currentUser.id) {
+      deleteCloudWord(currentUser.id, wordToRemove.id).catch(() => {
+        showCloudSaveWarning();
+      });
+    }
   }
 
   function recordCardReview(
@@ -311,6 +404,15 @@ export default function AppContent() {
     durationSeconds: number,
   ) {
     const studiedAt = new Date().toISOString();
+    const reviewedWord = words.find((word) => word.id === wordId);
+    const event = {
+      id: createUuid(),
+      wordId,
+      date: getDayKey(),
+      studiedAt,
+      remembered,
+      durationSeconds,
+    };
 
     setWords((currentWords) =>
       currentWords.map((word) =>
@@ -320,17 +422,25 @@ export default function AppContent() {
     setAnalytics((currentAnalytics) => ({
       ...currentAnalytics,
       cardHistory: [
-        {
-          id: `${Date.now()}`,
-          wordId,
-          date: getDayKey(),
-          studiedAt,
-          remembered,
-          durationSeconds,
-        },
+        event,
         ...currentAnalytics.cardHistory,
       ].slice(0, 80),
     }));
+
+    if (currentUser && cloudHydratedUserId.current === currentUser.id) {
+      Promise.all([
+        saveCloudCardReview(currentUser.id, event),
+        reviewedWord
+          ? saveCloudWordReviews(
+              currentUser.id,
+              reviewedWord.id,
+              reviewedWord.reviews + 1,
+            )
+          : Promise.resolve(),
+      ]).catch(() => {
+        showCloudSaveWarning();
+      });
+    }
   }
 
   async function completeQuiz(
@@ -346,7 +456,7 @@ export default function AppContent() {
     };
     const attempt: QuizAttempt = {
       ...progress,
-      id: `${Date.now()}`,
+      id: createUuid(),
       completedAt: new Date().toISOString(),
       durationSeconds,
       answers,
@@ -363,6 +473,22 @@ export default function AppContent() {
       ...currentAnalytics,
       quizHistory: [attempt, ...currentAnalytics.quizHistory].slice(0, 30),
     }));
+
+    if (currentUser && cloudHydratedUserId.current === currentUser.id) {
+      const reviewUpdates = answers
+        .map((answer) => words.find((word) => word.id === answer.wordId))
+        .filter((word): word is Word => Boolean(word))
+        .map((word) =>
+          saveCloudWordReviews(currentUser.id, word.id, word.reviews + 1),
+        );
+
+      Promise.all([
+        saveCloudQuizAttempt(currentUser.id, attempt),
+        ...reviewUpdates,
+      ]).catch(() => {
+        showCloudSaveWarning();
+      });
+    }
   }
 
   async function updateReminder(nextSettings: ReminderSettings) {
@@ -370,11 +496,13 @@ export default function AppContent() {
       if (!nextSettings.enabled) {
         await cancelReminder(reminderSettings);
         setReminderSettings({ ...nextSettings, notificationId: undefined });
+        saveReminderToCloud({ ...nextSettings, notificationId: undefined });
         return;
       }
 
       if (Platform.OS === 'web') {
         setReminderSettings(nextSettings);
+        saveReminderToCloud(nextSettings);
         Alert.alert(
           'Reminder saved',
           'Daily device notifications are available on iOS and Android.',
@@ -384,13 +512,35 @@ export default function AppContent() {
 
       const scheduledSettings = await scheduleDailyReminder(nextSettings);
       setReminderSettings(scheduledSettings);
+      saveReminderToCloud(scheduledSettings);
     } catch {
       setReminderSettings(nextSettings);
+      saveReminderToCloud(nextSettings);
       Alert.alert(
         'Reminder saved',
         'WordWiz saved the time, but could not schedule a device notification yet.',
       );
     }
+  }
+
+  function saveReminderToCloud(settings: ReminderSettings) {
+    if (currentUser && cloudHydratedUserId.current === currentUser.id) {
+      saveCloudReminderSettings(currentUser.id, settings).catch(() => {
+        showCloudSaveWarning();
+      });
+    }
+  }
+
+  function showCloudSaveWarning() {
+    if (cloudWarningShown.current) {
+      return;
+    }
+
+    cloudWarningShown.current = true;
+    Alert.alert(
+      'Saved locally',
+      'WordWiz kept your change on this device, but cloud sync could not finish yet. Check that the Supabase schema has been run with RLS enabled.',
+    );
   }
 
   function renderScreen() {
@@ -470,6 +620,7 @@ export default function AppContent() {
           onLogin={login}
           onCreateAccount={createAccount}
           onForgotPassword={forgotPassword}
+          onOAuthLogin={loginWithOAuth}
         />
       ) : (
         <>
@@ -490,4 +641,18 @@ export default function AppContent() {
       <LegalModal page={legalPage} onClose={() => setLegalPage(null)} />
     </SafeAreaView>
   );
+}
+
+function createUuid() {
+  const cryptoApi = globalThis.crypto;
+
+  if (cryptoApi && 'randomUUID' in cryptoApi) {
+    return cryptoApi.randomUUID();
+  }
+
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (token) => {
+    const random = Math.floor(Math.random() * 16);
+    const value = token === 'x' ? random : (random & 0x3) | 0x8;
+    return value.toString(16);
+  });
 }

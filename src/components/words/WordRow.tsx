@@ -1,31 +1,36 @@
 import { Ionicons } from '@expo/vector-icons';
-import type { ReactNode } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { COLORS, TILE_COLORS } from '../../constants/theme';
-import type { Tab, Word } from '../../types';
+import type { Word } from '../../types';
 import { styles } from '../../styles';
+
+function getLetterColor(term: string) {
+  const firstLetter = term.trim().charAt(0).toUpperCase();
+  const alphabetIndex = Math.max(0, firstLetter.charCodeAt(0) - 65);
+
+  return TILE_COLORS[alphabetIndex % TILE_COLORS.length].accent;
+}
 
 export function WordRow({
   word,
-  index,
   onRemove,
 }: {
   word: Word;
   index: number;
   onRemove: (word: Word) => void;
 }) {
-  const tile = TILE_COLORS[index % TILE_COLORS.length];
+  const letterColor = getLetterColor(word.term);
+
   return (
     <Pressable
       onLongPress={() => onRemove(word)}
       style={({ pressed }) => [
         styles.wordRow,
-        { backgroundColor: tile.pale, borderColor: `${tile.accent}33` },
         pressed && styles.pressed,
       ]}
     >
-      <View style={[styles.letterBadge, { backgroundColor: COLORS.white }]}>
-        <Text style={[styles.letterText, { color: tile.accent }]}>
+      <View style={[styles.letterBadge, { backgroundColor: `${letterColor}18` }]}>
+        <Text style={[styles.letterText, { color: letterColor }]}>
           {word.term.charAt(0).toUpperCase()}
         </Text>
       </View>

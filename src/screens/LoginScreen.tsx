@@ -1,4 +1,4 @@
-import { Ionicons } from '@expo/vector-icons';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useState } from 'react';
 import {
   Alert,
@@ -13,6 +13,7 @@ import {
 import { COLORS } from '../constants/theme';
 import { validateEmail, validateName, validatePassword } from '../services';
 import { styles } from '../styles';
+import type { Provider } from '@supabase/supabase-js';
 
 type AuthMode = 'login' | 'create' | 'forgot';
 
@@ -20,6 +21,7 @@ export function LoginScreen({
   onLogin,
   onCreateAccount,
   onForgotPassword,
+  onOAuthLogin,
 }: {
   onLogin: (email: string, password: string) => Promise<boolean>;
   onCreateAccount: (
@@ -27,7 +29,8 @@ export function LoginScreen({
     email: string,
     password: string,
   ) => Promise<boolean>;
-  onForgotPassword: (email: string) => void;
+  onForgotPassword: (email: string) => Promise<void>;
+  onOAuthLogin: (provider: Provider, label: string) => Promise<boolean>;
 }) {
   const [mode, setMode] = useState<AuthMode>('login');
   const [name, setName] = useState('');
@@ -49,7 +52,9 @@ export function LoginScreen({
     }
 
     if (isForgotMode) {
-      onForgotPassword(email);
+      setIsSubmitting(true);
+      await onForgotPassword(email);
+      setIsSubmitting(false);
       return;
     }
 
@@ -73,6 +78,38 @@ export function LoginScreen({
       setPassword('');
     }
   }
+
+  async function continueWithProvider(provider: Provider, label: string) {
+    setIsSubmitting(true);
+    await onOAuthLogin(provider, label);
+    setIsSubmitting(false);
+  }
+
+  const providers: {
+    provider: Provider;
+    label: string;
+    logo: 'google' | 'apple' | 'microsoft';
+    background: string;
+  }[] = [
+    {
+      provider: 'google',
+      label: 'Google',
+      logo: 'google',
+      background: '#F2F7FF',
+    },
+    {
+      provider: 'apple',
+      label: 'Apple',
+      logo: 'apple',
+      background: '#F5F5FA',
+    },
+    {
+      provider: 'azure',
+      label: 'Microsoft',
+      logo: 'microsoft',
+      background: '#F2F7FF',
+    },
+  ];
 
   return (
     <KeyboardAvoidingView
@@ -109,6 +146,40 @@ export function LoginScreen({
         </View>
 
         <View style={styles.authCard}>
+          {!isForgotMode && (
+            <>
+              {providers.map((item) => (
+                <Pressable
+                  key={item.provider}
+                  onPress={() => continueWithProvider(item.provider, item.label)}
+                  disabled={isSubmitting}
+                  style={({ pressed }) => [
+                    styles.oauthButton,
+                    isSubmitting && styles.authPrimaryButtonDisabled,
+                    pressed && !isSubmitting && styles.pressed,
+                  ]}
+                >
+                  <View
+                    style={[
+                      styles.oauthIconBadge,
+                      { backgroundColor: item.background },
+                    ]}
+                  >
+                    <OAuthLogo logo={item.logo} />
+                  </View>
+                  <Text style={styles.oauthButtonText}>
+                    Continue with {item.label}
+                  </Text>
+                </Pressable>
+              ))}
+              <View style={styles.authDividerRow}>
+                <View style={styles.authDividerLine} />
+                <Text style={styles.authDividerText}>or use email</Text>
+                <View style={styles.authDividerLine} />
+              </View>
+            </>
+          )}
+
           {isCreateMode && (
             <AuthField
               icon="person-outline"
@@ -198,12 +269,74 @@ export function LoginScreen({
         <View style={styles.authNoteCard}>
           <Ionicons name="shield-checkmark-outline" size={20} color={COLORS.blue} />
           <Text style={styles.authNoteText}>
-            This prototype stores accounts locally on this device. A production
-            version should use a secure backend for sessions and password resets.
+            WordWiz now uses Supabase Auth for accounts, sessions, and password
+            reset emails. Your learning data will move to Supabase tables next.
           </Text>
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
+  );
+}
+
+function OAuthLogo({ logo }: { logo: 'google' | 'apple' | 'microsoft' }) {
+  if (logo === 'google') {
+    return <GoogleLogo />;
+  }
+
+  if (logo === 'microsoft') {
+    return (
+      <View style={styles.oauthMicrosoftLogo}>
+        <View style={[styles.oauthMicrosoftTile, { backgroundColor: '#F25022' }]} />
+        <View style={[styles.oauthMicrosoftTile, { backgroundColor: '#7FBA00' }]} />
+        <View style={[styles.oauthMicrosoftTile, { backgroundColor: '#00A4EF' }]} />
+        <View style={[styles.oauthMicrosoftTile, { backgroundColor: '#FFB900' }]} />
+      </View>
+    );
+  }
+
+  return <Ionicons name="logo-apple" size={22} color={COLORS.ink} />;
+}
+
+function GoogleLogo() {
+  const segments = [
+    {
+      color: '#EA4335',
+      clipStyle: styles.oauthGoogleTop,
+      glyphStyle: styles.oauthGoogleTopGlyph,
+    },
+    {
+      color: '#FBBC05',
+      clipStyle: styles.oauthGoogleLeft,
+      glyphStyle: styles.oauthGoogleLeftGlyph,
+    },
+    {
+      color: '#34A853',
+      clipStyle: styles.oauthGoogleBottom,
+      glyphStyle: styles.oauthGoogleBottomGlyph,
+    },
+    {
+      color: '#4285F4',
+      clipStyle: styles.oauthGoogleRight,
+      glyphStyle: styles.oauthGoogleRightGlyph,
+    },
+  ];
+
+  return (
+    <View style={styles.oauthGoogleLogo}>
+      {segments.map((segment) => (
+        <View
+          key={segment.color}
+          style={[styles.oauthGoogleClip, segment.clipStyle]}
+        >
+          <MaterialCommunityIcons
+            name="google"
+            size={23}
+            color={segment.color}
+            style={[styles.oauthGoogleGlyph, segment.glyphStyle]}
+          />
+        </View>
+      ))}
+    </View>
   );
 }
 

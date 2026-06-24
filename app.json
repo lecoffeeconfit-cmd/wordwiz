@@ -2,6 +2,7 @@
   "expo": {
     "name": "WordWiz",
     "slug": "wordwiz",
+    "scheme": "wordwiz",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -14,7 +15,8 @@
           "color": "#58CC62",
           "defaultChannel": "daily-review"
         }
-      ]
+      ],
+      "expo-web-browser"
     ],
     "ios": {
       "supportsTablet": true

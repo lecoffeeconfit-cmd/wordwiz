@@ -1,4 +1,9 @@
 import type { AuthUser, StoredUser } from '../types';
+import { supabase } from './supabase';
+import type { Provider, User } from '@supabase/supabase-js';
+import * as Linking from 'expo-linking';
+import * as WebBrowser from 'expo-web-browser';
+import { Platform } from 'react-native';
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MAX_NAME_LENGTH = 60;
@@ -51,6 +56,154 @@ export function toSafeUser(user: StoredUser): AuthUser {
     email: user.email,
     createdAt: user.createdAt,
   };
+}
+
+export function toAuthUser(user: User): AuthUser {
+  const name =
+    getStringMetadata(user.user_metadata?.name) ||
+    getStringMetadata(user.user_metadata?.full_name) ||
+    user.email?.split('@')[0] ||
+    'WordWiz learner';
+
+  return {
+    id: user.id,
+    name,
+    email: user.email ?? '',
+    createdAt: user.created_at,
+  };
+}
+
+export async function signInWithSupabase(email: string, password: string) {
+  const { data, error } = await supabase.auth.signInWithPassword({
+    email: normalizeEmail(email),
+    password,
+  });
+
+  if (error) {
+    throw error;
+  }
+
+  return data.user ? toAuthUser(data.user) : null;
+}
+
+export async function signUpWithSupabase({
+  name,
+  email,
+  password,
+}: {
+  name: string;
+  email: string;
+  password: string;
+}) {
+  const { data, error } = await supabase.auth.signUp({
+    email: normalizeEmail(email),
+    password,
+    options: {
+      data: {
+        name: name.trim(),
+      },
+    },
+  });
+
+  if (error) {
+    throw error;
+  }
+
+  return data.user ? toAuthUser(data.user) : null;
+}
+
+export async function sendSupabasePasswordReset(email: string) {
+  const { error } = await supabase.auth.resetPasswordForEmail(
+    normalizeEmail(email),
+  );
+
+  if (error) {
+    throw error;
+  }
+}
+
+export async function signInWithOAuthProvider(provider: Provider) {
+  const redirectTo =
+    Platform.OS === 'web'
+      ? getWebRedirectUrl()
+      : Linking.createURL('auth/callback');
+
+  const { data, error } = await supabase.auth.signInWithOAuth({
+    provider,
+    options: {
+      redirectTo,
+      skipBrowserRedirect: Platform.OS !== 'web',
+    },
+  });
+
+  if (error) {
+    throw error;
+  }
+
+  if (Platform.OS === 'web') {
+    return null;
+  }
+
+  if (!data.url) {
+    throw new Error(`${provider} sign-in did not return an authorization URL.`);
+  }
+
+  const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
+
+  if (result.type !== 'success') {
+    return null;
+  }
+
+  const params = getAuthParams(result.url);
+  const accessToken = params.get('access_token');
+  const refreshToken = params.get('refresh_token');
+
+  if (!accessToken || !refreshToken) {
+    throw new Error(`${provider} sign-in did not return a Supabase session.`);
+  }
+
+  const sessionResult = await supabase.auth.setSession({
+    access_token: accessToken,
+    refresh_token: refreshToken,
+  });
+
+  if (sessionResult.error) {
+    throw sessionResult.error;
+  }
+
+  return sessionResult.data.user ? toAuthUser(sessionResult.data.user) : null;
+}
+
+export async function signOutWithSupabase() {
+  const { error } = await supabase.auth.signOut();
+
+  if (error) {
+    throw error;
+  }
+}
+
+function getStringMetadata(value: unknown) {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function getWebRedirectUrl() {
+  if (typeof window === 'undefined') {
+    return undefined;
+  }
+
+  return window.location.origin;
+}
+
+function getAuthParams(url: string) {
+  const parsedUrl = new URL(url);
+  const params = new URLSearchParams(parsedUrl.search);
+  const hashParams = new URLSearchParams(parsedUrl.hash.replace(/^#/, ''));
+
+  hashParams.forEach((value, key) => {
+    params.set(key, value);
+  });
+
+  return params;
 }
 
 export async function createStoredUser({
