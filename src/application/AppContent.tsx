@@ -26,6 +26,7 @@ import {
 } from '../screens';
 import {
   normalizeEmail,
+  requestSupabaseAccountDeletion,
   sendSupabasePasswordReset,
   signInWithOAuthProvider,
   signInWithSupabase,
@@ -339,6 +340,49 @@ export default function AppContent() {
     }
   }
 
+  function deleteAccount() {
+    Alert.alert(
+      'Delete your account?',
+      'This permanently removes your WordWiz account and cloud learning data. This cannot be undone.',
+      [
+        { text: 'Keep account', style: 'cancel' },
+        {
+          text: 'Delete account',
+          style: 'destructive',
+          onPress: confirmDeleteAccount,
+        },
+      ],
+    );
+  }
+
+  async function confirmDeleteAccount() {
+    try {
+      await requestSupabaseAccountDeletion();
+      try {
+        await signOutWithSupabase();
+      } catch {
+        // The account is already deleted server-side, so the local session can be cleared by state reset below.
+      }
+      await clearLocalLearningData();
+      cloudHydratedUserId.current = null;
+      setCurrentUser(null);
+      setWords(STARTER_WORDS);
+      setQuizProgress(null);
+      setAnalytics(EMPTY_ANALYTICS);
+      setReminderSettings(DEFAULT_REMINDER);
+      setActiveTab('home');
+      Alert.alert(
+        'Account deleted',
+        'Your WordWiz account deletion request was completed.',
+      );
+    } catch {
+      Alert.alert(
+        'Delete account needs setup',
+        'WordWiz is ready for account deletion, but the Supabase delete-account Edge Function must be deployed first. Your account was not deleted.',
+      );
+    }
+  }
+
   async function addWord(
     term: string,
     definition: string,
@@ -594,6 +638,7 @@ export default function AppContent() {
         onUpdateReminder={updateReminder}
         onOpenLegal={setLegalPage}
         onLogout={logout}
+        onDeleteAccount={deleteAccount}
       />
     );
   }
@@ -641,6 +686,15 @@ export default function AppContent() {
       <LegalModal page={legalPage} onClose={() => setLegalPage(null)} />
     </SafeAreaView>
   );
+}
+
+async function clearLocalLearningData() {
+  await AsyncStorage.multiRemove([
+    WORDS_KEY,
+    QUIZ_KEY,
+    ANALYTICS_KEY,
+    REMINDER_KEY,
+  ]);
 }
 
 function createUuid() {

@@ -16,6 +16,7 @@ export function DashboardScreen({
   onUpdateReminder,
   onOpenLegal,
   onLogout,
+  onDeleteAccount,
 }: {
   words: Word[];
   analytics: AnalyticsData;
@@ -24,6 +25,7 @@ export function DashboardScreen({
   onUpdateReminder: (settings: ReminderSettings) => void;
   onOpenLegal: (page: LegalPage) => void;
   onLogout: () => void;
+  onDeleteAccount: () => void;
 }) {
   const recentDays = getRecentDays(7);
   const totalQuizQuestions = analytics.quizHistory.reduce(
@@ -485,6 +487,29 @@ export function DashboardScreen({
         >
           <Ionicons name="log-out-outline" size={18} color={COLORS.red} />
           <Text style={styles.logoutButtonText}>Log out</Text>
+        </Pressable>
+      </View>
+
+      <View style={styles.deleteAccountCard}>
+        <View style={styles.deleteAccountIcon}>
+          <Ionicons name="trash-outline" size={22} color={COLORS.red} />
+        </View>
+        <View style={styles.deleteAccountCopy}>
+          <Text style={styles.deleteAccountLabel}>ACCOUNT CONTROL</Text>
+          <Text style={styles.deleteAccountTitle}>Delete account</Text>
+          <Text style={styles.deleteAccountText}>
+            Permanently remove your WordWiz account and cloud learning data.
+            This action cannot be undone.
+          </Text>
+        </View>
+        <Pressable
+          onPress={onDeleteAccount}
+          style={({ pressed }) => [
+            styles.deleteAccountButton,
+            pressed && styles.pressed,
+          ]}
+        >
+          <Text style={styles.deleteAccountButtonText}>Delete</Text>
         </Pressable>
       </View>
 

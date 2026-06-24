@@ -182,6 +182,16 @@ export async function signOutWithSupabase() {
   }
 }
 
+export async function requestSupabaseAccountDeletion() {
+  const { error } = await supabase.functions.invoke('delete-account', {
+    method: 'DELETE',
+  });
+
+  if (error) {
+    throw error;
+  }
+}
+
 function getStringMetadata(value: unknown) {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
