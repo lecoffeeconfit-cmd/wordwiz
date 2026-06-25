@@ -6,13 +6,9 @@ import { Alert, Platform, Text, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BottomTabs } from '../components';
 import {
-  ANALYTICS_KEY,
   DEFAULT_REMINDER,
   EMPTY_ANALYTICS,
-  QUIZ_KEY,
-  REMINDER_KEY,
   STARTER_WORDS,
-  WORDS_KEY,
 } from '../constants/data';
 import { COLORS } from '../constants/theme';
 import { AddWordModal, LegalModal } from '../modals';
@@ -85,33 +81,27 @@ export default function AppContent() {
   useEffect(() => {
     async function loadData() {
       try {
-        const [savedWords, savedQuiz, savedAnalytics, savedReminder, sessionResult] =
-          await Promise.all([
-            AsyncStorage.getItem(WORDS_KEY),
-            AsyncStorage.getItem(QUIZ_KEY),
-            AsyncStorage.getItem(ANALYTICS_KEY),
-            AsyncStorage.getItem(REMINDER_KEY),
-            supabase.auth.getSession(),
-          ]);
+        const sessionResult = await supabase.auth.getSession();
+        const sessionUser = sessionResult.data.session?.user
+          ? toAuthUser(sessionResult.data.session.user)
+          : null;
 
-        setCurrentUser(
-          sessionResult.data.session?.user
-            ? toAuthUser(sessionResult.data.session.user)
-            : null,
-        );
-        setWords(savedWords ? JSON.parse(savedWords) : STARTER_WORDS);
-        setQuizProgress(savedQuiz ? JSON.parse(savedQuiz) : null);
-        setAnalytics(savedAnalytics ? JSON.parse(savedAnalytics) : EMPTY_ANALYTICS);
-        setReminderSettings(
-          savedReminder
-            ? { ...DEFAULT_REMINDER, ...JSON.parse(savedReminder) }
-            : DEFAULT_REMINDER,
-        );
+        setCurrentUser(sessionUser);
+
+        if (sessionUser) {
+          await loadUserCache(sessionUser.id);
+        } else {
+          setWords(STARTER_WORDS);
+          setQuizProgress(null);
+          setAnalytics(EMPTY_ANALYTICS);
+          setReminderSettings(DEFAULT_REMINDER);
+        }
       } catch {
         setWords(STARTER_WORDS);
         setAnalytics(EMPTY_ANALYTICS);
         setReminderSettings(DEFAULT_REMINDER);
       } finally {
+        await clearLegacyLearningData();
         setIsReady(true);
       }
     }
@@ -128,6 +118,50 @@ export default function AppContent() {
       authListener.subscription.unsubscribe();
     };
   }, []);
+
+  useEffect(() => {
+    if (!isReady) {
+      return;
+    }
+
+    if (!currentUser) {
+      setWords(STARTER_WORDS);
+      setQuizProgress(null);
+      setAnalytics(EMPTY_ANALYTICS);
+      setReminderSettings(DEFAULT_REMINDER);
+      return;
+    }
+
+    if (cloudHydratedUserId.current !== currentUser.id) {
+      loadUserCache(currentUser.id);
+    }
+  }, [currentUser?.id, isReady]);
+
+  async function loadUserCache(userId: string) {
+    try {
+      const [savedWords, savedQuiz, savedAnalytics, savedReminder] =
+        await Promise.all([
+          AsyncStorage.getItem(getUserCacheKey(userId, 'words')),
+          AsyncStorage.getItem(getUserCacheKey(userId, 'quiz-progress')),
+          AsyncStorage.getItem(getUserCacheKey(userId, 'analytics')),
+          AsyncStorage.getItem(getUserCacheKey(userId, 'reminder-settings')),
+        ]);
+
+      setWords(savedWords ? JSON.parse(savedWords) : STARTER_WORDS);
+      setQuizProgress(savedQuiz ? JSON.parse(savedQuiz) : null);
+      setAnalytics(savedAnalytics ? JSON.parse(savedAnalytics) : EMPTY_ANALYTICS);
+      setReminderSettings(
+        savedReminder
+          ? { ...DEFAULT_REMINDER, ...JSON.parse(savedReminder) }
+          : DEFAULT_REMINDER,
+      );
+    } catch {
+      setWords(STARTER_WORDS);
+      setQuizProgress(null);
+      setAnalytics(EMPTY_ANALYTICS);
+      setReminderSettings(DEFAULT_REMINDER);
+    }
+  }
 
   useEffect(() => {
     if (!isReady || !currentUser) {
@@ -192,28 +226,40 @@ export default function AppContent() {
   }, [currentUser?.id, isReady]);
 
   useEffect(() => {
-    if (isReady) {
-      AsyncStorage.setItem(WORDS_KEY, JSON.stringify(words));
+    if (isReady && currentUser) {
+      AsyncStorage.setItem(
+        getUserCacheKey(currentUser.id, 'words'),
+        JSON.stringify(words),
+      );
     }
-  }, [isReady, words]);
+  }, [currentUser, isReady, words]);
 
   useEffect(() => {
-    if (isReady) {
-      AsyncStorage.setItem(QUIZ_KEY, JSON.stringify(quizProgress));
+    if (isReady && currentUser) {
+      AsyncStorage.setItem(
+        getUserCacheKey(currentUser.id, 'quiz-progress'),
+        JSON.stringify(quizProgress),
+      );
     }
-  }, [isReady, quizProgress]);
+  }, [currentUser, isReady, quizProgress]);
 
   useEffect(() => {
-    if (isReady) {
-      AsyncStorage.setItem(ANALYTICS_KEY, JSON.stringify(analytics));
+    if (isReady && currentUser) {
+      AsyncStorage.setItem(
+        getUserCacheKey(currentUser.id, 'analytics'),
+        JSON.stringify(analytics),
+      );
     }
-  }, [analytics, isReady]);
+  }, [analytics, currentUser, isReady]);
 
   useEffect(() => {
-    if (isReady) {
-      AsyncStorage.setItem(REMINDER_KEY, JSON.stringify(reminderSettings));
+    if (isReady && currentUser) {
+      AsyncStorage.setItem(
+        getUserCacheKey(currentUser.id, 'reminder-settings'),
+        JSON.stringify(reminderSettings),
+      );
     }
-  }, [isReady, reminderSettings]);
+  }, [currentUser, isReady, reminderSettings]);
 
   const sortedWords = useMemo(() => {
     return [...words].sort((first, second) => {
@@ -385,6 +431,8 @@ export default function AppContent() {
   }
 
   async function confirmDeleteAccount() {
+    const deletingUserId = currentUser?.id;
+
     try {
       await requestSupabaseAccountDeletion();
       try {
@@ -392,7 +440,9 @@ export default function AppContent() {
       } catch {
         // The account is already deleted server-side, so the local session can be cleared by state reset below.
       }
-      await clearLocalLearningData();
+      if (deletingUserId) {
+        await clearLocalLearningData(deletingUserId);
+      }
       cloudHydratedUserId.current = null;
       setCurrentUser(null);
       setWords(STARTER_WORDS);
@@ -718,12 +768,25 @@ export default function AppContent() {
   );
 }
 
-async function clearLocalLearningData() {
+async function clearLocalLearningData(userId: string) {
   await AsyncStorage.multiRemove([
-    WORDS_KEY,
-    QUIZ_KEY,
-    ANALYTICS_KEY,
-    REMINDER_KEY,
+    getUserCacheKey(userId, 'words'),
+    getUserCacheKey(userId, 'quiz-progress'),
+    getUserCacheKey(userId, 'analytics'),
+    getUserCacheKey(userId, 'reminder-settings'),
+  ]);
+}
+
+function getUserCacheKey(userId: string, key: string) {
+  return `@wordwiz/users/${userId}/${key}`;
+}
+
+async function clearLegacyLearningData() {
+  await AsyncStorage.multiRemove([
+    '@wordwiz/words',
+    '@wordwiz/quiz-progress',
+    '@wordwiz/analytics',
+    '@wordwiz/reminder-settings',
   ]);
 }
 
