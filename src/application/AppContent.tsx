@@ -45,6 +45,7 @@ import {
   scheduleDailyReminder,
   seedUserLearningData,
 } from '../services';
+import { env } from '../config/env';
 import { styles } from '../styles';
 import type {
   AnalyticsData,
@@ -81,6 +82,14 @@ export default function AppContent() {
   useEffect(() => {
     async function loadData() {
       try {
+        if (!env.isSupabaseConfigured) {
+          setWords(STARTER_WORDS);
+          setQuizProgress(null);
+          setAnalytics(EMPTY_ANALYTICS);
+          setReminderSettings(DEFAULT_REMINDER);
+          return;
+        }
+
         const sessionResult = await supabase.auth.getSession();
         const sessionUser = sessionResult.data.session?.user
           ? toAuthUser(sessionResult.data.session.user)
@@ -107,6 +116,10 @@ export default function AppContent() {
     }
 
     loadData();
+
+    if (!env.isSupabaseConfigured) {
+      return;
+    }
 
     const { data: authListener } = supabase.auth.onAuthStateChange(
       (_event, session) => {
@@ -164,7 +177,7 @@ export default function AppContent() {
   }
 
   useEffect(() => {
-    if (!isReady || !currentUser) {
+    if (!env.isSupabaseConfigured || !isReady || !currentUser) {
       return;
     }
 
@@ -275,6 +288,10 @@ export default function AppContent() {
     quizProgress?.date === getDayKey() ? quizProgress : null;
 
   async function login(email: string, password: string) {
+    if (!ensureSupabaseReady()) {
+      return false;
+    }
+
     const cleanEmail = normalizeEmail(email);
     const emailError = validateEmail(cleanEmail);
     const passwordError = validatePassword(password);
@@ -303,6 +320,10 @@ export default function AppContent() {
   }
 
   async function createAccount(name: string, email: string, password: string) {
+    if (!ensureSupabaseReady()) {
+      return false;
+    }
+
     const cleanEmail = normalizeEmail(email);
     const nameError = validateName(name);
     const emailError = validateEmail(cleanEmail);
@@ -344,6 +365,10 @@ export default function AppContent() {
   }
 
   async function resendVerification(email: string) {
+    if (!ensureSupabaseReady()) {
+      return false;
+    }
+
     const emailError = validateEmail(email);
 
     if (emailError) {
@@ -368,6 +393,10 @@ export default function AppContent() {
   }
 
   async function forgotPassword(email: string) {
+    if (!ensureSupabaseReady()) {
+      return;
+    }
+
     const emailError = validateEmail(email);
 
     if (emailError) {
@@ -388,6 +417,10 @@ export default function AppContent() {
   }
 
   async function loginWithOAuth(provider: Provider, label: string) {
+    if (!ensureSupabaseReady()) {
+      return false;
+    }
+
     try {
       const user = await signInWithOAuthProvider(provider);
       if (user) {
@@ -404,6 +437,13 @@ export default function AppContent() {
   }
 
   async function logout() {
+    if (!env.isSupabaseConfigured) {
+      setCurrentUser(null);
+      cloudHydratedUserId.current = null;
+      setActiveTab('home');
+      return;
+    }
+
     try {
       await signOutWithSupabase();
     } catch {
@@ -416,6 +456,10 @@ export default function AppContent() {
   }
 
   function deleteAccount() {
+    if (!ensureSupabaseReady()) {
+      return;
+    }
+
     Alert.alert(
       'Delete your account?',
       'This permanently removes your WordWiz account and cloud learning data. This cannot be undone.',
@@ -666,6 +710,19 @@ export default function AppContent() {
     );
   }
 
+  function ensureSupabaseReady() {
+    if (env.isSupabaseConfigured) {
+      return true;
+    }
+
+    Alert.alert(
+      'Supabase setup needed',
+      env.configurationError ??
+        'Add the WordWiz Supabase environment variables before using accounts and cloud sync.',
+    );
+    return false;
+  }
+
   function renderScreen() {
     if (activeTab === 'home') {
       return (
@@ -727,6 +784,19 @@ export default function AppContent() {
       <SafeAreaView style={styles.loadingScreen}>
         <Ionicons name="sparkles" size={34} color={COLORS.purpleDark} />
         <Text style={styles.loadingTitle}>Getting WordWiz ready...</Text>
+      </SafeAreaView>
+    );
+  }
+
+  if (!env.isSupabaseConfigured) {
+    return (
+      <SafeAreaView style={styles.loadingScreen}>
+        <Ionicons name="warning-outline" size={34} color={COLORS.purpleDark} />
+        <Text style={styles.loadingTitle}>WordWiz needs setup</Text>
+        <Text style={styles.loadingText}>
+          {env.configurationError ??
+            'Add the Supabase production environment variables and rebuild the app.'}
+        </Text>
       </SafeAreaView>
     );
   }

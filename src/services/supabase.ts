@@ -14,7 +14,7 @@ export const supabase = createClient(env.supabaseUrl, env.supabaseAnonKey, {
   },
 });
 
-if (Platform.OS !== 'web') {
+if (env.isSupabaseConfigured && Platform.OS !== 'web') {
   AppState.addEventListener('change', (state) => {
     if (state === 'active') {
       supabase.auth.startAutoRefresh();

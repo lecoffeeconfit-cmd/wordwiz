@@ -8,6 +8,11 @@
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "backgroundColor": "#F7FAFC",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#F7FAFC"
+    },
     "plugins": [
       [
         "expo-notifications",
@@ -16,7 +21,20 @@
           "defaultChannel": "daily-review"
         }
       ],
-      "expo-web-browser"
+      "expo-web-browser",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 180,
+          "resizeMode": "contain",
+          "backgroundColor": "#F7FAFC",
+          "dark": {
+            "image": "./assets/splash-icon.png",
+            "backgroundColor": "#F7FAFC"
+          }
+        }
+      ]
     ],
     "ios": {
       "bundleIdentifier": "com.lecoffeeconfit.wordwiz",

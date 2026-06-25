@@ -1,5 +1,7 @@
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+const fallbackSupabaseUrl = 'https://missing-wordwiz-supabase.supabase.co';
+const fallbackSupabaseAnonKey = 'missing-public-anon-key';
 
 const forbiddenPublicSecrets = [
   process.env.EXPO_PUBLIC_SUPABASE_SERVICE_ROLE_KEY,
@@ -8,28 +10,32 @@ const forbiddenPublicSecrets = [
   process.env.EXPO_PUBLIC_SECRET_KEY,
 ].filter(Boolean);
 
-if (forbiddenPublicSecrets.length > 0) {
-  throw new Error(
-    'A secret key was configured with EXPO_PUBLIC_. Public Expo variables are bundled into the app. Move secrets to Supabase Edge Functions or another backend.',
-  );
-}
-
-if (!supabaseUrl || !supabaseAnonKey) {
-  throw new Error(
-    'Missing Supabase environment variables. Set EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY.',
-  );
-}
-
-if (getJwtRole(supabaseAnonKey) === 'service_role') {
-  throw new Error(
-    'EXPO_PUBLIC_SUPABASE_ANON_KEY contains a service-role key. Never ship service-role keys in the app bundle.',
-  );
-}
+const configurationError = getConfigurationError();
 
 export const env = {
-  supabaseUrl,
-  supabaseAnonKey,
+  supabaseUrl: configurationError ? fallbackSupabaseUrl : supabaseUrl,
+  supabaseAnonKey: configurationError
+    ? fallbackSupabaseAnonKey
+    : supabaseAnonKey,
+  isSupabaseConfigured: !configurationError,
+  configurationError,
 };
+
+function getConfigurationError() {
+  if (forbiddenPublicSecrets.length > 0) {
+    return 'A secret key was configured with EXPO_PUBLIC_. Public Expo variables are bundled into the app. Move secrets to Supabase Edge Functions or another backend.';
+  }
+
+  if (!supabaseUrl || !supabaseAnonKey) {
+    return 'Missing Supabase environment variables. Set EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY in the EAS production environment.';
+  }
+
+  if (getJwtRole(supabaseAnonKey) === 'service_role') {
+    return 'EXPO_PUBLIC_SUPABASE_ANON_KEY contains a service-role key. Never ship service-role keys in the app bundle.';
+  }
+
+  return null;
+}
 
 function getJwtRole(token: string) {
   const payload = token.split('.')[1];

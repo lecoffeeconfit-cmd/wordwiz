@@ -69,6 +69,16 @@ export const styles = StyleSheet.create({
     fontSize: 28,
     fontWeight: '900',
     letterSpacing: -0.8,
+    textAlign: 'center',
+  },
+  loadingText: {
+    maxWidth: 310,
+    marginTop: 12,
+    color: COLORS.muted,
+    fontSize: 15,
+    fontWeight: '700',
+    lineHeight: 22,
+    textAlign: 'center',
   },
   listContent: {
     paddingHorizontal: 20,
