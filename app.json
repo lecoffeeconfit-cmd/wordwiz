@@ -19,9 +19,14 @@
       "expo-web-browser"
     ],
     "ios": {
-      "supportsTablet": true
+      "bundleIdentifier": "com.lecoffeeconfit.wordwiz",
+      "supportsTablet": true,
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
+      "package": "com.lecoffeeconfit.wordwiz",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -32,6 +37,11 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "2cacc404-4819-411d-91a3-c8086be12591"
+      }
     }
   }
 }

@@ -6,7 +6,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { COLORS } from '../constants/theme';
 import type { LegalPage, WordDetails } from '../types';
 import { styles } from '../styles';
-import { lookupWordDetails } from '../services';
+import { lookupWordDetails, suggestWordSpellings } from '../services';
 import { InfoChip } from '../components';
 import { inferOriginPeriod } from '../utils';
 
@@ -37,6 +37,7 @@ export function AddWordModal({
   const [commonWordsText, setCommonWordsText] = useState('');
   const [isLookingUp, setIsLookingUp] = useState(false);
   const [lookupStatus, setLookupStatus] = useState('');
+  const [spellingSuggestions, setSpellingSuggestions] = useState<string[]>([]);
 
   function close() {
     setTerm('');
@@ -51,19 +52,26 @@ export function AddWordModal({
     setSynonyms([]);
     setCommonWordsText('');
     setLookupStatus('');
+    setSpellingSuggestions([]);
     onClose();
   }
 
-  async function autoDefine() {
-    if (!term.trim()) {
+  async function autoDefine(nextTerm = term) {
+    const cleanTerm = nextTerm.trim();
+    if (!cleanTerm) {
       Alert.alert('Type a word first', 'Enter the word you want WordWiz to define.');
       return;
     }
 
+    if (cleanTerm !== term) {
+      setTerm(cleanTerm);
+    }
+
     setIsLookingUp(true);
     setLookupStatus('');
+    setSpellingSuggestions([]);
     try {
-      const details = await lookupWordDetails(term);
+      const details = await lookupWordDetails(cleanTerm);
       setDefinition(details.definition);
       setSimpleDefinition(details.simpleDefinition ?? '');
       setExample(details.example);
@@ -76,8 +84,12 @@ export function AddWordModal({
       setCommonWordsText((details.commonWords ?? []).join(', '));
       setLookupStatus('Definition found. You can edit anything before saving.');
     } catch {
+      const suggestions = await suggestWordSpellings(cleanTerm);
+      setSpellingSuggestions(suggestions);
       setLookupStatus(
-        'WordWiz could not find that word. You can still add your own meaning.',
+        suggestions.length
+          ? 'WordWiz could not find that spelling. Try one of these?'
+          : 'WordWiz could not find that word. You can still add your own meaning.',
       );
     } finally {
       setIsLookingUp(false);
@@ -117,6 +129,7 @@ export function AddWordModal({
     setSynonyms([]);
     setCommonWordsText('');
     setLookupStatus('');
+    setSpellingSuggestions([]);
   }
 
   return (
@@ -158,13 +171,14 @@ export function AddWordModal({
               onChangeText={(value) => {
                 setTerm(value);
                 setLookupStatus('');
+                setSpellingSuggestions([]);
               }}
               placeholder="e.g. Serendipity"
               autoCapitalize="words"
             />
 
             <Pressable
-              onPress={autoDefine}
+              onPress={() => autoDefine()}
               disabled={isLookingUp}
               style={({ pressed }) => [
                 styles.lookupButton,
@@ -202,6 +216,39 @@ export function AddWordModal({
                   color={definition ? COLORS.purpleDark : COLORS.blue}
                 />
                 <Text style={styles.lookupStatusText}>{lookupStatus}</Text>
+              </View>
+            ) : null}
+
+            {spellingSuggestions.length > 0 ? (
+              <View style={styles.spellingSuggestionCard}>
+                <View style={styles.spellingSuggestionHeader}>
+                  <Ionicons name="sparkles" size={18} color={COLORS.purple} />
+                  <Text style={styles.spellingSuggestionTitle}>
+                    Did you mean...
+                  </Text>
+                </View>
+                <View style={styles.spellingSuggestionList}>
+                  {spellingSuggestions.map((suggestion) => (
+                    <Pressable
+                      key={suggestion}
+                      onPress={() => autoDefine(suggestion)}
+                      disabled={isLookingUp}
+                      style={({ pressed }) => [
+                        styles.spellingSuggestionChip,
+                        pressed && !isLookingUp && styles.pressed,
+                      ]}
+                    >
+                      <Text style={styles.spellingSuggestionChipText}>
+                        {suggestion}
+                      </Text>
+                      <Ionicons
+                        name="arrow-forward"
+                        size={14}
+                        color={COLORS.purpleDark}
+                      />
+                    </Pressable>
+                  ))}
+                </View>
               </View>
             ) : null}
 

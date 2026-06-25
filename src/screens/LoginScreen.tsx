@@ -22,6 +22,7 @@ export function LoginScreen({
   onCreateAccount,
   onForgotPassword,
   onOAuthLogin,
+  onResendVerification,
 }: {
   onLogin: (email: string, password: string) => Promise<boolean>;
   onCreateAccount: (
@@ -31,12 +32,15 @@ export function LoginScreen({
   ) => Promise<boolean>;
   onForgotPassword: (email: string) => Promise<void>;
   onOAuthLogin: (provider: Provider, label: string) => Promise<boolean>;
+  onResendVerification: (email: string) => Promise<boolean>;
 }) {
   const [mode, setMode] = useState<AuthMode>('login');
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [verificationEmail, setVerificationEmail] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isResendingVerification, setIsResendingVerification] = useState(false);
 
   const isCreateMode = mode === 'create';
   const isForgotMode = mode === 'forgot';
@@ -76,6 +80,22 @@ export function LoginScreen({
 
     if (success) {
       setPassword('');
+      if (isCreateMode) {
+        setVerificationEmail(email.trim());
+        setMode('login');
+      }
+    }
+  }
+
+  async function resendVerification() {
+    const targetEmail = verificationEmail || email;
+
+    setIsResendingVerification(true);
+    const success = await onResendVerification(targetEmail);
+    setIsResendingVerification(false);
+
+    if (success) {
+      setVerificationEmail(targetEmail.trim());
     }
   }
 
@@ -146,6 +166,41 @@ export function LoginScreen({
         </View>
 
         <View style={styles.authCard}>
+          {verificationEmail ? (
+            <View style={styles.verificationCard}>
+              <View style={styles.verificationIcon}>
+                <Ionicons name="mail-unread-outline" size={22} color={COLORS.blue} />
+              </View>
+              <View style={styles.verificationCopy}>
+                <Text style={styles.verificationTitle}>Verify your email</Text>
+                <Text style={styles.verificationText}>
+                  We sent a confirmation link to {verificationEmail}. Open it,
+                  then log in here.
+                </Text>
+                <Pressable
+                  onPress={resendVerification}
+                  disabled={isResendingVerification}
+                  style={({ pressed }) => [
+                    styles.verificationResendButton,
+                    isResendingVerification && styles.authPrimaryButtonDisabled,
+                    pressed && !isResendingVerification && styles.pressed,
+                  ]}
+                >
+                  <Text style={styles.verificationResendText}>
+                    {isResendingVerification ? 'Sending...' : 'Resend email'}
+                  </Text>
+                </Pressable>
+              </View>
+              <Pressable
+                accessibilityLabel="Dismiss verification message"
+                onPress={() => setVerificationEmail('')}
+                style={styles.verificationDismiss}
+              >
+                <Ionicons name="close" size={17} color={COLORS.muted} />
+              </Pressable>
+            </View>
+          ) : null}
+
           {!isForgotMode && (
             <>
               {providers.map((item) => (
@@ -269,8 +324,8 @@ export function LoginScreen({
         <View style={styles.authNoteCard}>
           <Ionicons name="shield-checkmark-outline" size={20} color={COLORS.blue} />
           <Text style={styles.authNoteText}>
-            WordWiz now uses Supabase Auth for accounts, sessions, and password
-            reset emails. Your learning data will move to Supabase tables next.
+            WordWiz uses Supabase Auth for accounts, email verification,
+            sessions, and password reset emails.
           </Text>
         </View>
       </ScrollView>

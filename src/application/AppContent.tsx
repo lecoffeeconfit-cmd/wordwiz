@@ -26,6 +26,7 @@ import {
 } from '../screens';
 import {
   normalizeEmail,
+  resendSupabaseEmailVerification,
   requestSupabaseAccountDeletion,
   sendSupabasePasswordReset,
   signInWithOAuthProvider,
@@ -268,25 +269,53 @@ export default function AppContent() {
     }
 
     try {
-      const user = await signUpWithSupabase({
+      const result = await signUpWithSupabase({
         name,
         email: cleanEmail,
         password,
       });
 
-      if (user) {
-        setCurrentUser(user);
-      } else {
+      if (result.needsEmailVerification) {
         Alert.alert(
           'Check your email',
-          'Your account was created. Confirm your email before logging in.',
+          'We sent you a verification link. Confirm your email, then log in to WordWiz.',
         );
+        return true;
       }
+
+      if (result.user) {
+        setCurrentUser(result.user);
+      }
+
       return true;
     } catch {
       Alert.alert(
         'Could not create account',
         'Try logging in or use a different email.',
+      );
+      return false;
+    }
+  }
+
+  async function resendVerification(email: string) {
+    const emailError = validateEmail(email);
+
+    if (emailError) {
+      Alert.alert('Check your email', emailError);
+      return false;
+    }
+
+    try {
+      await resendSupabaseEmailVerification(email);
+      Alert.alert(
+        'Verification sent',
+        'Check your inbox for a fresh WordWiz confirmation link.',
+      );
+      return true;
+    } catch {
+      Alert.alert(
+        'Could not resend',
+        'Try again in a minute, or check whether this email already has an account.',
       );
       return false;
     }
@@ -666,6 +695,7 @@ export default function AppContent() {
           onCreateAccount={createAccount}
           onForgotPassword={forgotPassword}
           onOAuthLogin={loginWithOAuth}
+          onResendVerification={resendVerification}
         />
       ) : (
         <>

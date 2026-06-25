@@ -73,6 +73,14 @@ export function toAuthUser(user: User): AuthUser {
   };
 }
 
+export function getAuthRedirectUrl() {
+  if (Platform.OS === 'web') {
+    return getWebRedirectUrl();
+  }
+
+  return Linking.createURL('auth/callback');
+}
+
 export async function signInWithSupabase(email: string, password: string) {
   const { data, error } = await supabase.auth.signInWithPassword({
     email: normalizeEmail(email),
@@ -99,6 +107,7 @@ export async function signUpWithSupabase({
     email: normalizeEmail(email),
     password,
     options: {
+      emailRedirectTo: getAuthRedirectUrl(),
       data: {
         name: name.trim(),
       },
@@ -109,7 +118,24 @@ export async function signUpWithSupabase({
     throw error;
   }
 
-  return data.user ? toAuthUser(data.user) : null;
+  return {
+    user: data.user ? toAuthUser(data.user) : null,
+    needsEmailVerification: !data.session,
+  };
+}
+
+export async function resendSupabaseEmailVerification(email: string) {
+  const { error } = await supabase.auth.resend({
+    type: 'signup',
+    email: normalizeEmail(email),
+    options: {
+      emailRedirectTo: getAuthRedirectUrl(),
+    },
+  });
+
+  if (error) {
+    throw error;
+  }
 }
 
 export async function sendSupabasePasswordReset(email: string) {
@@ -123,10 +149,7 @@ export async function sendSupabasePasswordReset(email: string) {
 }
 
 export async function signInWithOAuthProvider(provider: Provider) {
-  const redirectTo =
-    Platform.OS === 'web'
-      ? getWebRedirectUrl()
-      : Linking.createURL('auth/callback');
+  const redirectTo = getAuthRedirectUrl();
 
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider,
