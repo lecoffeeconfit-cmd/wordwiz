@@ -220,12 +220,13 @@ export default function AppContent() {
         }
 
         cloudHydratedUserId.current = userId;
-      } catch {
+      } catch (error) {
+        console.error('WordWiz cloud hydration failed:', error);
         if (!cloudWarningShown.current) {
           cloudWarningShown.current = true;
           Alert.alert(
             'Cloud sync needs setup',
-            'WordWiz is still working locally. To enable production cloud data, run supabase/wordwiz_schema.sql in Supabase so the words, quiz, review, and reminder tables exist with RLS.',
+            `WordWiz is still working locally. Supabase said: ${getErrorMessage(error)}`,
           );
         }
       }
@@ -537,7 +538,8 @@ export default function AppContent() {
     if (currentUser && cloudHydratedUserId.current === currentUser.id) {
       try {
         savedWord = await saveCloudWord(currentUser.id, wordData);
-      } catch {
+      } catch (error) {
+        console.error('WordWiz cloud word save failed:', error);
         showCloudSaveWarning();
       }
     }
@@ -559,7 +561,8 @@ export default function AppContent() {
     );
 
     if (currentUser && cloudHydratedUserId.current === currentUser.id) {
-      deleteCloudWord(currentUser.id, wordToRemove.id).catch(() => {
+      deleteCloudWord(currentUser.id, wordToRemove.id).catch((error) => {
+        console.error('WordWiz cloud word delete failed:', error);
         showCloudSaveWarning();
       });
     }
@@ -604,7 +607,8 @@ export default function AppContent() {
               reviewedWord.reviews + 1,
             )
           : Promise.resolve(),
-      ]).catch(() => {
+      ]).catch((error) => {
+        console.error('WordWiz cloud card review save failed:', error);
         showCloudSaveWarning();
       });
     }
@@ -652,7 +656,8 @@ export default function AppContent() {
       Promise.all([
         saveCloudQuizAttempt(currentUser.id, attempt),
         ...reviewUpdates,
-      ]).catch(() => {
+      ]).catch((error) => {
+        console.error('WordWiz cloud quiz save failed:', error);
         showCloudSaveWarning();
       });
     }
@@ -692,7 +697,8 @@ export default function AppContent() {
 
   function saveReminderToCloud(settings: ReminderSettings) {
     if (currentUser && cloudHydratedUserId.current === currentUser.id) {
-      saveCloudReminderSettings(currentUser.id, settings).catch(() => {
+      saveCloudReminderSettings(currentUser.id, settings).catch((error) => {
+        console.error('WordWiz cloud reminder save failed:', error);
         showCloudSaveWarning();
       });
     }
@@ -849,6 +855,14 @@ async function clearLocalLearningData(userId: string) {
 
 function getUserCacheKey(userId: string, key: string) {
   return `@wordwiz/users/${userId}/${key}`;
+}
+
+function getErrorMessage(error: unknown) {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+
+  return 'The cloud request failed. Check Data API access, grants, and RLS policies.';
 }
 
 async function clearLegacyLearningData() {

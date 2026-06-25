@@ -32,7 +32,7 @@ export function WordInfoPanel({ word }: { word: Word }) {
       )}
       {word.commonWords && word.commonWords.length > 0 && (
         <View style={styles.commonWordsBox}>
-          <Text style={styles.commonWordsTitle}>COMMON WORDS</Text>
+          <Text style={styles.commonWordsTitle}>SYNONYMS</Text>
           <View style={styles.commonWordsWrap}>
             {word.commonWords.map((commonWord) => (
               <Text key={commonWord} style={styles.commonWordChip}>

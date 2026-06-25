@@ -269,11 +269,11 @@ export function AddWordModal({
               multiline
             />
             <InputGroup
-              label="COMMON WORDS"
+              label="SYNONYMS"
               icon="people-outline"
               value={commonWordsText}
               onChangeText={setCommonWordsText}
-              placeholder="easy, simple, plain"
+              placeholder="quick, start, move"
             />
             <InputGroup
               label="USE IT IN A SENTENCE"
@@ -308,7 +308,7 @@ export function AddWordModal({
                 ) : null}
                 {commonWordsText ? (
                   <Text style={styles.lookupInfoText}>
-                    Common words: {commonWordsText}
+                    Synonyms: {commonWordsText}
                   </Text>
                 ) : null}
               </View>

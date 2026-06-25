@@ -20,7 +20,7 @@ export function makeSimpleDefinition(definition: string, word: string) {
     .slice(0, 95);
 }
 
-export function getCommonWords(words: string[]) {
+export function getSynonyms(words: string[]) {
   return Array.from(
     new Set(
       words

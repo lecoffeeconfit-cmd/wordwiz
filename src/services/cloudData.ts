@@ -90,10 +90,10 @@ export async function fetchUserLearningData(
     ]);
 
   const firstError =
-    wordsResult.error ??
-    quizResult.error ??
-    reviewsResult.error ??
-    reminderResult.error;
+    getQueryError('words', wordsResult.error) ??
+    getQueryError('quiz_attempts', quizResult.error) ??
+    getQueryError('card_reviews', reviewsResult.error) ??
+    getQueryError('reminder_settings', reminderResult.error);
 
   if (firstError) {
     throw firstError;
@@ -161,7 +161,7 @@ export async function saveCloudWord(userId: string, word: Word) {
   const { data, error } = await query.single();
 
   if (error) {
-    throw error;
+    throw getQueryError('words', error);
   }
 
   return mapWordRow(data as WordRow);
@@ -179,7 +179,7 @@ export async function deleteCloudWord(userId: string, wordId: string) {
     .eq('id', wordId);
 
   if (error) {
-    throw error;
+    throw getQueryError('words', error);
   }
 }
 
@@ -197,7 +197,7 @@ export async function saveCloudCardReview(
   });
 
   if (error) {
-    throw error;
+    throw getQueryError('card_reviews', error);
   }
 }
 
@@ -220,7 +220,7 @@ export async function saveCloudWordReviews(
     .eq('id', wordId);
 
   if (error) {
-    throw error;
+    throw getQueryError('words', error);
   }
 }
 
@@ -239,7 +239,7 @@ export async function saveCloudQuizAttempt(
   });
 
   if (error) {
-    throw error;
+    throw getQueryError('quiz_attempts', error);
   }
 }
 
@@ -256,8 +256,16 @@ export async function saveCloudReminderSettings(
   });
 
   if (error) {
-    throw error;
+    throw getQueryError('reminder_settings', error);
   }
+}
+
+function getQueryError(tableName: string, error: { message?: string } | null) {
+  if (!error) {
+    return null;
+  }
+
+  return new Error(`${tableName}: ${error.message ?? 'Supabase request failed'}`);
 }
 
 function mapWordRow(row: WordRow): Word {

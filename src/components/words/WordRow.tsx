@@ -46,7 +46,7 @@ export function WordRow({
         </Text>
         {word.commonWords && word.commonWords.length > 0 && (
           <Text numberOfLines={1} style={styles.commonWordsLine}>
-            Common words: {word.commonWords.slice(0, 3).join(', ')}
+            Synonyms: {word.commonWords.slice(0, 3).join(', ')}
           </Text>
         )}
         {word.pronunciation && (
