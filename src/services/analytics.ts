@@ -1,0 +1,41 @@
+export type AnalyticsEventName =
+  | 'app_opened'
+  | 'onboarding_completed'
+  | 'word_saved'
+  | 'word_deleted'
+  | 'card_review_recorded'
+  | 'quiz_started'
+  | 'quiz_completed'
+  | 'reminder_updated'
+  | 'cloud_sync_failed';
+
+export type AnalyticsProperties = Record<
+  string,
+  string | number | boolean | null | undefined
+>;
+
+type AnalyticsClient = {
+  track: (eventName: AnalyticsEventName, properties?: AnalyticsProperties) => void;
+};
+
+let analyticsClient: AnalyticsClient | null = null;
+
+export function configureAnalytics(client: AnalyticsClient | null) {
+  analyticsClient = client;
+}
+
+export function trackEvent(
+  eventName: AnalyticsEventName,
+  properties: AnalyticsProperties = {},
+) {
+  try {
+    analyticsClient?.track(eventName, properties);
+    if (__DEV__ && !analyticsClient) {
+      console.info('[analytics]', eventName, properties);
+    }
+  } catch (error) {
+    if (__DEV__) {
+      console.warn('[analytics] event failed', eventName, error);
+    }
+  }
+}

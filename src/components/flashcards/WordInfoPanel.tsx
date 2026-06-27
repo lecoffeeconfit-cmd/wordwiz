@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import type { ReactNode } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Linking, Pressable, Text, View } from 'react-native';
 import { COLORS, TILE_COLORS } from '../../constants/theme';
 import type { Tab, Word } from '../../types';
 import { styles } from '../../styles';
@@ -63,11 +63,32 @@ export function WordInfoPanel({ word }: { word: Word }) {
                 <Text style={styles.originText}>{word.originPeriod}</Text>
               </>
             )}
+            <Pressable
+              onPress={() => openEtymonline(word.term)}
+              style={({ pressed }) => [
+                styles.historyExternalLink,
+                pressed && styles.pressed,
+              ]}
+            >
+              <Ionicons name="open-outline" size={14} color={COLORS.blue} />
+              <Text style={styles.historyExternalLinkText}>
+                View deeper history on Etymonline
+              </Text>
+            </Pressable>
           </View>
         </View>
       )}
     </View>
   );
+}
+
+function openEtymonline(term: string) {
+  const query = encodeURIComponent(term.trim().toLowerCase());
+  if (!query) {
+    return;
+  }
+
+  Linking.openURL(`https://www.etymonline.com/search?q=${query}`);
 }
 
 export function InfoChip({

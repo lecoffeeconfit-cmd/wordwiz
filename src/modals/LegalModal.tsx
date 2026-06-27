@@ -1,14 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
-import type { ReactNode } from 'react';
-import { useState } from 'react';
-import { Alert, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { Modal, Pressable, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { COLORS } from '../constants/theme';
-import type { LegalPage, WordDetails } from '../types';
+import type { LegalPage } from '../types';
 import { styles } from '../styles';
-import { lookupWordDetails } from '../services';
-import { InfoChip } from '../components';
-import { inferOriginPeriod } from '../utils';
 
 export function LegalModal({
   page,
@@ -63,15 +58,15 @@ export function LegalModal({
 
 function LegalSection({
   title,
-  children,
+  body,
 }: {
   title: string;
-  children: ReactNode;
+  body: string;
 }) {
   return (
     <View style={styles.legalSection}>
       <Text style={styles.legalSectionTitle}>{title}</Text>
-      <Text style={styles.legalBodyText}>{children}</Text>
+      <Text style={styles.legalBodyText}>{body}</Text>
     </View>
   );
 }
@@ -79,21 +74,26 @@ function LegalSection({
 function TermsContent() {
   return (
     <>
-      <LegalSection title="Using WordWiz">
-        WordWiz is a learning tool for saving words, reviewing flashcards, taking quizzes, and tracking study progress. Use it in a respectful, lawful way and only add content you have the right to use.
-      </LegalSection>
-      <LegalSection title="Learning information">
-        Definitions, examples, word history, mastery scores, and quiz feedback are for study support. They may be incomplete or imperfect, so check an authoritative source for school, work, medical, legal, or other important decisions.
-      </LegalSection>
-      <LegalSection title="Dictionary lookups">
-        When you use automatic definitions, the word you type may be sent to a dictionary service so WordWiz can retrieve basic word information. If a lookup is unavailable, you can still type your own definition.
-      </LegalSection>
-      <LegalSection title="No guarantees">
-        WordWiz is provided as-is. The app may change, contain mistakes, or be unavailable at times. Your use of the app is your responsibility.
-      </LegalSection>
-      <LegalSection title="Changes">
-        These terms may be updated as the app changes. Continued use of WordWiz after updates means you accept the updated terms.
-      </LegalSection>
+      <LegalSection
+        title="Using WordWiz"
+        body="WordWiz is a learning tool for saving words, reviewing flashcards, taking quizzes, and tracking study progress. Use it in a respectful, lawful way and only add content you have the right to use."
+      />
+      <LegalSection
+        title="Learning information"
+        body="Definitions, examples, word history, mastery scores, and quiz feedback are for study support. They may be incomplete or imperfect, so check an authoritative source for school, work, medical, legal, or other important decisions."
+      />
+      <LegalSection
+        title="Dictionary lookups"
+        body="When you use automatic definitions, the word you type may be sent to dictionary and word-history services so WordWiz can retrieve definitions, examples, pronunciation, synonyms, and origin information when available. If a lookup is unavailable, you can still type your own definition."
+      />
+      <LegalSection
+        title="No guarantees"
+        body="WordWiz is provided as-is. The app may change, contain mistakes, or be unavailable at times. Your use of the app is your responsibility."
+      />
+      <LegalSection
+        title="Changes"
+        body="These terms may be updated as the app changes. Continued use of WordWiz after updates means you accept the updated terms."
+      />
     </>
   );
 }
@@ -101,21 +101,26 @@ function TermsContent() {
 function PrivacyContent() {
   return (
     <>
-      <LegalSection title="What WordWiz saves">
-        WordWiz saves your words, definitions, examples, quiz history, flashcard reviews, streaks, and reminder settings on your device so the app can show your progress.
-      </LegalSection>
-      <LegalSection title="Where data is stored">
-        Learning data is stored locally using app storage. WordWiz does not include accounts, social sharing, or a custom server for your saved word list in this version.
-      </LegalSection>
-      <LegalSection title="Automatic definitions">
-        If you ask WordWiz to automatically define a word, that word is sent to an external dictionary API to fetch definitions, examples, pronunciation, synonyms, and origin information when available.
-      </LegalSection>
-      <LegalSection title="Notifications">
-        If you turn on daily reminders, your device may store a scheduled notification time. You can turn reminders off from the dashboard.
-      </LegalSection>
-      <LegalSection title="Your choices">
-        You can delete individual words from the word list and turn off reminders. Removing the app or clearing app storage may remove saved learning data from your device.
-      </LegalSection>
+      <LegalSection
+        title="What WordWiz saves"
+        body="WordWiz saves your words, definitions, examples, quiz history, flashcard reviews, streaks, and reminder settings so the app can show your progress."
+      />
+      <LegalSection
+        title="Where data is stored"
+        body="Learning data may be stored on your device and synced to Supabase when you are signed in. Supabase Auth stores account information such as your email address and profile name."
+      />
+      <LegalSection
+        title="Automatic definitions"
+        body="If you ask WordWiz to automatically define a word, that word is sent to external dictionary and word-history services to fetch definitions, examples, pronunciation, synonyms, and origin information when available."
+      />
+      <LegalSection
+        title="Notifications"
+        body="If you turn on daily reminders, your device may store a scheduled notification time. You can turn reminders off from the dashboard."
+      />
+      <LegalSection
+        title="Your choices"
+        body="You can delete individual words from the word list, turn off reminders, and request account deletion. Removing the app or clearing app storage may remove saved learning data from your device."
+      />
     </>
   );
 }

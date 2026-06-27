@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import type { ReactNode } from 'react';
 import { useState } from 'react';
-import { Alert, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { Alert, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { COLORS } from '../constants/theme';
 import type { LegalPage, WordDetails } from '../types';
@@ -331,6 +331,18 @@ export function AddWordModal({
                       'Time period not available from this dictionary source.'}
                   </Text>
                 </View>
+                <Pressable
+                  onPress={() => openEtymonline(term)}
+                  style={({ pressed }) => [
+                    styles.historyExternalLink,
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <Ionicons name="open-outline" size={14} color={COLORS.blue} />
+                  <Text style={styles.historyExternalLinkText}>
+                    View deeper history on Etymonline
+                  </Text>
+                </Pressable>
               </View>
             ) : null}
 
@@ -380,6 +392,15 @@ export function AddWordModal({
   );
 }
 
+function openEtymonline(term: string) {
+  const query = encodeURIComponent(term.trim().toLowerCase());
+  if (!query) {
+    return;
+  }
+
+  Linking.openURL(`https://www.etymonline.com/search?q=${query}`);
+}
+
 function InputGroup({
   label,
   icon,
@@ -407,7 +428,7 @@ function InputGroup({
         value={value}
         onChangeText={onChangeText}
         placeholder={placeholder}
-        placeholderTextColor="#A7B0BD"
+        placeholderTextColor="#B5ABC9"
         multiline={multiline}
         autoCapitalize={autoCapitalize}
         style={[styles.input, multiline && styles.inputMultiline]}

@@ -2,7 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Platform, Text, View } from 'react-native';
+import { Alert, Platform, Pressable, Text, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BottomTabs } from '../components';
 import {
@@ -37,6 +37,7 @@ import {
   cancelReminder,
   deleteCloudWord,
   fetchUserLearningData,
+  reportError,
   saveCloudCardReview,
   saveCloudQuizAttempt,
   saveCloudReminderSettings,
@@ -44,6 +45,7 @@ import {
   saveCloudWordReviews,
   scheduleDailyReminder,
   seedUserLearningData,
+  trackEvent,
 } from '../services';
 import { env } from '../config/env';
 import { styles } from '../styles';
@@ -61,7 +63,17 @@ import type {
   WordDetails,
 } from '../types';
 import type { Provider } from '@supabase/supabase-js';
-import { getDayKey } from '../utils';
+import {
+  addQuizAttempt,
+  applyQuizReviews,
+  buildQuizCompletion,
+  buildWordFromInput,
+  getDayKey,
+  mergeWordLists,
+  upsertSavedWord,
+} from '../utils';
+
+const ONBOARDING_KEY = '@wordwiz/onboarding-complete/v1';
 
 export default function AppContent() {
   const insets = useSafeAreaInsets();
@@ -74,14 +86,26 @@ export default function AppContent() {
   const [reminderSettings, setReminderSettings] =
     useState<ReminderSettings>(DEFAULT_REMINDER);
   const [isReady, setIsReady] = useState(false);
+  const [isCloudLoading, setIsCloudLoading] = useState(false);
+  const [appNotice, setAppNotice] = useState<string | null>(null);
+  const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState(false);
   const [showAddWord, setShowAddWord] = useState(false);
   const [legalPage, setLegalPage] = useState<LegalPage | null>(null);
   const cloudHydratedUserId = useRef<string | null>(null);
   const cloudWarningShown = useRef(false);
+  const latestWords = useRef<Word[]>([]);
+
+  useEffect(() => {
+    latestWords.current = words;
+  }, [words]);
 
   useEffect(() => {
     async function loadData() {
       try {
+        trackEvent('app_opened');
+        const onboardingComplete = await AsyncStorage.getItem(ONBOARDING_KEY);
+        setHasCompletedOnboarding(onboardingComplete === 'true');
+
         if (!env.isSupabaseConfigured) {
           setWords(STARTER_WORDS);
           setQuizProgress(null);
@@ -105,10 +129,12 @@ export default function AppContent() {
           setAnalytics(EMPTY_ANALYTICS);
           setReminderSettings(DEFAULT_REMINDER);
         }
-      } catch {
+      } catch (error) {
+        reportError(error, { area: 'app_boot' });
         setWords(STARTER_WORDS);
         setAnalytics(EMPTY_ANALYTICS);
         setReminderSettings(DEFAULT_REMINDER);
+        setAppNotice('WordWiz had trouble loading saved data, so it opened with starter words.');
       } finally {
         await clearLegacyLearningData();
         setIsReady(true);
@@ -168,11 +194,13 @@ export default function AppContent() {
           ? { ...DEFAULT_REMINDER, ...JSON.parse(savedReminder) }
           : DEFAULT_REMINDER,
       );
-    } catch {
+    } catch (error) {
+      reportError(error, { area: 'load_user_cache' });
       setWords(STARTER_WORDS);
       setQuizProgress(null);
       setAnalytics(EMPTY_ANALYTICS);
       setReminderSettings(DEFAULT_REMINDER);
+      setAppNotice('Saved data on this device could not be read. You can keep learning with starter words.');
     }
   }
 
@@ -190,6 +218,8 @@ export default function AppContent() {
 
     async function hydrateCloudData() {
       try {
+        setIsCloudLoading(true);
+        setAppNotice(null);
         const cloudData = await fetchUserLearningData(userId);
 
         if (!isActive) {
@@ -197,7 +227,9 @@ export default function AppContent() {
         }
 
         if (cloudData.words.length > 0) {
-          setWords(cloudData.words);
+          const localWords = latestWords.current.filter(isUserCreatedWord);
+          const mergedWords = mergeWordLists(cloudData.words, localWords);
+          setWords(mergedWords);
           setQuizProgress(cloudData.quizProgress);
           setAnalytics(cloudData.analytics);
           if (cloudData.reminderSettings) {
@@ -206,6 +238,7 @@ export default function AppContent() {
               ...cloudData.reminderSettings,
             }));
           }
+          syncMissingLocalWords(userId, localWords, cloudData.words);
         } else {
           const seededWords = await seedUserLearningData({
             userId,
@@ -222,12 +255,19 @@ export default function AppContent() {
         cloudHydratedUserId.current = userId;
       } catch (error) {
         console.error('WordWiz cloud hydration failed:', error);
+        reportError(error, { area: 'cloud_hydration' });
+        trackEvent('cloud_sync_failed', { operation: 'hydrate' });
+        setAppNotice('Cloud sync is unavailable right now. Your local learning data is still ready.');
         if (!cloudWarningShown.current) {
           cloudWarningShown.current = true;
           Alert.alert(
             'Cloud sync needs setup',
             `WordWiz is still working locally. Supabase said: ${getErrorMessage(error)}`,
           );
+        }
+      } finally {
+        if (isActive) {
+          setIsCloudLoading(false);
         }
       }
     }
@@ -238,6 +278,39 @@ export default function AppContent() {
       isActive = false;
     };
   }, [currentUser?.id, isReady]);
+
+  function syncMissingLocalWords(
+    userId: string,
+    localWords: Word[],
+    cloudWords: Word[],
+  ) {
+    const cloudTerms = new Set(
+      cloudWords.map((word) => word.term.trim().toLowerCase()),
+    );
+    const missingWords = localWords.filter(
+      (word) => !cloudTerms.has(word.term.trim().toLowerCase()),
+    );
+
+    missingWords.forEach((word) => {
+      saveCloudWord(userId, word).catch((error) => {
+        console.error('WordWiz cloud backfill word save failed:', error);
+        reportError(error, { area: 'backfill_word' });
+        trackEvent('cloud_sync_failed', { operation: 'backfill_word' });
+      });
+    });
+  }
+
+  async function completeOnboarding(enableReminder: boolean) {
+    await AsyncStorage.setItem(ONBOARDING_KEY, 'true');
+    setHasCompletedOnboarding(true);
+    trackEvent('onboarding_completed', {
+      enabledReminder: enableReminder,
+    });
+
+    if (enableReminder) {
+      await updateReminder({ ...reminderSettings, enabled: true });
+    }
+  }
 
   useEffect(() => {
     if (isReady && currentUser) {
@@ -517,40 +590,33 @@ export default function AppContent() {
     const existingWord = words.find(
       (word) => word.term.toLowerCase() === cleanTerm.toLowerCase(),
     );
-    const wordData: Word = {
-      id: existingWord?.id ?? createUuid(),
+    const wordData = buildWordFromInput({
+      existingWord,
       term: cleanTerm,
-      definition: definition.trim(),
-      simpleDefinition: details.simpleDefinition?.trim(),
-      example: example.trim(),
-      partOfSpeech: details.partOfSpeech?.trim(),
-      pronunciation: details.pronunciation?.trim(),
-      origin: details.origin?.trim(),
-      originPeriod: details.originPeriod?.trim(),
-      synonyms: details.synonyms ?? [],
-      commonWords: details.commonWords ?? [],
-      basicInfo: details.basicInfo?.trim(),
-      createdAt: existingWord?.createdAt ?? new Date().toISOString(),
-      reviews: existingWord?.reviews ?? 0,
-    };
+      definition,
+      example,
+      details,
+      id: createUuid(),
+      createdAt: new Date().toISOString(),
+    });
     let savedWord = wordData;
 
-    if (currentUser && cloudHydratedUserId.current === currentUser.id) {
+    if (currentUser) {
       try {
         savedWord = await saveCloudWord(currentUser.id, wordData);
       } catch (error) {
         console.error('WordWiz cloud word save failed:', error);
+        reportError(error, { area: 'save_word' });
+        trackEvent('cloud_sync_failed', { operation: 'save_word' });
         showCloudSaveWarning();
       }
     }
 
-    setWords((currentWords) =>
-      existingWord
-        ? currentWords.map((word) =>
-            word.id === existingWord.id ? savedWord : word,
-          )
-        : [savedWord, ...currentWords],
-    );
+    setWords((currentWords) => upsertSavedWord(currentWords, savedWord));
+    trackEvent('word_saved', {
+      updatedExisting: Boolean(existingWord),
+      hasSimpleDefinition: Boolean(savedWord.simpleDefinition),
+    });
     setShowAddWord(false);
     setActiveTab('words');
   }
@@ -563,9 +629,12 @@ export default function AppContent() {
     if (currentUser && cloudHydratedUserId.current === currentUser.id) {
       deleteCloudWord(currentUser.id, wordToRemove.id).catch((error) => {
         console.error('WordWiz cloud word delete failed:', error);
+        reportError(error, { area: 'delete_word' });
+        trackEvent('cloud_sync_failed', { operation: 'delete_word' });
         showCloudSaveWarning();
       });
     }
+    trackEvent('word_deleted');
   }
 
   function recordCardReview(
@@ -596,6 +665,7 @@ export default function AppContent() {
         ...currentAnalytics.cardHistory,
       ].slice(0, 80),
     }));
+    trackEvent('card_review_recorded', { remembered });
 
     if (currentUser && cloudHydratedUserId.current === currentUser.id) {
       Promise.all([
@@ -609,6 +679,8 @@ export default function AppContent() {
           : Promise.resolve(),
       ]).catch((error) => {
         console.error('WordWiz cloud card review save failed:', error);
+        reportError(error, { area: 'save_card_review' });
+        trackEvent('cloud_sync_failed', { operation: 'save_card_review' });
         showCloudSaveWarning();
       });
     }
@@ -620,30 +692,19 @@ export default function AppContent() {
     durationSeconds: number,
     answers: QuizAnswer[],
   ) {
-    const progress: QuizProgress = {
-      date: getDayKey(),
+    const { progress, attempt } = buildQuizCompletion({
       score,
       total,
-    };
-    const attempt: QuizAttempt = {
-      ...progress,
-      id: createUuid(),
-      completedAt: new Date().toISOString(),
       durationSeconds,
       answers,
-    };
+      id: createUuid(),
+      completedAt: new Date().toISOString(),
+    });
 
     setQuizProgress(progress);
-    setWords((currentWords) =>
-      currentWords.map((word) => {
-        const answer = answers.find((item) => item.wordId === word.id);
-        return answer ? { ...word, reviews: word.reviews + 1 } : word;
-      }),
-    );
-    setAnalytics((currentAnalytics) => ({
-      ...currentAnalytics,
-      quizHistory: [attempt, ...currentAnalytics.quizHistory].slice(0, 30),
-    }));
+    setWords((currentWords) => applyQuizReviews(currentWords, answers));
+    setAnalytics((currentAnalytics) => addQuizAttempt(currentAnalytics, attempt));
+    trackEvent('quiz_completed', { score, total, durationSeconds });
 
     if (currentUser && cloudHydratedUserId.current === currentUser.id) {
       const reviewUpdates = answers
@@ -658,6 +719,8 @@ export default function AppContent() {
         ...reviewUpdates,
       ]).catch((error) => {
         console.error('WordWiz cloud quiz save failed:', error);
+        reportError(error, { area: 'save_quiz' });
+        trackEvent('cloud_sync_failed', { operation: 'save_quiz' });
         showCloudSaveWarning();
       });
     }
@@ -669,6 +732,7 @@ export default function AppContent() {
         await cancelReminder(reminderSettings);
         setReminderSettings({ ...nextSettings, notificationId: undefined });
         saveReminderToCloud({ ...nextSettings, notificationId: undefined });
+        trackEvent('reminder_updated', { enabled: false });
         return;
       }
 
@@ -679,13 +743,20 @@ export default function AppContent() {
           'Reminder saved',
           'Daily device notifications are available on iOS and Android.',
         );
+        trackEvent('reminder_updated', { enabled: true, platform: 'web' });
         return;
       }
 
       const scheduledSettings = await scheduleDailyReminder(nextSettings);
       setReminderSettings(scheduledSettings);
       saveReminderToCloud(scheduledSettings);
-    } catch {
+      trackEvent('reminder_updated', {
+        enabled: true,
+        hour: scheduledSettings.hour,
+        minute: scheduledSettings.minute,
+      });
+    } catch (error) {
+      reportError(error, { area: 'schedule_reminder' });
       setReminderSettings(nextSettings);
       saveReminderToCloud(nextSettings);
       Alert.alert(
@@ -699,6 +770,8 @@ export default function AppContent() {
     if (currentUser && cloudHydratedUserId.current === currentUser.id) {
       saveCloudReminderSettings(currentUser.id, settings).catch((error) => {
         console.error('WordWiz cloud reminder save failed:', error);
+        reportError(error, { area: 'save_reminder_settings' });
+        trackEvent('cloud_sync_failed', { operation: 'save_reminder' });
         showCloudSaveWarning();
       });
     }
@@ -810,7 +883,7 @@ export default function AppContent() {
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar style="dark" />
-      <View style={styles.backgroundAura} pointerEvents="none">
+      <View style={styles.backgroundAura}>
         <View style={styles.backgroundBlobTop} />
         <View style={styles.backgroundBlobMiddle} />
         <View style={styles.backgroundBlobBottom} />
@@ -825,13 +898,47 @@ export default function AppContent() {
         />
       ) : (
         <>
-      {renderScreen()}
-      <BottomTabs
-        activeTab={activeTab}
-        bottomInset={insets.bottom}
-        quizComplete={Boolean(todayQuizProgress)}
-        onChange={setActiveTab}
-      />
+          {!hasCompletedOnboarding ? (
+            <OnboardingScreen onComplete={completeOnboarding} />
+          ) : (
+            <>
+              {appNotice ? (
+                <View style={styles.appNotice}>
+                  <Ionicons
+                    name="information-circle"
+                    size={18}
+                    color={COLORS.blue}
+                  />
+                  <Text style={styles.appNoticeText}>{appNotice}</Text>
+                  <Pressable
+                    onPress={() => setAppNotice(null)}
+                    style={styles.appNoticeClose}
+                  >
+                    <Ionicons name="close" size={16} color={COLORS.muted} />
+                  </Pressable>
+                </View>
+              ) : null}
+              {isCloudLoading ? (
+                <View style={styles.syncNotice}>
+                  <Ionicons
+                    name="cloud-download-outline"
+                    size={17}
+                    color={COLORS.purpleDark}
+                  />
+                  <Text style={styles.syncNoticeText}>
+                    Syncing your words...
+                  </Text>
+                </View>
+              ) : null}
+              {renderScreen()}
+              <BottomTabs
+                activeTab={activeTab}
+                bottomInset={insets.bottom}
+                quizComplete={Boolean(todayQuizProgress)}
+                onChange={setActiveTab}
+              />
+            </>
+          )}
         </>
       )}
       <AddWordModal
@@ -841,6 +948,80 @@ export default function AppContent() {
       />
       <LegalModal page={legalPage} onClose={() => setLegalPage(null)} />
     </SafeAreaView>
+  );
+}
+
+function OnboardingScreen({
+  onComplete,
+}: {
+  onComplete: (enableReminder: boolean) => Promise<void>;
+}) {
+  const [isSaving, setIsSaving] = useState(false);
+
+  async function finish(enableReminder: boolean) {
+    setIsSaving(true);
+    try {
+      await onComplete(enableReminder);
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  return (
+    <View style={styles.onboardingScreen}>
+      <View style={styles.onboardingHero}>
+        <View style={styles.onboardingIcon}>
+          <Ionicons name="sparkles" size={34} color={COLORS.white} />
+        </View>
+        <Text style={styles.onboardingTitle}>Make words stick</Text>
+        <Text style={styles.onboardingText}>
+          Save words you meet, practice them as cards, and take one short quiz each day.
+        </Text>
+      </View>
+
+      <View style={styles.onboardingSteps}>
+        {[
+          { icon: 'add-circle-outline', text: 'Add a word and its meaning.' },
+          { icon: 'albums-outline', text: 'Review with quick flashcards.' },
+          { icon: 'notifications-outline', text: 'Optionally get a daily review nudge.' },
+        ].map((step) => (
+          <View key={step.text} style={styles.onboardingStep}>
+            <Ionicons
+              name={step.icon as keyof typeof Ionicons.glyphMap}
+              size={21}
+              color={COLORS.blue}
+            />
+            <Text style={styles.onboardingStepText}>{step.text}</Text>
+          </View>
+        ))}
+      </View>
+
+      <Pressable
+        disabled={isSaving}
+        onPress={() => finish(false)}
+        style={({ pressed }) => [
+          styles.primaryButton,
+          isSaving && styles.primaryButtonDisabled,
+          pressed && !isSaving && styles.primaryButtonPressed,
+        ]}
+      >
+        <Text style={styles.primaryButtonText}>START LEARNING</Text>
+        <Ionicons name="arrow-forward" size={21} color={COLORS.white} />
+      </Pressable>
+      <Pressable
+        disabled={isSaving}
+        onPress={() => finish(true)}
+        style={({ pressed }) => [
+          styles.onboardingReminderButton,
+          pressed && !isSaving && styles.pressed,
+        ]}
+      >
+        <Ionicons name="notifications-outline" size={18} color={COLORS.blue} />
+        <Text style={styles.onboardingReminderText}>
+          Start with a 7 PM reminder
+        </Text>
+      </Pressable>
+    </View>
   );
 }
 
@@ -863,6 +1044,10 @@ function getErrorMessage(error: unknown) {
   }
 
   return 'The cloud request failed. Check Data API access, grants, and RLS policies.';
+}
+
+function isUserCreatedWord(word: Word) {
+  return !STARTER_WORDS.some((starterWord) => starterWord.id === word.id);
 }
 
 async function clearLegacyLearningData() {

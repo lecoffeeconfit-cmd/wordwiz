@@ -29,6 +29,7 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
+    "test": "node tests/run-tests.cjs",
     "typecheck": "tsc --noEmit"
   },
   "overrides": {

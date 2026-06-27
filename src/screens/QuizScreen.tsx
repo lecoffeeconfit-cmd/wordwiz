@@ -6,6 +6,7 @@ import type { AnalyticsData, LegalPage, QuizAnswer, QuizProgress, QuizQuestion, 
 import { styles } from '../styles';
 import { buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, getDayKey, getRecentDays, getStreakMessage, getStreakWeek, getWordMastery, shuffle } from '../utils';
 import { DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
+import { reportError, trackEvent } from '../services';
 
 export function QuizScreen({
   words,
@@ -37,6 +38,7 @@ export function QuizScreen({
     setFinishedScore(null);
     setAnswers([]);
     setQuizStartedAt(Date.now());
+    trackEvent('quiz_started', { questions: Math.min(words.length, 5) });
   }
 
   function chooseAnswer(option: string) {
@@ -52,14 +54,32 @@ export function QuizScreen({
   }
 
   async function nextQuestion() {
-    const finalScore = score;
+    if (!selected) {
+      return;
+    }
+
+    const question = quiz[questionIndex];
+    const currentAnswer = {
+      wordId: question.word.id,
+      correct: selected === question.answer,
+    };
+    const completedAnswers = answers.some(
+      (answer) => answer.wordId === currentAnswer.wordId,
+    )
+      ? answers
+      : [...answers, currentAnswer];
+    const finalScore = completedAnswers.filter((answer) => answer.correct).length;
     if (questionIndex === quiz.length - 1) {
       const durationSeconds = Math.max(
         1,
         Math.round((Date.now() - quizStartedAt) / 1000),
       );
       setFinishedScore(finalScore);
-      await onComplete(finalScore, quiz.length, durationSeconds, answers);
+      try {
+        await onComplete(finalScore, quiz.length, durationSeconds, completedAnswers);
+      } catch (error) {
+        reportError(error, { area: 'complete_quiz' });
+      }
       return;
     }
     setQuestionIndex((index) => index + 1);
