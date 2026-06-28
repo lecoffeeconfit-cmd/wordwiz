@@ -4,7 +4,7 @@ import { FlatList, Pressable, ScrollView, Text, View } from 'react-native';
 import { COLORS } from '../constants/theme';
 import type { AnalyticsData, LegalPage, QuizAnswer, QuizProgress, QuizQuestion, ReminderSettings, SortMode, Word } from '../types';
 import { styles } from '../styles';
-import { buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, getDayKey, getRecentDays, getStreakMessage, getStreakWeek, getWordMastery, shuffle } from '../utils';
+import { buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, getDayKey, getRecentDays, getStreakMessage, getStreakWeek, getWordMastery, getWordReviewPriority, shuffle } from '../utils';
 import { DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 
 export function getGreeting() {
@@ -30,6 +30,7 @@ export function HomeScreen({
   reminderSettings,
   onAddWord,
   onStudy,
+  onReviewWord,
   onQuiz,
   onStats,
 }: {
@@ -38,6 +39,7 @@ export function HomeScreen({
   reminderSettings: ReminderSettings;
   onAddWord: () => void;
   onStudy: () => void;
+  onReviewWord: (wordId: string) => void;
   onQuiz: () => void;
   onStats: () => void;
 }) {
@@ -72,7 +74,9 @@ export function HomeScreen({
   const nextWords = [...words]
     .sort(
       (first, second) =>
-        getWordMastery(first, analytics) - getWordMastery(second, analytics),
+        getWordReviewPriority(second, analytics) -
+          getWordReviewPriority(first, analytics) ||
+        second.createdAt.localeCompare(first.createdAt),
     )
     .slice(0, 2);
 
@@ -207,7 +211,14 @@ export function HomeScreen({
         <View style={styles.nextWordsCard}>
           <Text style={styles.homeSectionTitle}>Words to review</Text>
           {nextWords.map((word) => (
-            <View key={word.id} style={styles.nextWordRow}>
+            <Pressable
+              key={word.id}
+              onPress={() => onReviewWord(word.id)}
+              style={({ pressed }) => [
+                styles.nextWordRow,
+                pressed && styles.pressed,
+              ]}
+            >
               <View style={styles.nextWordIcon}>
                 <Text style={styles.nextWordInitial}>
                   {word.term.charAt(0).toUpperCase()}
@@ -219,10 +230,17 @@ export function HomeScreen({
                   {word.simpleDefinition || word.definition}
                 </Text>
               </View>
-              <Text style={styles.nextWordMastery}>
-                {getWordMastery(word, analytics)}%
-              </Text>
-            </View>
+              <View style={styles.nextWordReason}>
+                <Text style={styles.nextWordReasonText}>
+                  {getReviewReason(word, analytics)}
+                </Text>
+              </View>
+              <Ionicons
+                name="chevron-forward"
+                size={18}
+                color={COLORS.muted}
+              />
+            </Pressable>
           ))}
         </View>
       )}
@@ -241,4 +259,26 @@ export function HomeScreen({
       </View>
     </ScrollView>
   );
+}
+
+function getReviewReason(word: Word, analytics: AnalyticsData) {
+  const missedAnswers = analytics.quizHistory.flatMap((attempt) =>
+    attempt.answers.filter(
+      (answer) => answer.wordId === word.id && !answer.correct,
+    ),
+  ).length;
+  const forgotCards = analytics.cardHistory.filter(
+    (event) => event.wordId === word.id && !event.remembered,
+  ).length;
+
+  if (missedAnswers > 0) {
+    return `${missedAnswers} missed`;
+  }
+  if (forgotCards > 0) {
+    return `${forgotCards} again`;
+  }
+  if (word.reviews === 0) {
+    return 'New';
+  }
+  return `${getWordMastery(word, analytics)}%`;
 }

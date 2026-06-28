@@ -44,7 +44,7 @@ import {
   saveCloudWord,
   saveCloudWordReviews,
   scheduleDailyReminder,
-  seedUserLearningData,
+  setSentryUser,
   trackEvent,
 } from '../services';
 import { env } from '../config/env';
@@ -80,6 +80,7 @@ export default function AppContent() {
   const [activeTab, setActiveTab] = useState<Tab>('home');
   const [words, setWords] = useState<Word[]>([]);
   const [sortMode, setSortMode] = useState<SortMode>('alphabetical');
+  const [initialCardWordId, setInitialCardWordId] = useState<string | null>(null);
   const [quizProgress, setQuizProgress] = useState<QuizProgress | null>(null);
   const [analytics, setAnalytics] = useState<AnalyticsData>(EMPTY_ANALYTICS);
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
@@ -157,6 +158,10 @@ export default function AppContent() {
       authListener.subscription.unsubscribe();
     };
   }, []);
+
+  useEffect(() => {
+    setSentryUser(currentUser);
+  }, [currentUser]);
 
   useEffect(() => {
     if (!isReady) {
@@ -240,16 +245,9 @@ export default function AppContent() {
           }
           syncMissingLocalWords(userId, localWords, cloudData.words);
         } else {
-          const seededWords = await seedUserLearningData({
-            userId,
-            words,
-            analytics,
-            reminderSettings,
-          });
-
-          if (isActive && seededWords.length > 0) {
-            setWords(seededWords);
-          }
+          setWords((currentWords) =>
+            currentWords.length > 0 ? currentWords : STARTER_WORDS,
+          );
         }
 
         cloudHydratedUserId.current = userId;
@@ -310,6 +308,11 @@ export default function AppContent() {
     if (enableReminder) {
       await updateReminder({ ...reminderSettings, enabled: true });
     }
+  }
+
+  function openCards(wordId?: string) {
+    setInitialCardWordId(wordId ?? null);
+    setActiveTab('cards');
   }
 
   useEffect(() => {
@@ -587,11 +590,15 @@ export default function AppContent() {
     details: Partial<WordDetails> = {},
   ) {
     const cleanTerm = term.trim();
+    const isReplacingStarterWord = STARTER_WORDS.some(
+      (starterWord) =>
+        starterWord.term.toLowerCase() === cleanTerm.toLowerCase(),
+    );
     const existingWord = words.find(
       (word) => word.term.toLowerCase() === cleanTerm.toLowerCase(),
     );
     const wordData = buildWordFromInput({
-      existingWord,
+      existingWord: isReplacingStarterWord ? undefined : existingWord,
       term: cleanTerm,
       definition,
       example,
@@ -614,7 +621,7 @@ export default function AppContent() {
 
     setWords((currentWords) => upsertSavedWord(currentWords, savedWord));
     trackEvent('word_saved', {
-      updatedExisting: Boolean(existingWord),
+      updatedExisting: Boolean(existingWord && !isReplacingStarterWord),
       hasSimpleDefinition: Boolean(savedWord.simpleDefinition),
     });
     setShowAddWord(false);
@@ -626,7 +633,11 @@ export default function AppContent() {
       currentWords.filter((word) => word.id !== wordToRemove.id),
     );
 
-    if (currentUser && cloudHydratedUserId.current === currentUser.id) {
+    if (
+      currentUser &&
+      cloudHydratedUserId.current === currentUser.id &&
+      !isStarterWordId(wordToRemove.id)
+    ) {
       deleteCloudWord(currentUser.id, wordToRemove.id).catch((error) => {
         console.error('WordWiz cloud word delete failed:', error);
         reportError(error, { area: 'delete_word' });
@@ -709,7 +720,10 @@ export default function AppContent() {
     if (currentUser && cloudHydratedUserId.current === currentUser.id) {
       const reviewUpdates = answers
         .map((answer) => words.find((word) => word.id === answer.wordId))
-        .filter((word): word is Word => Boolean(word))
+        .filter(
+          (word): word is Word =>
+            word !== undefined && !isStarterWordId(word.id),
+        )
         .map((word) =>
           saveCloudWordReviews(currentUser.id, word.id, word.reviews + 1),
         );
@@ -810,7 +824,8 @@ export default function AppContent() {
           analytics={analytics}
           reminderSettings={reminderSettings}
           onAddWord={() => setShowAddWord(true)}
-          onStudy={() => setActiveTab('cards')}
+          onStudy={() => openCards()}
+          onReviewWord={(wordId) => openCards(wordId)}
           onQuiz={() => setActiveTab('quiz')}
           onStats={() => setActiveTab('dashboard')}
         />
@@ -825,13 +840,19 @@ export default function AppContent() {
           onChangeSort={setSortMode}
           onAdd={() => setShowAddWord(true)}
           onRemove={removeWord}
-          onStudy={() => setActiveTab('cards')}
+          onStudy={() => openCards()}
         />
       );
     }
 
     if (activeTab === 'cards') {
-      return <CardsScreen words={sortedWords} onReview={recordCardReview} />;
+      return (
+        <CardsScreen
+          words={sortedWords}
+          initialWordId={initialCardWordId}
+          onReview={recordCardReview}
+        />
+      );
     }
 
     if (activeTab === 'quiz') {
@@ -935,7 +956,12 @@ export default function AppContent() {
                 activeTab={activeTab}
                 bottomInset={insets.bottom}
                 quizComplete={Boolean(todayQuizProgress)}
-                onChange={setActiveTab}
+                onChange={(tab) => {
+                  if (tab !== 'cards') {
+                    setInitialCardWordId(null);
+                  }
+                  setActiveTab(tab);
+                }}
               />
             </>
           )}
@@ -981,17 +1007,37 @@ function OnboardingScreen({
 
       <View style={styles.onboardingSteps}>
         {[
-          { icon: 'add-circle-outline', text: 'Add a word and its meaning.' },
-          { icon: 'albums-outline', text: 'Review with quick flashcards.' },
-          { icon: 'notifications-outline', text: 'Optionally get a daily review nudge.' },
-        ].map((step) => (
-          <View key={step.text} style={styles.onboardingStep}>
-            <Ionicons
-              name={step.icon as keyof typeof Ionicons.glyphMap}
-              size={21}
-              color={COLORS.blue}
-            />
-            <Text style={styles.onboardingStepText}>{step.text}</Text>
+          {
+            icon: 'add-circle-outline',
+            title: 'Save a word',
+            text: 'Type it once and WordWiz fills in meaning, examples, and history.',
+          },
+          {
+            icon: 'albums-outline',
+            title: 'Review it quickly',
+            text: 'Flashcards and quizzes help move new words into memory.',
+          },
+          {
+            icon: 'notifications-outline',
+            title: 'Come back tomorrow',
+            text: 'A gentle reminder is optional and can be changed anytime.',
+          },
+        ].map((step, index) => (
+          <View key={step.title} style={styles.onboardingStep}>
+            <View style={styles.onboardingStepMarker}>
+              <Text style={styles.onboardingStepNumber}>{index + 1}</Text>
+            </View>
+            <View style={styles.onboardingStepIcon}>
+              <Ionicons
+                name={step.icon as keyof typeof Ionicons.glyphMap}
+                size={20}
+                color={COLORS.purpleDark}
+              />
+            </View>
+            <View style={styles.onboardingStepCopy}>
+              <Text style={styles.onboardingStepTitle}>{step.title}</Text>
+              <Text style={styles.onboardingStepText}>{step.text}</Text>
+            </View>
           </View>
         ))}
       </View>
@@ -1047,7 +1093,11 @@ function getErrorMessage(error: unknown) {
 }
 
 function isUserCreatedWord(word: Word) {
-  return !STARTER_WORDS.some((starterWord) => starterWord.id === word.id);
+  return !isStarterWordId(word.id);
+}
+
+function isStarterWordId(wordId: string) {
+  return STARTER_WORDS.some((starterWord) => starterWord.id === wordId);
 }
 
 async function clearLegacyLearningData() {

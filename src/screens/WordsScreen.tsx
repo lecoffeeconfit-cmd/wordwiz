@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useMemo, useState } from 'react';
 import { FlatList, Pressable, ScrollView, Text, View } from 'react-native';
+import { STARTER_WORDS } from '../constants/data';
 import { COLORS } from '../constants/theme';
 import type { AnalyticsData, LegalPage, QuizAnswer, QuizProgress, QuizQuestion, ReminderSettings, SortMode, Word } from '../types';
 import { styles } from '../styles';
@@ -22,6 +23,12 @@ export function WordsScreen({
   onRemove: (word: Word) => void;
   onStudy: () => void;
 }) {
+  const isSampleCollection =
+    words.length > 0 &&
+    words.every((word) =>
+      STARTER_WORDS.some((starterWord) => starterWord.id === word.id),
+    );
+
   return (
     <View style={styles.screen}>
       <FlatList
@@ -69,6 +76,28 @@ export function WordsScreen({
               </View>
               <Ionicons name="chevron-forward" size={23} color={COLORS.white} />
             </Pressable>
+
+            {isSampleCollection ? (
+              <View style={styles.sampleWordsCard}>
+                <View style={styles.sampleWordsIcon}>
+                  <Ionicons
+                    name="sparkles"
+                    size={20}
+                    color={COLORS.purpleDark}
+                  />
+                </View>
+                <View style={styles.sampleWordsCopy}>
+                  <Text style={styles.sampleWordsTitle}>Sample words</Text>
+                  <Text style={styles.sampleWordsText}>
+                    These examples let you try cards and quizzes. Add your own
+                    first word whenever you are ready.
+                  </Text>
+                </View>
+                <Pressable onPress={onAdd} style={styles.sampleWordsButton}>
+                  <Text style={styles.sampleWordsButtonText}>Add</Text>
+                </Pressable>
+              </View>
+            ) : null}
 
             <View style={styles.listToolbar}>
               <Text style={styles.sectionTitle}>YOUR WORDS</Text>

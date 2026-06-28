@@ -1,5 +1,10 @@
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+const sentryDsn = process.env.EXPO_PUBLIC_SENTRY_DSN;
+const appEnvironment =
+  process.env.EXPO_PUBLIC_APP_ENVIRONMENT ??
+  process.env.NODE_ENV ??
+  'development';
 const fallbackSupabaseUrl = 'https://missing-wordwiz-supabase.supabase.co';
 const fallbackSupabaseAnonKey = 'missing-public-anon-key';
 
@@ -19,6 +24,9 @@ export const env = {
     : supabaseAnonKey,
   isSupabaseConfigured: !configurationError,
   configurationError,
+  sentryDsn,
+  isSentryConfigured: Boolean(sentryDsn),
+  appEnvironment,
 };
 
 function getConfigurationError() {

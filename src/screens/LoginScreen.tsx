@@ -197,33 +197,33 @@ export function LoginScreen({
 
           {!isForgotMode && (
             <>
-              {providers.map((item) => (
-                <Pressable
-                  key={item.provider}
-                  onPress={() => continueWithProvider(item.provider, item.label)}
-                  disabled={isSubmitting}
-                  style={({ pressed }) => [
-                    styles.oauthButton,
-                    isSubmitting && styles.authPrimaryButtonDisabled,
-                    pressed && !isSubmitting && styles.pressed,
-                  ]}
-                >
-                  <View
-                    style={[
-                      styles.oauthIconBadge,
-                      { backgroundColor: item.background },
+              <View style={styles.oauthGrid}>
+                {providers.map((item) => (
+                  <Pressable
+                    key={item.provider}
+                    onPress={() => continueWithProvider(item.provider, item.label)}
+                    disabled={isSubmitting}
+                    style={({ pressed }) => [
+                      styles.oauthButton,
+                      isSubmitting && styles.authPrimaryButtonDisabled,
+                      pressed && !isSubmitting && styles.pressed,
                     ]}
                   >
-                    <OAuthLogo logo={item.logo} />
-                  </View>
-                  <Text style={styles.oauthButtonText}>
-                    Continue with {item.label}
-                  </Text>
-                </Pressable>
-              ))}
+                    <View
+                      style={[
+                        styles.oauthIconBadge,
+                        { backgroundColor: item.background },
+                      ]}
+                    >
+                      <OAuthLogo logo={item.logo} />
+                    </View>
+                    <Text style={styles.oauthButtonText}>{item.label}</Text>
+                  </Pressable>
+                ))}
+              </View>
               <View style={styles.authDividerRow}>
                 <View style={styles.authDividerLine} />
-                <Text style={styles.authDividerText}>or use email</Text>
+                <Text style={styles.authDividerText}>Email sign in</Text>
                 <View style={styles.authDividerLine} />
               </View>
             </>

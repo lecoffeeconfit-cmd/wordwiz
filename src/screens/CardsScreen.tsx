@@ -9,9 +9,11 @@ import { DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCar
 
 export function CardsScreen({
   words,
+  initialWordId,
   onReview,
 }: {
   words: Word[];
+  initialWordId?: string | null;
   onReview: (
     wordId: string,
     remembered: boolean,
@@ -21,14 +23,33 @@ export function CardsScreen({
   const [cardIndex, setCardIndex] = useState(0);
   const [showAnswer, setShowAnswer] = useState(false);
   const [cardStartedAt, setCardStartedAt] = useState(Date.now());
-  const studyWords = useMemo(() => shuffle(words), [words]);
+  const studyWords = useMemo(() => {
+    const shuffledWords = shuffle(words);
+    if (!initialWordId) {
+      return shuffledWords;
+    }
+
+    const selectedIndex = shuffledWords.findIndex(
+      (word) => word.id === initialWordId,
+    );
+    if (selectedIndex <= 0) {
+      return shuffledWords;
+    }
+
+    const selectedWord = shuffledWords[selectedIndex];
+    return [
+      selectedWord,
+      ...shuffledWords.slice(0, selectedIndex),
+      ...shuffledWords.slice(selectedIndex + 1),
+    ];
+  }, [initialWordId, words]);
   const current = studyWords[cardIndex % Math.max(studyWords.length, 1)];
 
   useEffect(() => {
     setCardIndex(0);
     setShowAnswer(false);
     setCardStartedAt(Date.now());
-  }, [words.length]);
+  }, [initialWordId, words.length]);
 
   function nextCard(remembered: boolean) {
     if (!current) return;

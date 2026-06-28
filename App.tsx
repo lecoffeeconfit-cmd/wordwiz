@@ -1,10 +1,15 @@
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import AppContent from './src/application/AppContent';
+import { initializeSentry, wrapWithSentry } from './src/services';
 
-export default function App() {
+initializeSentry();
+
+function App() {
   return (
     <SafeAreaProvider>
       <AppContent />
     </SafeAreaProvider>
   );
 }
+
+export default wrapWithSentry(App);

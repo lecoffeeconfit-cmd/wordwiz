@@ -206,6 +206,34 @@ export function getWordMastery(
   );
 }
 
+export function getWordReviewPriority(word: Word, analytics: AnalyticsData) {
+  const cardEvents = analytics.cardHistory.filter(
+    (event) => event.wordId === word.id,
+  );
+  const quizAnswers = analytics.quizHistory.flatMap((attempt) =>
+    attempt.answers.filter((answer) => answer.wordId === word.id),
+  );
+  const misses = quizAnswers.filter((answer) => !answer.correct).length;
+  const remembered = cardEvents.filter((event) => event.remembered).length;
+  const forgot = cardEvents.filter((event) => !event.remembered).length;
+  const mastery = getWordMastery(word, analytics);
+  const createdAt = new Date(word.createdAt).getTime();
+  const ageHours = Number.isFinite(createdAt)
+    ? Math.max(0, (Date.now() - createdAt) / 3_600_000)
+    : 24;
+  const newWordBoost = word.reviews === 0 ? Math.max(0, 20 - ageHours) : 0;
+  const lowReviewBoost = Math.max(0, 3 - word.reviews) * 4;
+
+  return (
+    misses * 28 +
+    forgot * 22 -
+    remembered * 5 +
+    newWordBoost +
+    lowReviewBoost +
+    Math.max(0, 80 - mastery)
+  );
+}
+
 export function formatStudyTime(seconds: number) {
   if (seconds < 60) return seconds === 0 ? '0m' : '<1m';
   const minutes = Math.round(seconds / 60);

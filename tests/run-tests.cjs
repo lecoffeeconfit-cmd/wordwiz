@@ -212,6 +212,30 @@ test('quiz completion records progress, analytics, and review counts', () => {
   assert.equal(reviewedWords[1].reviews, 1);
 });
 
+test('review priority favors missed words over ordinary new words', () => {
+  const missedWord = makeWord('1', 'Acerbic', 'Sharp or biting', 1);
+  const newWord = makeWord('2', 'Luminous', 'Giving off light', 0);
+  const analytics = {
+    cardHistory: [],
+    quizHistory: [
+      {
+        id: 'quiz-1',
+        date: '2026-01-01',
+        score: 0,
+        total: 1,
+        durationSeconds: 10,
+        completedAt: '2026-01-01T00:00:00.000Z',
+        answers: [{ wordId: missedWord.id, correct: false }],
+      },
+    ],
+  };
+
+  assert.ok(
+    learning.getWordReviewPriority(missedWord, analytics) >
+      learning.getWordReviewPriority(newWord, analytics),
+  );
+});
+
 test('wiktionary parser extracts etymology text from heading variants', () => {
   const extract = `
 English
