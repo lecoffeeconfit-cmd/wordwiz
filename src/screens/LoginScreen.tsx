@@ -108,7 +108,7 @@ export function LoginScreen({
   const providers: {
     provider: Provider;
     label: string;
-    logo: 'google' | 'apple' | 'microsoft';
+    logo: 'google' | 'apple';
     background: string;
   }[] = [
     {
@@ -122,12 +122,6 @@ export function LoginScreen({
       label: 'Apple',
       logo: 'apple',
       background: '#F5F5FA',
-    },
-    {
-      provider: 'azure',
-      label: 'Microsoft',
-      logo: 'microsoft',
-      background: '#F2F7FF',
     },
   ];
 
