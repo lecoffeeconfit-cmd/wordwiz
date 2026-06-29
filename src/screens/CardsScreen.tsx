@@ -5,7 +5,7 @@ import { COLORS } from '../constants/theme';
 import type { AnalyticsData, LegalPage, QuizAnswer, QuizProgress, QuizQuestion, ReminderSettings, SortMode, Word } from '../types';
 import { styles } from '../styles';
 import { buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, getDayKey, getRecentDays, getStreakMessage, getStreakWeek, getWordMastery, shuffle } from '../utils';
-import { DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
+import { DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, SpeakButton, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 
 export function CardsScreen({
   words,
@@ -141,7 +141,10 @@ export function CardsScreen({
         </View>
 
         <View style={styles.flashcardBody}>
-          <Text style={styles.flashcardWord}>{current.term}</Text>
+          <View style={styles.flashcardWordRow}>
+            <Text style={styles.flashcardWord}>{current.term}</Text>
+            <SpeakButton term={current.term} size="large" />
+          </View>
           {!showAnswer && (
             <View style={styles.flashcardMetaRow}>
               {current.partOfSpeech && (

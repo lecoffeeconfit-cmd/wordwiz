@@ -11,6 +11,7 @@
     "expo": "~56.0.9",
     "expo-linking": "~56.0.14",
     "expo-notifications": "~56.0.18",
+    "expo-speech": "~56.0.3",
     "expo-splash-screen": "~56.0.10",
     "expo-status-bar": "~56.0.4",
     "expo-web-browser": "~56.0.5",

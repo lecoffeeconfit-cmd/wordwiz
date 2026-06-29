@@ -1,4 +1,4 @@
-import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import { useState } from 'react';
 import {
   Alert,
@@ -347,44 +347,9 @@ function OAuthLogo({ logo }: { logo: 'google' | 'apple' | 'microsoft' }) {
 }
 
 function GoogleLogo() {
-  const segments = [
-    {
-      color: '#EA4335',
-      clipStyle: styles.oauthGoogleTop,
-      glyphStyle: styles.oauthGoogleTopGlyph,
-    },
-    {
-      color: '#FBBC05',
-      clipStyle: styles.oauthGoogleLeft,
-      glyphStyle: styles.oauthGoogleLeftGlyph,
-    },
-    {
-      color: '#34A853',
-      clipStyle: styles.oauthGoogleBottom,
-      glyphStyle: styles.oauthGoogleBottomGlyph,
-    },
-    {
-      color: '#4285F4',
-      clipStyle: styles.oauthGoogleRight,
-      glyphStyle: styles.oauthGoogleRightGlyph,
-    },
-  ];
-
   return (
     <View style={styles.oauthGoogleLogo}>
-      {segments.map((segment) => (
-        <View
-          key={segment.color}
-          style={[styles.oauthGoogleClip, segment.clipStyle]}
-        >
-          <MaterialCommunityIcons
-            name="google"
-            size={23}
-            color={segment.color}
-            style={[styles.oauthGoogleGlyph, segment.glyphStyle]}
-          />
-        </View>
-      ))}
+      <Ionicons name="logo-google" size={21} color="#4285F4" />
     </View>
   );
 }

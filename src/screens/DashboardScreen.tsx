@@ -87,6 +87,15 @@ export function DashboardScreen({
   const streak = streakStats.current;
   const streakWeek = getStreakWeek(streakStats);
   const reminderTime = formatReminderTime(reminderSettings);
+  const updateReminderTime = (hour: number, minute: number) => {
+    const nextTime = normalizeReminderTime(hour, minute);
+    onUpdateReminder({
+      ...reminderSettings,
+      enabled: true,
+      hour: nextTime.hour,
+      minute: nextTime.minute,
+    });
+  };
 
   return (
     <ScrollView
@@ -216,6 +225,47 @@ export function DashboardScreen({
           <Text style={styles.reminderText}>
             Get a friendly nudge to review words and protect your streak.
           </Text>
+          <View style={styles.reminderCustomTime}>
+            <View style={styles.reminderCustomHeader}>
+              <Text style={styles.reminderCustomLabel}>SET ANY TIME</Text>
+              <Text style={styles.reminderCustomValue}>{reminderTime}</Text>
+            </View>
+            <View style={styles.reminderStepperRow}>
+              <ReminderTimeStepper
+                label="Hour"
+                value={formatReminderHour(reminderSettings.hour)}
+                onDecrease={() =>
+                  updateReminderTime(
+                    reminderSettings.hour - 1,
+                    reminderSettings.minute,
+                  )
+                }
+                onIncrease={() =>
+                  updateReminderTime(
+                    reminderSettings.hour + 1,
+                    reminderSettings.minute,
+                  )
+                }
+              />
+              <ReminderTimeStepper
+                label="Minute"
+                value={formatReminderMinute(reminderSettings.minute)}
+                onDecrease={() =>
+                  updateReminderTime(
+                    reminderSettings.hour,
+                    reminderSettings.minute - 1,
+                  )
+                }
+                onIncrease={() =>
+                  updateReminderTime(
+                    reminderSettings.hour,
+                    reminderSettings.minute + 1,
+                  )
+                }
+              />
+            </View>
+          </View>
+          <Text style={styles.reminderQuickLabel}>QUICK PICKS</Text>
           <View style={styles.reminderTimes}>
             {[
               { label: '8 AM', hour: 8, minute: 0 },
@@ -229,14 +279,7 @@ export function DashboardScreen({
                   reminderSettings.hour === time.hour &&
                   reminderSettings.minute === time.minute
                 }
-                onPress={() =>
-                  onUpdateReminder({
-                    ...reminderSettings,
-                    enabled: true,
-                    hour: time.hour,
-                    minute: time.minute,
-                  })
-                }
+                onPress={() => updateReminderTime(time.hour, time.minute)}
               />
             ))}
           </View>
@@ -535,4 +578,69 @@ export function DashboardScreen({
       </Text>
     </ScrollView>
   );
+}
+
+function ReminderTimeStepper({
+  label,
+  value,
+  onDecrease,
+  onIncrease,
+}: {
+  label: string;
+  value: string;
+  onDecrease: () => void;
+  onIncrease: () => void;
+}) {
+  return (
+    <View style={styles.reminderTimeUnit}>
+      <Text style={styles.reminderTimeUnitLabel}>{label}</Text>
+      <View style={styles.reminderStepperControls}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Decrease reminder ${label.toLowerCase()}`}
+          onPress={onDecrease}
+          style={({ pressed }) => [
+            styles.reminderStepperButton,
+            pressed && styles.pressed,
+          ]}
+        >
+          <Ionicons name="remove" size={18} color={COLORS.blue} />
+        </Pressable>
+        <Text style={styles.reminderStepperValue}>{value}</Text>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Increase reminder ${label.toLowerCase()}`}
+          onPress={onIncrease}
+          style={({ pressed }) => [
+            styles.reminderStepperButton,
+            pressed && styles.pressed,
+          ]}
+        >
+          <Ionicons name="add" size={18} color={COLORS.blue} />
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+function normalizeReminderTime(hour: number, minute: number) {
+  const minutesInDay = 24 * 60;
+  const totalMinutes =
+    ((hour * 60 + minute) % minutesInDay + minutesInDay) % minutesInDay;
+
+  return {
+    hour: Math.floor(totalMinutes / 60),
+    minute: totalMinutes % 60,
+  };
+}
+
+function formatReminderHour(hour: number) {
+  const period = hour >= 12 ? 'PM' : 'AM';
+  const displayHour = hour % 12 || 12;
+
+  return `${displayHour} ${period}`;
+}
+
+function formatReminderMinute(minute: number) {
+  return minute.toString().padStart(2, '0');
 }

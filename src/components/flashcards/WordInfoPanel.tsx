@@ -4,6 +4,7 @@ import { Linking, Pressable, Text, View } from 'react-native';
 import { COLORS, TILE_COLORS } from '../../constants/theme';
 import type { Tab, Word } from '../../types';
 import { styles } from '../../styles';
+import { SpeakButton } from '../shared/SpeakButton';
 
 export function WordInfoPanel({ word }: { word: Word }) {
   const hasInfo =
@@ -26,6 +27,7 @@ export function WordInfoPanel({ word }: { word: Word }) {
         {word.pronunciation && (
           <InfoChip icon="volume-medium-outline" text={word.pronunciation} />
         )}
+        <SpeakButton term={word.term} />
       </View>
       {word.basicInfo && (
         <Text style={styles.wordInfoText}>{word.basicInfo}</Text>

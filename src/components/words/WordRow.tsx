@@ -3,6 +3,7 @@ import { Pressable, Text, View } from 'react-native';
 import { COLORS, TILE_COLORS } from '../../constants/theme';
 import type { Word } from '../../types';
 import { styles } from '../../styles';
+import { SpeakButton } from '../shared/SpeakButton';
 
 function getLetterColor(term: string) {
   const firstLetter = term.trim().charAt(0).toUpperCase();
@@ -40,6 +41,7 @@ export function WordRow({
           {word.partOfSpeech && (
             <Text style={styles.partOfSpeechPill}>{word.partOfSpeech}</Text>
           )}
+          <SpeakButton term={word.term} />
         </View>
         <Text numberOfLines={2} style={styles.wordDefinition}>
           {word.simpleDefinition || word.definition}

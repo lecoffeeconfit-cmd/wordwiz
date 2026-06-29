@@ -27,6 +27,22 @@ SENTRY_AUTH_TOKEN=your-private-token
 Also keep your Sentry organization slug and project slug available in the Sentry
 dashboard for EAS/Sentry configuration.
 
+Source-map upload is currently disabled in `eas.json` with:
+
+```bash
+SENTRY_DISABLE_AUTO_UPLOAD=true
+```
+
+This keeps App Store/TestFlight builds from failing before Sentry org/project
+settings are configured. When you are ready to upload source maps, remove that
+environment variable from the EAS build profile and configure:
+
+```bash
+SENTRY_ORG=your-org-slug
+SENTRY_PROJECT=your-project-slug
+SENTRY_AUTH_TOKEN=your-private-token
+```
+
 ## Verification
 
 After adding the DSN, make a release or TestFlight build and confirm:
