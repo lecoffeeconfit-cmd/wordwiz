@@ -1637,12 +1637,37 @@ export const styles = StyleSheet.create({
     fontWeight: '900',
     letterSpacing: -1.5,
   },
+  heroLevelTitle: {
+    marginTop: 8,
+    color: COLORS.white,
+    fontSize: 19,
+    lineHeight: 24,
+    fontWeight: '900',
+  },
   heroText: {
     marginTop: 5,
     color: '#F1EEFF',
     fontSize: 12,
     lineHeight: 17,
     fontWeight: '600',
+  },
+  heroLevelTrack: {
+    height: 8,
+    marginTop: 11,
+    borderRadius: 4,
+    overflow: 'hidden',
+    backgroundColor: 'rgba(255,255,255,0.28)',
+  },
+  heroLevelFill: {
+    height: '100%',
+    borderRadius: 4,
+  },
+  heroLevelNext: {
+    marginTop: 6,
+    color: '#F1EEFF',
+    fontSize: 10,
+    lineHeight: 13,
+    fontWeight: '800',
   },
   masteryGauge: {
     width: 106,
@@ -2170,6 +2195,15 @@ export const styles = StyleSheet.create({
     color: COLORS.ink,
     fontSize: 13,
     fontWeight: '800',
+  },
+  masteryWordCopy: {
+    flex: 1,
+    paddingRight: 8,
+  },
+  masteryWordLevel: {
+    marginTop: 2,
+    fontSize: 9,
+    fontWeight: '900',
   },
   masteryPercent: {
     fontSize: 11,
@@ -2848,6 +2882,60 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: COLORS.white,
+    overflow: 'hidden',
+    position: 'relative',
+  },
+  oauthGoogleClip: {
+    position: 'absolute',
+    width: 12,
+    height: 12,
+    overflow: 'hidden',
+  },
+  oauthGoogleClipTopLeft: {
+    top: 0,
+    left: 0,
+  },
+  oauthGoogleClipTopRight: {
+    top: 0,
+    right: 0,
+  },
+  oauthGoogleClipBottomLeft: {
+    bottom: 0,
+    left: 0,
+  },
+  oauthGoogleClipBottomRight: {
+    right: 0,
+    bottom: 0,
+  },
+  oauthGoogleIcon: {
+    position: 'absolute',
+    width: 22,
+    height: 22,
+  },
+  oauthGoogleIconTopLeft: {
+    top: 1,
+    left: 1,
+  },
+  oauthGoogleIconTopRight: {
+    top: 1,
+    right: 1,
+  },
+  oauthGoogleIconBottomLeft: {
+    bottom: 1,
+    left: 1,
+  },
+  oauthGoogleIconBottomRight: {
+    right: 1,
+    bottom: 1,
+  },
+  oauthGoogleCrossbar: {
+    position: 'absolute',
+    right: 1.5,
+    top: 10,
+    width: 10,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#4285F4',
   },
   oauthMicrosoftLogo: {
     width: 21,

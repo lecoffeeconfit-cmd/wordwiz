@@ -5,7 +5,7 @@ import { COLORS } from '../constants/theme';
 import type { AnalyticsData, LegalPage, QuizAnswer, QuizProgress, QuizQuestion, ReminderSettings, SortMode, Word } from '../types';
 import type { AuthUser } from '../types';
 import { styles } from '../styles';
-import { buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, getDayKey, getRecentDays, getStreakMessage, getStreakWeek, getWordMastery, shuffle } from '../utils';
+import { buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, getDayKey, getMasteryLevel, getMasteryLevelProgress, getNextMasteryLevel, getRecentDays, getStreakMessage, getStreakWeek, getWordMastery, shuffle } from '../utils';
 import { DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 
 export function DashboardScreen({
@@ -60,6 +60,9 @@ export function DashboardScreen({
         mastery.reduce((total, item) => total + item.score, 0) / words.length,
       )
     : 0;
+  const masteryLevel = getMasteryLevel(overallMastery);
+  const nextMasteryLevel = getNextMasteryLevel(overallMastery);
+  const masteryLevelProgress = getMasteryLevelProgress(overallMastery);
   const strongWords = mastery.filter((item) => item.score >= 80).length;
   const buildingWords = mastery.filter(
     (item) => item.score >= 40 && item.score < 80,
@@ -112,13 +115,26 @@ export function DashboardScreen({
       <View style={styles.dashboardHero}>
         <View style={styles.heroCopy}>
           <Text style={styles.heroLabel}>ESTIMATED MASTERY</Text>
+          <Text style={styles.heroLevelTitle}>{masteryLevel.title}</Text>
           <Text style={styles.heroValue}>{overallMastery}%</Text>
           <Text style={styles.heroText}>
-            {overallMastery >= 80
-              ? 'Your collection is looking strong!'
-              : overallMastery >= 40
-                ? 'You’re building lasting word knowledge.'
-                : 'Every review moves these words into memory.'}
+            {masteryLevel.encouragement}
+          </Text>
+          <View style={styles.heroLevelTrack}>
+            <View
+              style={[
+                styles.heroLevelFill,
+                {
+                  width: `${Math.max(masteryLevelProgress, words.length ? 6 : 0)}%`,
+                  backgroundColor: masteryLevel.color,
+                },
+              ]}
+            />
+          </View>
+          <Text style={styles.heroLevelNext}>
+            {nextMasteryLevel
+              ? `${nextMasteryLevel.minScore - overallMastery} pts to ${nextMasteryLevel.shortTitle}`
+              : 'Top rank reached'}
           </Text>
         </View>
         <View style={styles.masteryGauge}>
@@ -357,17 +373,17 @@ export function DashboardScreen({
           <View style={styles.levelStack}>
             <LevelRow
               color={COLORS.green}
-              label="Strong"
+              label="Strong words"
               value={strongWords}
             />
             <LevelRow
               color={COLORS.yellow}
-              label="Building"
+              label="Building words"
               value={buildingWords}
             />
             <LevelRow
               color={COLORS.blue}
-              label="Learning"
+              label="Learning words"
               value={learningWords}
             />
           </View>
@@ -407,7 +423,17 @@ export function DashboardScreen({
           mastery.slice(0, 5).map((item) => (
             <View key={item.word.id} style={styles.masteryRow}>
               <View style={styles.masteryRowTop}>
-                <Text style={styles.masteryWord}>{item.word.term}</Text>
+                <View style={styles.masteryWordCopy}>
+                  <Text style={styles.masteryWord}>{item.word.term}</Text>
+                  <Text
+                    style={[
+                      styles.masteryWordLevel,
+                      { color: getMasteryLevel(item.score).color },
+                    ]}
+                  >
+                    {getMasteryLevel(item.score).shortTitle}
+                  </Text>
+                </View>
                 <Text
                   style={[
                     styles.masteryPercent,
@@ -596,7 +622,7 @@ function ReminderTimeStepper({
       <Text style={styles.reminderTimeUnitLabel}>{label}</Text>
       <View style={styles.reminderStepperControls}>
         <Pressable
-          accessibilityRole="button"
+          role="button"
           accessibilityLabel={`Decrease reminder ${label.toLowerCase()}`}
           onPress={onDecrease}
           style={({ pressed }) => [
@@ -608,7 +634,7 @@ function ReminderTimeStepper({
         </Pressable>
         <Text style={styles.reminderStepperValue}>{value}</Text>
         <Pressable
-          accessibilityRole="button"
+          role="button"
           accessibilityLabel={`Increase reminder ${label.toLowerCase()}`}
           onPress={onIncrease}
           style={({ pressed }) => [

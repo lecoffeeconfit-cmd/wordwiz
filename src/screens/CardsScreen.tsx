@@ -108,7 +108,7 @@ export function CardsScreen({
       </View>
 
       <Pressable
-        accessibilityRole="button"
+        role="button"
         accessibilityLabel={showAnswer ? 'Definition shown' : 'Reveal definition'}
         onPress={() => setShowAnswer((shown) => !shown)}
         style={({ pressed }) => [

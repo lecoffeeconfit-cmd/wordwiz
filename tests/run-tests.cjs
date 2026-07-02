@@ -236,6 +236,23 @@ test('review priority favors missed words over ordinary new words', () => {
   );
 });
 
+test('mastery levels follow the WordWiz rank track', () => {
+  assert.equal(learning.getMasteryLevel(0).title, 'Novice WordWiz');
+  assert.equal(learning.getMasteryLevel(15).title, 'Apprentice WordWiz');
+  assert.equal(learning.getMasteryLevel(45).title, 'Adept WordWiz');
+  assert.equal(learning.getMasteryLevel(60).title, 'Mage WordWiz');
+  assert.equal(learning.getMasteryLevel(90).title, 'Grandmaster WordWiz');
+  assert.equal(learning.getNextMasteryLevel(89).title, 'Grandmaster WordWiz');
+  assert.equal(learning.getNextMasteryLevel(100), null);
+});
+
+test('mastery level progress measures progress to the next rank', () => {
+  assert.equal(learning.getMasteryLevelProgress(0), 0);
+  assert.equal(learning.getMasteryLevelProgress(7), 47);
+  assert.equal(learning.getMasteryLevelProgress(15), 0);
+  assert.equal(learning.getMasteryLevelProgress(100), 100);
+});
+
 test('wiktionary parser extracts etymology text from heading variants', () => {
   const extract = `
 English

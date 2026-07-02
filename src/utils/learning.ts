@@ -206,6 +206,96 @@ export function getWordMastery(
   );
 }
 
+export const MASTERY_LEVELS = [
+  {
+    title: 'Novice WordWiz',
+    shortTitle: 'Novice',
+    minScore: 0,
+    color: '#2879E8',
+    encouragement: 'Start with a few honest reviews.',
+  },
+  {
+    title: 'Apprentice WordWiz',
+    shortTitle: 'Apprentice',
+    minScore: 15,
+    color: '#39C69A',
+    encouragement: 'Your words are beginning to stick.',
+  },
+  {
+    title: 'Journeyman WordWiz',
+    shortTitle: 'Journeyman',
+    minScore: 30,
+    color: '#8DE7C7',
+    encouragement: 'Steady practice is building recall.',
+  },
+  {
+    title: 'Adept WordWiz',
+    shortTitle: 'Adept',
+    minScore: 45,
+    color: '#FFD87A',
+    encouragement: 'You are turning recognition into command.',
+  },
+  {
+    title: 'Mage WordWiz',
+    shortTitle: 'Mage',
+    minScore: 60,
+    color: '#8E78FF',
+    encouragement: 'Your vocabulary magic is getting reliable.',
+  },
+  {
+    title: 'Master WordWiz',
+    shortTitle: 'Master',
+    minScore: 75,
+    color: '#F2A65A',
+    encouragement: 'Most saved words are becoming familiar.',
+  },
+  {
+    title: 'Grandmaster WordWiz',
+    shortTitle: 'Grandmaster',
+    minScore: 90,
+    color: '#FF7E9F',
+    encouragement: 'This collection is deeply practiced.',
+  },
+] as const;
+
+export function getMasteryLevel(score: number) {
+  const normalizedScore = clampMasteryScore(score);
+
+  return MASTERY_LEVELS.reduce(
+    (currentLevel, level) =>
+      normalizedScore >= level.minScore ? level : currentLevel,
+    MASTERY_LEVELS[0],
+  );
+}
+
+export function getNextMasteryLevel(score: number) {
+  const normalizedScore = clampMasteryScore(score);
+
+  return (
+    MASTERY_LEVELS.find((level) => level.minScore > normalizedScore) ?? null
+  );
+}
+
+export function getMasteryLevelProgress(score: number) {
+  const normalizedScore = clampMasteryScore(score);
+  const currentLevel = getMasteryLevel(normalizedScore);
+  const nextLevel = getNextMasteryLevel(normalizedScore);
+
+  if (!nextLevel) {
+    return 100;
+  }
+
+  const span = nextLevel.minScore - currentLevel.minScore;
+
+  return Math.round(
+    ((normalizedScore - currentLevel.minScore) / span) * 100,
+  );
+}
+
+function clampMasteryScore(score: number) {
+  return Math.max(0, Math.min(100, Math.round(score)));
+}
+
 export function getWordReviewPriority(word: Word, analytics: AnalyticsData) {
   const cardEvents = analytics.cardHistory.filter(
     (event) => event.wordId === word.id,

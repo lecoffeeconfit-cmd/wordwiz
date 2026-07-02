@@ -347,9 +347,46 @@ function OAuthLogo({ logo }: { logo: 'google' | 'apple' | 'microsoft' }) {
 }
 
 function GoogleLogo() {
+  const quadrants = [
+    {
+      color: '#EA4335',
+      clip: styles.oauthGoogleClipTopLeft,
+      icon: styles.oauthGoogleIconTopLeft,
+    },
+    {
+      color: '#FBBC05',
+      clip: styles.oauthGoogleClipTopRight,
+      icon: styles.oauthGoogleIconTopRight,
+    },
+    {
+      color: '#34A853',
+      clip: styles.oauthGoogleClipBottomLeft,
+      icon: styles.oauthGoogleIconBottomLeft,
+    },
+    {
+      color: '#4285F4',
+      clip: styles.oauthGoogleClipBottomRight,
+      icon: styles.oauthGoogleIconBottomRight,
+    },
+  ];
+
   return (
     <View style={styles.oauthGoogleLogo}>
-      <Ionicons name="logo-google" size={21} color="#4285F4" />
+      {quadrants.map((quadrant) => (
+        <View
+          key={quadrant.color}
+          pointerEvents="none"
+          style={[styles.oauthGoogleClip, quadrant.clip]}
+        >
+          <Ionicons
+            name="logo-google"
+            size={22}
+            color={quadrant.color}
+            style={[styles.oauthGoogleIcon, quadrant.icon]}
+          />
+        </View>
+      ))}
+      <View style={styles.oauthGoogleCrossbar} />
     </View>
   );
 }

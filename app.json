@@ -14,7 +14,14 @@
       "backgroundColor": "#F7FAFC"
     },
     "plugins": [
-      "@sentry/react-native/expo",
+      [
+        "@sentry/react-native/expo",
+        {
+          "url": "https://sentry.io/",
+          "organization": "lecoffeeconfit",
+          "project": "wordwiz"
+        }
+      ],
       [
         "expo-notifications",
         {
