@@ -12,7 +12,6 @@ import { supabase } from './supabase';
 
 type WordRow = {
   id: string;
-  user_id: string;
   term: string;
   definition: string;
   simple_definition: string | null;
@@ -53,6 +52,42 @@ type ReminderSettingsRow = {
   minute: number;
 };
 
+const WORD_COLUMNS = [
+  'id',
+  'term',
+  'definition',
+  'simple_definition',
+  'example',
+  'part_of_speech',
+  'pronunciation',
+  'origin',
+  'origin_period',
+  'synonyms',
+  'common_words',
+  'basic_info',
+  'reviews',
+  'created_at',
+].join(',');
+
+const QUIZ_ATTEMPT_COLUMNS = [
+  'id',
+  'quiz_date',
+  'score',
+  'total',
+  'duration_seconds',
+  'answers',
+  'completed_at',
+].join(',');
+
+const CARD_REVIEW_COLUMNS = [
+  'id',
+  'word_id',
+  'review_date',
+  'remembered',
+  'duration_seconds',
+  'studied_at',
+].join(',');
+
 export type UserLearningData = {
   words: Word[];
   quizProgress: QuizProgress | null;
@@ -67,18 +102,18 @@ export async function fetchUserLearningData(
     await Promise.all([
       supabase
         .from('words')
-        .select('*')
+        .select(WORD_COLUMNS)
         .eq('user_id', userId)
         .order('created_at', { ascending: false }),
       supabase
         .from('quiz_attempts')
-        .select('*')
+        .select(QUIZ_ATTEMPT_COLUMNS)
         .eq('user_id', userId)
         .order('completed_at', { ascending: false })
         .limit(30),
       supabase
         .from('card_reviews')
-        .select('*')
+        .select(CARD_REVIEW_COLUMNS)
         .eq('user_id', userId)
         .order('studied_at', { ascending: false })
         .limit(80),
@@ -99,17 +134,17 @@ export async function fetchUserLearningData(
     throw firstError;
   }
 
-  const quizHistory = ((quizResult.data ?? []) as QuizAttemptRow[]).map(
+  const quizHistory = ((quizResult.data ?? []) as unknown as QuizAttemptRow[]).map(
     mapQuizAttemptRow,
   );
-  const cardHistory = ((reviewsResult.data ?? []) as CardReviewRow[]).map(
+  const cardHistory = ((reviewsResult.data ?? []) as unknown as CardReviewRow[]).map(
     mapCardReviewRow,
   );
   const todayProgress =
     quizHistory.find((attempt) => attempt.date === getDayKey()) ?? null;
 
   return {
-    words: ((wordsResult.data ?? []) as WordRow[]).map(mapWordRow),
+    words: ((wordsResult.data ?? []) as unknown as WordRow[]).map(mapWordRow),
     quizProgress: todayProgress
       ? {
           date: todayProgress.date,
@@ -156,15 +191,15 @@ export async function seedUserLearningData({
 export async function saveCloudWord(userId: string, word: Word) {
   const payload = toWordPayload(userId, word);
   const query = isUuid(word.id)
-    ? supabase.from('words').upsert({ ...payload, id: word.id }).select('*')
-    : supabase.from('words').insert(payload).select('*');
+    ? supabase.from('words').upsert({ ...payload, id: word.id }).select(WORD_COLUMNS)
+    : supabase.from('words').insert(payload).select(WORD_COLUMNS);
   const { data, error } = await query.single();
 
   if (error) {
     throw getQueryError('words', error);
   }
 
-  return mapWordRow(data as WordRow);
+  return mapWordRow(data as unknown as WordRow);
 }
 
 export async function deleteCloudWord(userId: string, wordId: string) {
