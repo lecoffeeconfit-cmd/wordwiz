@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useMemo, useState } from 'react';
-import { FlatList, Pressable, ScrollView, Text, View } from 'react-native';
+import { FlatList, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { STARTER_WORDS } from '../constants/data';
 import { COLORS } from '../constants/theme';
 import type { AnalyticsData, LegalPage, QuizAnswer, QuizProgress, QuizQuestion, ReminderSettings, SortMode, Word } from '../types';
@@ -23,6 +23,29 @@ export function WordsScreen({
   onRemove: (word: Word) => void;
   onStudy: () => void;
 }) {
+  const [searchQuery, setSearchQuery] = useState('');
+  const normalizedSearchQuery = searchQuery.trim().toLowerCase();
+  const filteredWords = useMemo(() => {
+    if (!normalizedSearchQuery) {
+      return words;
+    }
+
+    return words.filter((word) =>
+      [
+        word.term,
+        word.definition,
+        word.simpleDefinition,
+        word.partOfSpeech,
+        word.pronunciation,
+        word.commonWords?.join(' '),
+        word.synonyms?.join(' '),
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase()
+        .includes(normalizedSearchQuery),
+    );
+  }, [normalizedSearchQuery, words]);
   const isSampleCollection =
     words.length > 0 &&
     words.every((word) =>
@@ -32,7 +55,7 @@ export function WordsScreen({
   return (
     <View style={styles.screen}>
       <FlatList
-        data={words}
+        data={filteredWords}
         keyExtractor={(item) => item.id}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.listContent}
@@ -114,16 +137,53 @@ export function WordsScreen({
                 />
               </View>
             </View>
+
+            {words.length > 0 && (
+              <View style={styles.wordSearchBox}>
+                <Ionicons name="search" size={18} color={COLORS.muted} />
+                <TextInput
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  clearButtonMode="never"
+                  placeholder="Search words"
+                  placeholderTextColor={COLORS.muted}
+                  returnKeyType="search"
+                  value={searchQuery}
+                  onChangeText={setSearchQuery}
+                  style={styles.wordSearchInput}
+                />
+                {searchQuery.length > 0 && (
+                  <Pressable
+                    accessibilityLabel="Clear word search"
+                    onPress={() => setSearchQuery('')}
+                    style={({ pressed }) => [
+                      styles.wordSearchClear,
+                      pressed && styles.pressed,
+                    ]}
+                  >
+                    <Ionicons name="close" size={15} color={COLORS.muted} />
+                  </Pressable>
+                )}
+              </View>
+            )}
           </>
         }
         ListEmptyComponent={
           <View style={styles.emptyState}>
             <View style={styles.emptyIcon}>
-              <Ionicons name="leaf-outline" size={38} color={COLORS.green} />
+              <Ionicons
+                name={normalizedSearchQuery ? 'search-outline' : 'leaf-outline'}
+                size={38}
+                color={COLORS.green}
+              />
             </View>
-            <Text style={styles.emptyTitle}>Start your collection</Text>
+            <Text style={styles.emptyTitle}>
+              {normalizedSearchQuery ? 'No words found' : 'Start your collection'}
+            </Text>
             <Text style={styles.emptyText}>
-              Add a word you heard, read, or wondered about.
+              {normalizedSearchQuery
+                ? 'Try a different word, meaning, or synonym.'
+                : 'Add a word you heard, read, or wondered about.'}
             </Text>
           </View>
         }

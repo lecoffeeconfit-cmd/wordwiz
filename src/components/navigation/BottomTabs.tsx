@@ -44,8 +44,10 @@ export function BottomTabs({
     },
   ];
 
+  const bottomPadding = Math.max(8, Math.min(bottomInset, 14));
+
   return (
-    <View style={[styles.bottomTabs, { paddingBottom: Math.max(bottomInset, 8) }]}>
+    <View style={[styles.bottomTabs, { paddingBottom: bottomPadding }]}>
       {tabs.map((tab) => {
         const active = tab.key === activeTab;
         return (
@@ -59,7 +61,7 @@ export function BottomTabs({
             <View style={[styles.tabIcon, active && styles.tabIconActive]}>
               <Ionicons
                 name={active ? tab.activeIcon : tab.icon}
-                size={24}
+                size={22}
                 color={active ? COLORS.purpleDark : COLORS.muted}
               />
               {tab.key === 'quiz' && quizComplete && (

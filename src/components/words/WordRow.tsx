@@ -21,6 +21,7 @@ export function WordRow({
   onRemove: (word: Word) => void;
 }) {
   const letterColor = getLetterColor(word.term);
+  const hasLongTerm = word.term.trim().length > 8;
 
   return (
     <Pressable
@@ -36,8 +37,18 @@ export function WordRow({
         </Text>
       </View>
       <View style={styles.wordRowCopy}>
-        <View style={styles.wordTitleRow}>
-          <Text style={styles.wordTerm}>{word.term}</Text>
+        <View
+          style={[
+            styles.wordTitleRow,
+            hasLongTerm && styles.wordTitleRowWrapped,
+          ]}
+        >
+          <Text
+            minimumFontScale={0.82}
+            style={[styles.wordTerm, hasLongTerm && styles.wordTermLong]}
+          >
+            {word.term}
+          </Text>
           {word.partOfSpeech && (
             <Text style={styles.partOfSpeechPill}>{word.partOfSpeech}</Text>
           )}

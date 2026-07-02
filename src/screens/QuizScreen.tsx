@@ -196,7 +196,13 @@ export function QuizScreen({
 
       <View style={styles.questionCard}>
         <Text style={styles.questionPrompt}>WHAT DOES THIS WORD MEAN?</Text>
-        <Text style={styles.questionWord}>{question.word.term}</Text>
+        <Text
+          adjustsFontSizeToFit
+          minimumFontScale={0.62}
+          style={styles.questionWord}
+        >
+          {question.word.term}
+        </Text>
       </View>
 
       <View style={styles.optionsList}>

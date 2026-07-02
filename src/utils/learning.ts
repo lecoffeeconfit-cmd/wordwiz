@@ -1,4 +1,5 @@
 import type {
+  Achievement,
   AnalyticsData,
   QuizAnswer,
   QuizAttempt,
@@ -8,6 +9,36 @@ import type {
   WordDetails,
 } from '../types';
 import { getDayKey, getPreviousDayKey, getRecentDays } from './date';
+
+export function getProgressColor(score: number) {
+  if (score >= 90) return '#F4B400';
+  if (score >= 75) return '#F2A65A';
+  if (score >= 60) return '#8E78FF';
+  if (score >= 40) return '#FFD87A';
+  if (score >= 20) return '#39C69A';
+  return '#2879E8';
+}
+
+export function getProgressPaleColor(score: number) {
+  if (score >= 90) return '#FFF7DF';
+  if (score >= 75) return '#FFF0DC';
+  if (score >= 60) return '#F2EFFF';
+  if (score >= 40) return '#FFF7DF';
+  if (score >= 20) return '#E8FBF4';
+  return '#EAF2FF';
+}
+
+export function getProgressShineOpacity(score: number) {
+  const normalizedScore = Math.max(0, Math.min(100, score));
+  if (normalizedScore < 50) {
+    return 0;
+  }
+  if (normalizedScore >= 100) {
+    return 0.58;
+  }
+
+  return Number((0.14 + ((normalizedScore - 50) / 50) * 0.32).toFixed(2));
+}
 
 export function buildWordFromInput({
   existingWord,
@@ -398,4 +429,186 @@ export function getStreakMessage(stats: StreakStats) {
     return 'Review today to keep your streak alive.';
   }
   return 'Start a new streak with one quick review today.';
+}
+
+export function getStreakMilestone(stats: StreakStats) {
+  const streak = stats.current;
+
+  if (streak >= 30) {
+    return {
+      title: '30-day scholar',
+      description: 'A serious word habit is alive.',
+      color: '#F2A65A',
+    };
+  }
+  if (streak >= 14) {
+    return {
+      title: '14-day word habit',
+      description: 'Two steady weeks of learning.',
+      color: '#8E78FF',
+    };
+  }
+  if (streak >= 7) {
+    return {
+      title: '7-day rhythm',
+      description: 'A full week of practice.',
+      color: '#39C69A',
+    };
+  }
+  if (streak >= 3) {
+    return {
+      title: '3-day spark',
+      description: 'The habit is starting to catch.',
+      color: '#2879E8',
+    };
+  }
+
+  return {
+    title: 'Start the spark',
+    description: 'Reach 3 active days for your first streak badge.',
+    color: '#7A83A5',
+  };
+}
+
+export function buildAchievements({
+  words,
+  analytics,
+  streakStats = calculateStreakStats(analytics),
+}: {
+  words: Word[];
+  analytics: AnalyticsData;
+  streakStats?: StreakStats;
+}): Achievement[] {
+  const totalCardReviews = analytics.cardHistory.length;
+  const rememberedCards = analytics.cardHistory.filter(
+    (event) => event.remembered,
+  ).length;
+  const perfectQuiz = analytics.quizHistory.some(
+    (attempt) => attempt.total > 0 && attempt.score === attempt.total,
+  );
+  const totalQuizQuestions = analytics.quizHistory.reduce(
+    (total, attempt) => total + attempt.total,
+    0,
+  );
+  const strongWords = words.filter(
+    (word) => getWordMastery(word, analytics) >= 80,
+  ).length;
+  const topWordReviews = Math.max(0, ...words.map((word) => word.reviews));
+  const totalReviews = totalCardReviews + totalQuizQuestions;
+
+  return [
+    createAchievement({
+      id: 'first-word',
+      title: 'First word saved',
+      description: 'Your collection has begun.',
+      icon: 'book',
+      color: '#2879E8',
+      background: '#EAF2FF',
+      progress: words.length,
+      target: 1,
+    }),
+    createAchievement({
+      id: 'word-collector',
+      title: '10-word collection',
+      description: 'A real vocabulary shelf.',
+      icon: 'albums',
+      color: '#8E78FF',
+      background: '#F2EFFF',
+      progress: words.length,
+      target: 10,
+    }),
+    createAchievement({
+      id: 'first-quiz',
+      title: 'First quiz complete',
+      description: 'You tested your recall.',
+      icon: 'trophy',
+      color: '#F2A65A',
+      background: '#FFF0DC',
+      progress: analytics.quizHistory.length,
+      target: 1,
+    }),
+    createAchievement({
+      id: 'perfect-quiz',
+      title: 'Perfect quiz',
+      description: 'Every answer landed.',
+      icon: 'sparkles',
+      color: '#FF7E9F',
+      background: '#FFEAF1',
+      progress: perfectQuiz ? 1 : 0,
+      target: 1,
+    }),
+    createAchievement({
+      id: 'review-50',
+      title: '50 reviews',
+      description: 'Practice is doing its work.',
+      icon: 'refresh-circle',
+      color: '#39C69A',
+      background: '#E8FBF4',
+      progress: totalReviews,
+      target: 50,
+    }),
+    createAchievement({
+      id: 'word-loop',
+      title: 'Word loop',
+      description: 'Reviewed one word 5 times.',
+      icon: 'repeat',
+      color: '#2879E8',
+      background: '#EAF2FF',
+      progress: topWordReviews,
+      target: 5,
+    }),
+    createAchievement({
+      id: 'strong-five',
+      title: '5 strong words',
+      description: 'Meanings are sticking.',
+      icon: 'school',
+      color: '#8DE7C7',
+      background: '#EFFFF8',
+      progress: strongWords,
+      target: 5,
+    }),
+    createAchievement({
+      id: 'streak-week',
+      title: '7-day rhythm',
+      description: 'A full week of word practice.',
+      icon: 'flame',
+      color: '#F2A65A',
+      background: '#FFF0DC',
+      progress: streakStats.longest,
+      target: 7,
+    }),
+    createAchievement({
+      id: 'remembered-10',
+      title: '10 confident cards',
+      description: 'You marked them remembered.',
+      icon: 'checkmark-circle',
+      color: '#39C69A',
+      background: '#E8FBF4',
+      progress: rememberedCards,
+      target: 10,
+    }),
+  ];
+}
+
+function createAchievement({
+  id,
+  title,
+  description,
+  icon,
+  color,
+  background,
+  progress,
+  target,
+}: Omit<Achievement, 'unlocked'>): Achievement {
+  return {
+    id,
+    title,
+    description,
+    icon,
+    color,
+    background,
+    progress: Math.min(progress, target),
+    target,
+    unlocked: progress >= target,
+  };
 }

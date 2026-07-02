@@ -7,11 +7,11 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
-    "backgroundColor": "#F7FAFC",
+    "backgroundColor": "#F8F4FF",
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#F7FAFC"
+      "backgroundColor": "#F8F4FF"
     },
     "plugins": [
       [
@@ -36,10 +36,10 @@
           "image": "./assets/splash-icon.png",
           "imageWidth": 180,
           "resizeMode": "contain",
-          "backgroundColor": "#F7FAFC",
+          "backgroundColor": "#F8F4FF",
           "dark": {
             "image": "./assets/splash-icon.png",
-            "backgroundColor": "#F7FAFC"
+            "backgroundColor": "#F8F4FF"
           }
         }
       ]

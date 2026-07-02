@@ -4,7 +4,7 @@ import { FlatList, Pressable, ScrollView, Text, View } from 'react-native';
 import { COLORS } from '../constants/theme';
 import type { AnalyticsData, LegalPage, QuizAnswer, QuizProgress, QuizQuestion, ReminderSettings, SortMode, Word } from '../types';
 import { styles } from '../styles';
-import { buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, getDayKey, getRecentDays, getStreakMessage, getStreakWeek, getWordMastery, getWordReviewPriority, shuffle } from '../utils';
+import { buildAchievements, buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, getDayKey, getProgressColor, getProgressPaleColor, getProgressShineOpacity, getRecentDays, getStreakMessage, getStreakMilestone, getStreakWeek, getWordMastery, getWordReviewPriority, shuffle } from '../utils';
 import { DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 
 export function getGreeting() {
@@ -70,6 +70,12 @@ export function HomeScreen({
       0,
     );
   const streakStats = calculateStreakStats(analytics);
+  const streakMilestone = getStreakMilestone(streakStats);
+  const achievements = buildAchievements({ words, analytics, streakStats });
+  const achievementPreview = [
+    ...achievements.filter((achievement) => achievement.unlocked),
+    ...achievements.filter((achievement) => !achievement.unlocked),
+  ].slice(0, 3);
   const todayReviews = getTodayReviewCount(analytics);
   const nextWords = [...words]
     .sort(
@@ -95,7 +101,7 @@ export function HomeScreen({
             <Text style={styles.avatarText}>W</Text>
           </View>
           <View style={styles.homeStatsPill}>
-            <Ionicons name="flame" size={15} color={COLORS.yellow} />
+            <Ionicons name="flame" size={15} color={streakMilestone.color} />
             <Text style={styles.homeStatsPillText}>{streakStats.current}</Text>
             <Ionicons name="school" size={15} color={COLORS.purpleDark} />
             <Text style={styles.homeStatsPillText}>{overallMastery}%</Text>
@@ -159,18 +165,73 @@ export function HomeScreen({
           <Text style={styles.homeSkillSubtitle}>
             Mastery is about {overallMastery}% across your saved words.
           </Text>
+          <Text style={[styles.homeSkillBadge, { color: getProgressColor(overallMastery) }]}>
+            {streakMilestone.title}
+          </Text>
         </View>
         <View style={styles.homeSkillTrack}>
           <View
             style={[
               styles.homeSkillFill,
-              { width: `${Math.max(overallMastery, words.length ? 6 : 0)}%` },
+              {
+                width: `${Math.max(overallMastery, words.length ? 6 : 0)}%`,
+                backgroundColor: getProgressColor(overallMastery),
+              },
             ]}
-          />
+          >
+            <View
+              style={[
+                styles.progressShine,
+                { opacity: getProgressShineOpacity(overallMastery) },
+                overallMastery >= 100 && styles.progressShineComplete,
+              ]}
+            />
+          </View>
         </View>
         <Pressable onPress={onStats} style={styles.homeStartButton}>
           <Text style={styles.homeStartButtonText}>Stats</Text>
         </Pressable>
+      </View>
+
+      <View style={styles.homeAchievementsCard}>
+        <View style={styles.homeAchievementsHeader}>
+          <Text style={styles.homeSectionTitle}>Latest achievements</Text>
+          <Text style={styles.homeAchievementsCount}>
+            {achievements.filter((achievement) => achievement.unlocked).length}/{achievements.length}
+          </Text>
+        </View>
+        <View style={styles.homeAchievementRow}>
+          {achievementPreview.map((achievement) => (
+            <View
+              key={achievement.id}
+              style={[
+                styles.homeAchievementChip,
+                {
+                  backgroundColor: achievement.unlocked
+                    ? achievement.background
+                    : getProgressPaleColor(
+                        (achievement.progress / achievement.target) * 100,
+                      ),
+                },
+              ]}
+            >
+              <Ionicons
+                name={achievement.icon}
+                size={17}
+                color={achievement.unlocked ? achievement.color : COLORS.muted}
+              />
+              <Text
+                numberOfLines={1}
+                style={[
+                  styles.homeAchievementText,
+                  achievement.unlocked && { color: achievement.color },
+                ]}
+              >
+                {achievement.title}
+              </Text>
+            </View>
+          ))}
+        </View>
       </View>
 
       <View style={styles.homePromptSection}>

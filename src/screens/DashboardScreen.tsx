@@ -5,7 +5,7 @@ import { COLORS } from '../constants/theme';
 import type { AnalyticsData, LegalPage, QuizAnswer, QuizProgress, QuizQuestion, ReminderSettings, SortMode, Word } from '../types';
 import type { AuthUser } from '../types';
 import { styles } from '../styles';
-import { buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, getDayKey, getMasteryLevel, getMasteryLevelProgress, getNextMasteryLevel, getRecentDays, getStreakMessage, getStreakWeek, getWordMastery, shuffle } from '../utils';
+import { buildAchievements, buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, getDayKey, getMasteryLevel, getMasteryLevelProgress, getNextMasteryLevel, getProgressColor, getProgressPaleColor, getProgressShineOpacity, getRecentDays, getStreakMessage, getStreakMilestone, getStreakWeek, getWordMastery, shuffle } from '../utils';
 import { DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 
 export function DashboardScreen({
@@ -88,7 +88,12 @@ export function DashboardScreen({
   const recentQuizzes = analytics.quizHistory.slice(-5).reverse();
   const streakStats = calculateStreakStats(analytics);
   const streak = streakStats.current;
+  const streakMilestone = getStreakMilestone(streakStats);
   const streakWeek = getStreakWeek(streakStats);
+  const achievements = buildAchievements({ words, analytics, streakStats });
+  const unlockedAchievements = achievements.filter(
+    (achievement) => achievement.unlocked,
+  ).length;
   const reminderTime = formatReminderTime(reminderSettings);
   const updateReminderTime = (hour: number, minute: number) => {
     const nextTime = normalizeReminderTime(hour, minute);
@@ -126,10 +131,18 @@ export function DashboardScreen({
                 styles.heroLevelFill,
                 {
                   width: `${Math.max(masteryLevelProgress, words.length ? 6 : 0)}%`,
-                  backgroundColor: masteryLevel.color,
+                  backgroundColor: getProgressColor(overallMastery),
                 },
               ]}
-            />
+            >
+              <View
+                style={[
+                  styles.progressShine,
+                  { opacity: getProgressShineOpacity(overallMastery) },
+                  overallMastery >= 100 && styles.progressShineComplete,
+                ]}
+              />
+            </View>
           </View>
           <Text style={styles.heroLevelNext}>
             {nextMasteryLevel
@@ -187,14 +200,14 @@ export function DashboardScreen({
             </View>
             <View style={styles.streakHeaderCopy}>
               <Text style={styles.streakLabel}>STREAKS</Text>
-              <Text style={styles.streakTitle}>{streak} day streak</Text>
+              <Text style={styles.streakTitle}>{streakMilestone.title}</Text>
             </View>
             <Text style={styles.longestStreak}>
               Best {streakStats.longest}d
             </Text>
           </View>
           <Text style={styles.streakMessage}>
-            {getStreakMessage(streakStats)}
+            {getStreakMessage(streakStats)} {streakMilestone.description}
           </Text>
           <View style={styles.streakWeek}>
             {streakWeek.map((day) => (
@@ -321,11 +334,24 @@ export function DashboardScreen({
                         day.value ? 12 : 4,
                         (day.value / maxActivity) * 100,
                       )}%`,
-                      backgroundColor:
-                        day.key === getDayKey() ? COLORS.green : COLORS.blue,
+                      backgroundColor: day.key === getDayKey()
+                        ? COLORS.green
+                        : getProgressColor((day.value / maxActivity) * 100),
                     },
                   ]}
-                />
+                >
+                  <View
+                    style={[
+                      styles.progressShine,
+                      {
+                        opacity: getProgressShineOpacity(
+                          (day.value / maxActivity) * 100,
+                        ),
+                      },
+                      day.value === maxActivity && styles.progressShineComplete,
+                    ]}
+                  />
+                </View>
               </View>
               <Text
                 style={[
@@ -414,6 +440,82 @@ export function DashboardScreen({
         </View>
       </View>
 
+      <DashboardSection
+        title="ACHIEVEMENTS"
+        badge={`${unlockedAchievements}/${achievements.length} unlocked`}
+      >
+        <View style={styles.achievementGrid}>
+          {achievements.map((achievement) => {
+            const percent = Math.round(
+              (achievement.progress / achievement.target) * 100,
+            );
+            const fillColor = achievement.unlocked
+              ? achievement.color
+              : getProgressColor(percent);
+
+            return (
+              <View
+                key={achievement.id}
+                style={[
+                  styles.achievementCard,
+                  {
+                    backgroundColor: achievement.unlocked
+                      ? achievement.background
+                      : getProgressPaleColor(percent),
+                  },
+                ]}
+              >
+                <View style={styles.achievementHeader}>
+                  <View
+                    style={[
+                      styles.achievementIcon,
+                      { backgroundColor: achievement.unlocked ? COLORS.white : COLORS.surface },
+                    ]}
+                  >
+                    <Ionicons
+                      name={achievement.icon}
+                      size={18}
+                      color={achievement.unlocked ? achievement.color : COLORS.muted}
+                    />
+                  </View>
+                  <Text
+                    style={[
+                      styles.achievementStatus,
+                      { color: achievement.unlocked ? achievement.color : COLORS.muted },
+                    ]}
+                  >
+                    {achievement.unlocked ? 'DONE' : `${achievement.progress}/${achievement.target}`}
+                  </Text>
+                </View>
+                <Text style={styles.achievementTitle}>{achievement.title}</Text>
+                <Text style={styles.achievementText}>
+                  {achievement.description}
+                </Text>
+                <View style={styles.achievementTrack}>
+                  <View
+                    style={[
+                      styles.achievementFill,
+                      {
+                        width: `${Math.max(percent, achievement.progress ? 8 : 0)}%`,
+                        backgroundColor: fillColor,
+                      },
+                    ]}
+                  >
+                    <View
+                      style={[
+                        styles.progressShine,
+                        { opacity: getProgressShineOpacity(percent) },
+                        achievement.unlocked && styles.progressShineComplete,
+                      ]}
+                    />
+                  </View>
+                </View>
+              </View>
+            );
+          })}
+        </View>
+      </DashboardSection>
+
       <DashboardSection title="WORD MASTERY" badge={`${words.length} words`}>
         {mastery.length === 0 ? (
           <Text style={styles.dashboardEmptyText}>
@@ -438,12 +540,7 @@ export function DashboardScreen({
                   style={[
                     styles.masteryPercent,
                     {
-                      color:
-                        item.score >= 80
-                          ? COLORS.greenDark
-                          : item.score >= 40
-                            ? '#C29100'
-                            : COLORS.blue,
+                      color: getProgressColor(item.score),
                     },
                   ]}
                 >
@@ -456,15 +553,18 @@ export function DashboardScreen({
                     styles.masteryFill,
                     {
                       width: `${Math.max(item.score, 3)}%`,
-                      backgroundColor:
-                        item.score >= 80
-                          ? COLORS.green
-                          : item.score >= 40
-                            ? COLORS.yellow
-                            : COLORS.blue,
+                      backgroundColor: getProgressColor(item.score),
                     },
                   ]}
-                />
+                >
+                  <View
+                    style={[
+                      styles.progressShine,
+                      { opacity: getProgressShineOpacity(item.score) },
+                      item.score >= 100 && styles.progressShineComplete,
+                    ]}
+                  />
+                </View>
               </View>
             </View>
           ))
@@ -495,11 +595,18 @@ export function DashboardScreen({
                       styles.trendFill,
                       {
                         width: `${percent}%`,
-                        backgroundColor:
-                          percent >= 80 ? COLORS.green : COLORS.purple,
+                        backgroundColor: getProgressColor(percent),
                       },
                     ]}
-                  />
+                  >
+                    <View
+                      style={[
+                        styles.progressShine,
+                        { opacity: getProgressShineOpacity(percent) },
+                        percent >= 100 && styles.progressShineComplete,
+                      ]}
+                    />
+                  </View>
                 </View>
                 <Text style={styles.trendScore}>{percent}%</Text>
               </View>

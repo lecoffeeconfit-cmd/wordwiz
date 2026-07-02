@@ -253,6 +253,70 @@ test('mastery level progress measures progress to the next rank', () => {
   assert.equal(learning.getMasteryLevelProgress(100), 100);
 });
 
+test('achievement builder unlocks practice milestones', () => {
+  const words = [
+    makeWord('1', 'Alpha', 'First', 5),
+    makeWord('2', 'Bravo', 'Second', 1),
+  ];
+  const analytics = {
+    cardHistory: [
+      {
+        id: 'card-1',
+        wordId: '1',
+        date: '2026-01-01',
+        studiedAt: '2026-01-01T00:00:00.000Z',
+        remembered: true,
+        durationSeconds: 8,
+      },
+    ],
+    quizHistory: [
+      {
+        id: 'quiz-1',
+        date: '2026-01-01',
+        score: 2,
+        total: 2,
+        durationSeconds: 14,
+        completedAt: '2026-01-01T00:00:00.000Z',
+        answers: [
+          { wordId: '1', correct: true },
+          { wordId: '2', correct: true },
+        ],
+      },
+    ],
+  };
+  const achievements = learning.buildAchievements({ words, analytics });
+
+  assert.equal(
+    achievements.find((achievement) => achievement.id === 'first-word').unlocked,
+    true,
+  );
+  assert.equal(
+    achievements.find((achievement) => achievement.id === 'perfect-quiz').unlocked,
+    true,
+  );
+  assert.equal(
+    achievements.find((achievement) => achievement.id === 'word-loop').unlocked,
+    true,
+  );
+});
+
+test('progress colors move through stronger learning states', () => {
+  assert.equal(learning.getProgressColor(0), '#2879E8');
+  assert.equal(learning.getProgressColor(40), '#FFD87A');
+  assert.equal(learning.getProgressColor(75), '#F2A65A');
+  assert.equal(learning.getProgressColor(90), '#F4B400');
+});
+
+test('progress shine appears halfway and peaks at complete', () => {
+  assert.equal(learning.getProgressShineOpacity(49), 0);
+  assert.ok(learning.getProgressShineOpacity(50) > 0);
+  assert.ok(
+    learning.getProgressShineOpacity(80) >
+      learning.getProgressShineOpacity(50),
+  );
+  assert.equal(learning.getProgressShineOpacity(100), 0.58);
+});
+
 test('wiktionary parser extracts etymology text from heading variants', () => {
   const extract = `
 English

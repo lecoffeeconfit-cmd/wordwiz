@@ -1,7 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
+import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Platform, Pressable, Text, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BottomTabs } from '../components';
@@ -95,6 +96,16 @@ export default function AppContent() {
   const cloudHydratedUserId = useRef<string | null>(null);
   const cloudWarningShown = useRef(false);
   const latestWords = useRef<Word[]>([]);
+  const hasHiddenNativeSplash = useRef(false);
+
+  const hideNativeSplash = useCallback(() => {
+    if (hasHiddenNativeSplash.current) {
+      return;
+    }
+
+    hasHiddenNativeSplash.current = true;
+    SplashScreen.hide();
+  }, []);
 
   useEffect(() => {
     latestWords.current = words;
@@ -881,7 +892,7 @@ export default function AppContent() {
 
   if (!isReady) {
     return (
-      <SafeAreaView style={styles.loadingScreen}>
+      <SafeAreaView style={styles.loadingScreen} onLayout={hideNativeSplash}>
         <Ionicons name="sparkles" size={34} color={COLORS.purpleDark} />
         <Text style={styles.loadingTitle}>Getting WordWiz ready...</Text>
       </SafeAreaView>
@@ -890,7 +901,7 @@ export default function AppContent() {
 
   if (!env.isSupabaseConfigured) {
     return (
-      <SafeAreaView style={styles.loadingScreen}>
+      <SafeAreaView style={styles.loadingScreen} onLayout={hideNativeSplash}>
         <Ionicons name="warning-outline" size={34} color={COLORS.purpleDark} />
         <Text style={styles.loadingTitle}>WordWiz needs setup</Text>
         <Text style={styles.loadingText}>
@@ -902,7 +913,7 @@ export default function AppContent() {
   }
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView style={styles.safeArea} onLayout={hideNativeSplash}>
       <StatusBar style="dark" />
       <View style={styles.backgroundAura}>
         <View style={styles.backgroundBlobTop} />

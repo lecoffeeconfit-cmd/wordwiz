@@ -18,7 +18,7 @@ export function SpeakButton({
       accessibilityLabel={`Hear ${term} pronounced`}
       onPress={(event: GestureResponderEvent) => {
         event.stopPropagation();
-        speakWord(term);
+        void speakWord(term);
       }}
       style={({ pressed }) => [
         styles.speakButton,

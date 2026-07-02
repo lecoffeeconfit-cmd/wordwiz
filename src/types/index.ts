@@ -112,6 +112,18 @@ export type StreakStats = {
   activeDates: Set<string>;
 };
 
+export type Achievement = {
+  id: string;
+  title: string;
+  description: string;
+  icon: keyof typeof import('@expo/vector-icons').Ionicons.glyphMap;
+  color: string;
+  background: string;
+  unlocked: boolean;
+  progress: number;
+  target: number;
+};
+
 export type QuizQuestion = {
   word: Word;
   options: string[];
