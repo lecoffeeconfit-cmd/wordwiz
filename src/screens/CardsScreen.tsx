@@ -4,15 +4,17 @@ import { FlatList, Pressable, ScrollView, Text, View } from 'react-native';
 import { COLORS } from '../constants/theme';
 import type { AnalyticsData, LegalPage, QuizAnswer, QuizProgress, QuizQuestion, ReminderSettings, SortMode, Word } from '../types';
 import { styles } from '../styles';
-import { buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, getDayKey, getProgressShineOpacity, getRecentDays, getStreakMessage, getStreakWeek, getWordMastery, shuffle } from '../utils';
+import { buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, getDayKey, getProgressShineOpacity, getRecentDays, getStreakMessage, getStreakWeek, getWordMastery, getWordMasteryCategoryId, shuffle, WORD_MASTERY_CATEGORIES, type WordMasteryCategoryId } from '../utils';
 import { DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, SpeakButton, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 
 export function CardsScreen({
   words,
+  analytics,
   initialWordId,
   onReview,
 }: {
   words: Word[];
+  analytics: AnalyticsData;
   initialWordId?: string | null;
   onReview: (
     wordId: string,
@@ -23,8 +25,46 @@ export function CardsScreen({
   const [cardIndex, setCardIndex] = useState(0);
   const [showAnswer, setShowAnswer] = useState(false);
   const [cardStartedAt, setCardStartedAt] = useState(Date.now());
+  const [selectedCategory, setSelectedCategory] =
+    useState<WordMasteryCategoryId>('all');
+  const wordMastery = useMemo(
+    () =>
+      words.map((word) => ({
+        word,
+        categoryId: getWordMasteryCategoryId(getWordMastery(word, analytics)),
+      })),
+    [analytics, words],
+  );
+  const categoryCounts = useMemo(
+    () =>
+      WORD_MASTERY_CATEGORIES.reduce(
+        (counts, category) => ({
+          ...counts,
+          [category.id]:
+            category.id === 'all'
+              ? words.length
+              : wordMastery.filter((item) => item.categoryId === category.id)
+                  .length,
+        }),
+        {} as Record<WordMasteryCategoryId, number>,
+      ),
+    [wordMastery, words.length],
+  );
+  const filteredWords = useMemo(
+    () =>
+      selectedCategory === 'all'
+        ? words
+        : wordMastery
+            .filter((item) => item.categoryId === selectedCategory)
+            .map((item) => item.word),
+    [selectedCategory, wordMastery, words],
+  );
+  const selectedCategoryDetails =
+    WORD_MASTERY_CATEGORIES.find(
+      (category) => category.id === selectedCategory,
+    ) ?? WORD_MASTERY_CATEGORIES[0];
   const studyWords = useMemo(() => {
-    const shuffledWords = shuffle(words);
+    const shuffledWords = shuffle(filteredWords);
     if (!initialWordId) {
       return shuffledWords;
     }
@@ -42,14 +82,68 @@ export function CardsScreen({
       ...shuffledWords.slice(0, selectedIndex),
       ...shuffledWords.slice(selectedIndex + 1),
     ];
-  }, [initialWordId, words]);
+  }, [filteredWords, initialWordId]);
   const current = studyWords[cardIndex % Math.max(studyWords.length, 1)];
 
   useEffect(() => {
     setCardIndex(0);
     setShowAnswer(false);
     setCardStartedAt(Date.now());
-  }, [initialWordId, words.length]);
+  }, [initialWordId, selectedCategory, studyWords.length, words.length]);
+
+  const categorySelector = (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      contentContainerStyle={styles.practiceCategoryList}
+      style={styles.practiceCategoryScroller}
+    >
+      {WORD_MASTERY_CATEGORIES.map((category) => {
+        const isActive = selectedCategory === category.id;
+        const count = categoryCounts[category.id] ?? 0;
+
+        return (
+          <Pressable
+            key={category.id}
+            accessibilityRole="button"
+            accessibilityLabel={`Study ${category.label.toLowerCase()}`}
+            accessibilityState={{ selected: isActive }}
+            onPress={() => setSelectedCategory(category.id)}
+            style={[
+              styles.practiceCategoryChip,
+              isActive && styles.practiceCategoryChipActive,
+              { borderColor: isActive ? category.color : '#E5DEF5' },
+            ]}
+          >
+            <View
+              style={[
+                styles.practiceCategoryIcon,
+                { backgroundColor: category.pale },
+              ]}
+            >
+              <Ionicons name={category.icon} size={15} color={category.color} />
+            </View>
+            <Text
+              style={[
+                styles.practiceCategoryText,
+                isActive && { color: category.color },
+              ]}
+            >
+              {category.shortLabel}
+            </Text>
+            <Text
+              style={[
+                styles.practiceCategoryCount,
+                isActive && { color: category.color },
+              ]}
+            >
+              {count}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </ScrollView>
+  );
 
   function nextCard(remembered: boolean) {
     if (!current) return;
@@ -85,6 +179,47 @@ export function CardsScreen({
     );
   }
 
+  if (studyWords.length === 0) {
+    return (
+      <ScrollView
+        style={styles.screen}
+        contentContainerStyle={styles.cardScreenContent}
+        showsVerticalScrollIndicator={false}
+      >
+        <ScreenHeader
+          eyebrow="FLASHCARDS"
+          title="Practice makes progress"
+          subtitle="Choose a word group to study."
+        />
+        {categorySelector}
+        <View
+          style={[
+            styles.practiceCategoryBanner,
+            { backgroundColor: selectedCategoryDetails.pale },
+          ]}
+        >
+          <Ionicons
+            name={selectedCategoryDetails.icon}
+            size={17}
+            color={selectedCategoryDetails.color}
+          />
+          <Text
+            style={[
+              styles.practiceCategoryBannerText,
+              { color: selectedCategoryDetails.color },
+            ]}
+          >
+            No {selectedCategoryDetails.shortLabel.toLowerCase()} words yet
+          </Text>
+        </View>
+        <EmptyPractice
+          icon="albums-outline"
+          label="Pick another group or keep reviewing to move words here."
+        />
+      </ScrollView>
+    );
+  }
+
   return (
     <ScrollView
       style={styles.screen}
@@ -96,6 +231,28 @@ export function CardsScreen({
         title="Practice makes progress"
         subtitle="Tap the card, then tell us how it felt."
       />
+
+      {categorySelector}
+      <View
+        style={[
+          styles.practiceCategoryBanner,
+          { backgroundColor: selectedCategoryDetails.pale },
+        ]}
+      >
+        <Ionicons
+          name={selectedCategoryDetails.icon}
+          size={17}
+          color={selectedCategoryDetails.color}
+        />
+        <Text
+          style={[
+            styles.practiceCategoryBannerText,
+            { color: selectedCategoryDetails.color },
+          ]}
+        >
+          {studyWords.length} {selectedCategoryDetails.shortLabel.toLowerCase()} words in this deck
+        </Text>
+      </View>
 
       <View style={styles.cardProgressRow}>
         {(() => {
@@ -131,7 +288,7 @@ export function CardsScreen({
       </View>
 
       <Pressable
-        role="button"
+        accessibilityRole="button"
         accessibilityLabel={showAnswer ? 'Definition shown' : 'Reveal definition'}
         onPress={() => setShowAnswer((shown) => !shown)}
         style={({ pressed }) => [

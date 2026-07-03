@@ -11,21 +11,99 @@ import type {
 import { getDayKey, getPreviousDayKey, getRecentDays } from './date';
 
 export function getProgressColor(score: number) {
-  if (score >= 90) return '#F4B400';
-  if (score >= 75) return '#F2A65A';
-  if (score >= 60) return '#8E78FF';
-  if (score >= 40) return '#FFD87A';
-  if (score >= 20) return '#39C69A';
+  if (score >= 100) return '#F4B400';
+  if (score >= 80) return '#39C69A';
+  if (score >= 40) return '#8E78FF';
   return '#2879E8';
 }
 
+export function getHeroProgressColor(score: number) {
+  if (score >= 90) return '#F4B400';
+  if (score >= 75) return '#FFD87A';
+  if (score >= 50) return '#8DE7C7';
+  return '#B9F5E0';
+}
+
 export function getProgressPaleColor(score: number) {
-  if (score >= 90) return '#FFF7DF';
-  if (score >= 75) return '#FFF0DC';
-  if (score >= 60) return '#F2EFFF';
-  if (score >= 40) return '#FFF7DF';
-  if (score >= 20) return '#E8FBF4';
+  if (score >= 100) return '#FFF7DF';
+  if (score >= 80) return '#E8FBF4';
+  if (score >= 40) return '#F2EFFF';
   return '#EAF2FF';
+}
+
+export type WordMasteryCategoryId =
+  | 'all'
+  | 'learning'
+  | 'building'
+  | 'strong'
+  | 'master';
+
+export type WordMasteryCategory = {
+  id: WordMasteryCategoryId;
+  label: string;
+  shortLabel: string;
+  color: string;
+  pale: string;
+  icon: keyof typeof import('@expo/vector-icons').Ionicons.glyphMap;
+};
+
+export const WORD_MASTERY_CATEGORIES: WordMasteryCategory[] = [
+  {
+    id: 'all',
+    label: 'All words',
+    shortLabel: 'All',
+    color: '#5B4DE4',
+    pale: '#F2EFFF',
+    icon: 'apps',
+  },
+  {
+    id: 'learning',
+    label: 'Learning words',
+    shortLabel: 'Learning',
+    color: '#2879E8',
+    pale: '#EAF2FF',
+    icon: 'leaf',
+  },
+  {
+    id: 'building',
+    label: 'Building words',
+    shortLabel: 'Building',
+    color: '#FFD87A',
+    pale: '#FFF7DF',
+    icon: 'construct',
+  },
+  {
+    id: 'strong',
+    label: 'Strong words',
+    shortLabel: 'Strong',
+    color: '#8E78FF',
+    pale: '#F2EFFF',
+    icon: 'flash',
+  },
+  {
+    id: 'master',
+    label: 'Master words',
+    shortLabel: 'Master',
+    color: '#2AA987',
+    pale: '#E8FBF4',
+    icon: 'sparkles',
+  },
+];
+
+export function getWordMasteryCategoryId(score: number): WordMasteryCategoryId {
+  if (score >= 100) return 'master';
+  if (score >= 80) return 'strong';
+  if (score >= 40) return 'building';
+  return 'learning';
+}
+
+export function getWordMasteryCategory(score: number) {
+  const categoryId = getWordMasteryCategoryId(score);
+
+  return (
+    WORD_MASTERY_CATEGORIES.find((category) => category.id === categoryId) ??
+    WORD_MASTERY_CATEGORIES[1]
+  );
 }
 
 export function getProgressShineOpacity(score: number) {

@@ -84,6 +84,22 @@ export type QuizAttempt = QuizProgress & {
   answers: QuizAnswer[];
 };
 
+export type QuizQuestionMode =
+  | 'word-to-definition'
+  | 'definition-to-word'
+  | 'true-false';
+
+export type QuizQuestion = {
+  word: Word;
+  prompt: string;
+  displayText: string;
+  answer: string;
+  options: string[];
+  mode: QuizQuestionMode;
+  helperText: string;
+  feedback: string;
+};
+
 export type CardStudyEvent = {
   id: string;
   wordId: string;
@@ -122,10 +138,4 @@ export type Achievement = {
   unlocked: boolean;
   progress: number;
   target: number;
-};
-
-export type QuizQuestion = {
-  word: Word;
-  options: string[];
-  answer: string;
 };

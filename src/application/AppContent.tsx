@@ -43,6 +43,7 @@ import {
   saveCloudQuizAttempt,
   saveCloudReminderSettings,
   saveCloudWord,
+  saveCloudWords,
   saveCloudWordReviews,
   scheduleDailyReminder,
   setSentryUser,
@@ -75,6 +76,10 @@ import {
 } from '../utils';
 
 const ONBOARDING_KEY = '@wordwiz/onboarding-complete/v1';
+const CLOUD_HYDRATE_CACHE_MS = 30 * 60 * 1000;
+const CLOUD_SYNC_LOGS_ENABLED =
+  (typeof __DEV__ !== 'undefined' && __DEV__) ||
+  process.env.EXPO_PUBLIC_WORDWIZ_EGRESS_LOGS === 'true';
 
 export default function AppContent() {
   const insets = useSafeAreaInsets();
@@ -94,6 +99,7 @@ export default function AppContent() {
   const [showAddWord, setShowAddWord] = useState(false);
   const [legalPage, setLegalPage] = useState<LegalPage | null>(null);
   const cloudHydratedUserId = useRef<string | null>(null);
+  const cloudHydratingUserId = useRef<string | null>(null);
   const cloudWarningShown = useRef(false);
   const latestWords = useRef<Word[]>([]);
   const hasHiddenNativeSplash = useRef(false);
@@ -126,7 +132,15 @@ export default function AppContent() {
           return;
         }
 
+        logCloudSync('auth:get_session_start', {
+          screen: 'Launch',
+          reason: 'restore_session',
+        });
         const sessionResult = await supabase.auth.getSession();
+        logCloudSync('auth:get_session_complete', {
+          screen: 'Launch',
+          reason: 'restore_session',
+        });
         const sessionUser = sessionResult.data.session?.user
           ? toAuthUser(sessionResult.data.session.user)
           : null;
@@ -229,14 +243,31 @@ export default function AppContent() {
       return;
     }
 
+    if (cloudHydratingUserId.current === currentUser.id) {
+      return;
+    }
+
     const userId = currentUser.id;
     let isActive = true;
 
     async function hydrateCloudData() {
       try {
+        cloudHydratingUserId.current = userId;
+
+        if (await loadFreshCloudCache(userId)) {
+          cloudHydratedUserId.current = userId;
+          logCloudSync('hydrate_skipped_fresh_cache', {
+            cacheTtlMs: CLOUD_HYDRATE_CACHE_MS,
+          });
+          return;
+        }
+
         setIsCloudLoading(true);
         setAppNotice(null);
-        const cloudData = await fetchUserLearningData(userId);
+        const cloudData = await fetchUserLearningData(
+          userId,
+          getScreenContext(activeTab, 'hydrate_learning_data'),
+        );
 
         if (!isActive) {
           return;
@@ -262,6 +293,7 @@ export default function AppContent() {
         }
 
         cloudHydratedUserId.current = userId;
+        markCloudCacheFresh(userId);
       } catch (error) {
         console.error('WordWiz cloud hydration failed:', error);
         reportError(error, { area: 'cloud_hydration' });
@@ -275,6 +307,9 @@ export default function AppContent() {
           );
         }
       } finally {
+        if (cloudHydratingUserId.current === userId) {
+          cloudHydratingUserId.current = null;
+        }
         if (isActive) {
           setIsCloudLoading(false);
         }
@@ -300,12 +335,44 @@ export default function AppContent() {
       (word) => !cloudTerms.has(word.term.trim().toLowerCase()),
     );
 
-    missingWords.forEach((word) => {
-      saveCloudWord(userId, word).catch((error) => {
-        console.error('WordWiz cloud backfill word save failed:', error);
-        reportError(error, { area: 'backfill_word' });
-        trackEvent('cloud_sync_failed', { operation: 'backfill_word' });
-      });
+    saveCloudWords(
+      userId,
+      missingWords,
+      getScreenContext(activeTab, 'backfill_local_words'),
+    ).catch((error) => {
+      console.error('WordWiz cloud backfill word save failed:', error);
+      reportError(error, { area: 'backfill_word' });
+      trackEvent('cloud_sync_failed', { operation: 'backfill_word' });
+    });
+  }
+
+  async function loadFreshCloudCache(userId: string) {
+    try {
+      const [lastHydratedAt, savedWords] = await Promise.all([
+        AsyncStorage.getItem(getUserCacheKey(userId, 'cloud-hydrated-at')),
+        AsyncStorage.getItem(getUserCacheKey(userId, 'words')),
+      ]);
+      const hydratedAt = lastHydratedAt ? Number(lastHydratedAt) : 0;
+      const cacheAgeMs = Date.now() - hydratedAt;
+
+      if (!savedWords || !hydratedAt || cacheAgeMs > CLOUD_HYDRATE_CACHE_MS) {
+        return false;
+      }
+
+      await loadUserCache(userId);
+      return true;
+    } catch (error) {
+      reportError(error, { area: 'cloud_cache_check' });
+      return false;
+    }
+  }
+
+  function markCloudCacheFresh(userId: string) {
+    AsyncStorage.setItem(
+      getUserCacheKey(userId, 'cloud-hydrated-at'),
+      String(Date.now()),
+    ).catch((error) => {
+      reportError(error, { area: 'cloud_cache_mark' });
     });
   }
 
@@ -393,7 +460,11 @@ export default function AppContent() {
     }
 
     try {
-      const user = await signInWithSupabase(cleanEmail, password);
+      const user = await signInWithSupabase(
+        cleanEmail,
+        password,
+        { screen: 'Login', reason: 'password_login' },
+      );
       if (user) {
         setCurrentUser(user);
       }
@@ -428,6 +499,7 @@ export default function AppContent() {
         name,
         email: cleanEmail,
         password,
+        context: { screen: 'Login', reason: 'create_account' },
       });
 
       if (result.needsEmailVerification) {
@@ -465,7 +537,10 @@ export default function AppContent() {
     }
 
     try {
-      await resendSupabaseEmailVerification(email);
+      await resendSupabaseEmailVerification(
+        email,
+        { screen: 'Login', reason: 'resend_verification' },
+      );
       Alert.alert(
         'Verification sent',
         'Check your inbox for a fresh WordWiz confirmation link.',
@@ -493,7 +568,10 @@ export default function AppContent() {
     }
 
     try {
-      await sendSupabasePasswordReset(email);
+      await sendSupabasePasswordReset(
+        email,
+        { screen: 'Login', reason: 'password_reset' },
+      );
     } catch {
       // Keep this response generic so the UI does not reveal whether an email exists.
     } finally {
@@ -510,7 +588,10 @@ export default function AppContent() {
     }
 
     try {
-      const user = await signInWithOAuthProvider(provider);
+      const user = await signInWithOAuthProvider(
+        provider,
+        { screen: 'Login', reason: `${label.toLowerCase()}_oauth_login` },
+      );
       if (user) {
         setCurrentUser(user);
       }
@@ -528,17 +609,19 @@ export default function AppContent() {
     if (!env.isSupabaseConfigured) {
       setCurrentUser(null);
       cloudHydratedUserId.current = null;
+      cloudHydratingUserId.current = null;
       setActiveTab('home');
       return;
     }
 
     try {
-      await signOutWithSupabase();
+      await signOutWithSupabase({ screen: 'Dashboard', reason: 'logout' });
     } catch {
       Alert.alert('Could not log out', 'Please try again.');
     } finally {
       setCurrentUser(null);
       cloudHydratedUserId.current = null;
+      cloudHydratingUserId.current = null;
       setActiveTab('home');
     }
   }
@@ -566,9 +649,15 @@ export default function AppContent() {
     const deletingUserId = currentUser?.id;
 
     try {
-      await requestSupabaseAccountDeletion();
+      await requestSupabaseAccountDeletion({
+        screen: 'Dashboard',
+        reason: 'delete_account',
+      });
       try {
-        await signOutWithSupabase();
+        await signOutWithSupabase({
+          screen: 'Dashboard',
+          reason: 'delete_account_cleanup',
+        });
       } catch {
         // The account is already deleted server-side, so the local session can be cleared by state reset below.
       }
@@ -576,6 +665,7 @@ export default function AppContent() {
         await clearLocalLearningData(deletingUserId);
       }
       cloudHydratedUserId.current = null;
+      cloudHydratingUserId.current = null;
       setCurrentUser(null);
       setWords(STARTER_WORDS);
       setQuizProgress(null);
@@ -621,7 +711,12 @@ export default function AppContent() {
 
     if (currentUser) {
       try {
-        savedWord = await saveCloudWord(currentUser.id, wordData);
+        savedWord = await saveCloudWord(
+          currentUser.id,
+          wordData,
+          getScreenContext(activeTab, 'add_word'),
+        );
+        markCloudCacheFresh(currentUser.id);
       } catch (error) {
         console.error('WordWiz cloud word save failed:', error);
         reportError(error, { area: 'save_word' });
@@ -649,12 +744,20 @@ export default function AppContent() {
       cloudHydratedUserId.current === currentUser.id &&
       !isStarterWordId(wordToRemove.id)
     ) {
-      deleteCloudWord(currentUser.id, wordToRemove.id).catch((error) => {
-        console.error('WordWiz cloud word delete failed:', error);
-        reportError(error, { area: 'delete_word' });
-        trackEvent('cloud_sync_failed', { operation: 'delete_word' });
-        showCloudSaveWarning();
-      });
+      deleteCloudWord(
+        currentUser.id,
+        wordToRemove.id,
+        getScreenContext(activeTab, 'delete_word'),
+      )
+        .then(() => {
+          markCloudCacheFresh(currentUser.id);
+        })
+        .catch((error) => {
+          console.error('WordWiz cloud word delete failed:', error);
+          reportError(error, { area: 'delete_word' });
+          trackEvent('cloud_sync_failed', { operation: 'delete_word' });
+          showCloudSaveWarning();
+        });
     }
     trackEvent('word_deleted');
   }
@@ -691,20 +794,29 @@ export default function AppContent() {
 
     if (currentUser && cloudHydratedUserId.current === currentUser.id) {
       Promise.all([
-        saveCloudCardReview(currentUser.id, event),
+        saveCloudCardReview(
+          currentUser.id,
+          event,
+          getScreenContext('cards', 'record_card_review'),
+        ),
         reviewedWord
           ? saveCloudWordReviews(
               currentUser.id,
               reviewedWord.id,
               reviewedWord.reviews + 1,
+              getScreenContext('cards', 'increment_word_review'),
             )
           : Promise.resolve(),
-      ]).catch((error) => {
-        console.error('WordWiz cloud card review save failed:', error);
-        reportError(error, { area: 'save_card_review' });
-        trackEvent('cloud_sync_failed', { operation: 'save_card_review' });
-        showCloudSaveWarning();
-      });
+      ])
+        .then(() => {
+          markCloudCacheFresh(currentUser.id);
+        })
+        .catch((error) => {
+          console.error('WordWiz cloud card review save failed:', error);
+          reportError(error, { area: 'save_card_review' });
+          trackEvent('cloud_sync_failed', { operation: 'save_card_review' });
+          showCloudSaveWarning();
+        });
     }
   }
 
@@ -723,7 +835,9 @@ export default function AppContent() {
       completedAt: new Date().toISOString(),
     });
 
-    setQuizProgress(progress);
+    setQuizProgress((currentProgress) =>
+      currentProgress?.date === progress.date ? currentProgress : progress,
+    );
     setWords((currentWords) => applyQuizReviews(currentWords, answers));
     setAnalytics((currentAnalytics) => addQuizAttempt(currentAnalytics, attempt));
     trackEvent('quiz_completed', { score, total, durationSeconds });
@@ -736,18 +850,31 @@ export default function AppContent() {
             word !== undefined && !isStarterWordId(word.id),
         )
         .map((word) =>
-          saveCloudWordReviews(currentUser.id, word.id, word.reviews + 1),
+          saveCloudWordReviews(
+            currentUser.id,
+            word.id,
+            word.reviews + 1,
+            getScreenContext('quiz', 'increment_quiz_word_review'),
+          ),
         );
 
       Promise.all([
-        saveCloudQuizAttempt(currentUser.id, attempt),
+        saveCloudQuizAttempt(
+          currentUser.id,
+          attempt,
+          getScreenContext('quiz', 'complete_quiz'),
+        ),
         ...reviewUpdates,
-      ]).catch((error) => {
-        console.error('WordWiz cloud quiz save failed:', error);
-        reportError(error, { area: 'save_quiz' });
-        trackEvent('cloud_sync_failed', { operation: 'save_quiz' });
-        showCloudSaveWarning();
-      });
+      ])
+        .then(() => {
+          markCloudCacheFresh(currentUser.id);
+        })
+        .catch((error) => {
+          console.error('WordWiz cloud quiz save failed:', error);
+          reportError(error, { area: 'save_quiz' });
+          trackEvent('cloud_sync_failed', { operation: 'save_quiz' });
+          showCloudSaveWarning();
+        });
     }
   }
 
@@ -793,12 +920,20 @@ export default function AppContent() {
 
   function saveReminderToCloud(settings: ReminderSettings) {
     if (currentUser && cloudHydratedUserId.current === currentUser.id) {
-      saveCloudReminderSettings(currentUser.id, settings).catch((error) => {
-        console.error('WordWiz cloud reminder save failed:', error);
-        reportError(error, { area: 'save_reminder_settings' });
-        trackEvent('cloud_sync_failed', { operation: 'save_reminder' });
-        showCloudSaveWarning();
-      });
+      saveCloudReminderSettings(
+        currentUser.id,
+        settings,
+        getScreenContext('dashboard', 'save_reminder_settings'),
+      )
+        .then(() => {
+          markCloudCacheFresh(currentUser.id);
+        })
+        .catch((error) => {
+          console.error('WordWiz cloud reminder save failed:', error);
+          reportError(error, { area: 'save_reminder_settings' });
+          trackEvent('cloud_sync_failed', { operation: 'save_reminder' });
+          showCloudSaveWarning();
+        });
     }
   }
 
@@ -860,6 +995,7 @@ export default function AppContent() {
       return (
         <CardsScreen
           words={sortedWords}
+          analytics={analytics}
           initialWordId={initialCardWordId}
           onReview={recordCardReview}
         />
@@ -870,6 +1006,7 @@ export default function AppContent() {
       return (
         <QuizScreen
           words={words}
+          analytics={analytics}
           progress={todayQuizProgress}
           onComplete={completeQuiz}
         />
@@ -1088,6 +1225,7 @@ async function clearLocalLearningData(userId: string) {
     getUserCacheKey(userId, 'quiz-progress'),
     getUserCacheKey(userId, 'analytics'),
     getUserCacheKey(userId, 'reminder-settings'),
+    getUserCacheKey(userId, 'cloud-hydrated-at'),
   ]);
 }
 
@@ -1101,6 +1239,32 @@ function getErrorMessage(error: unknown) {
   }
 
   return 'The cloud request failed. Check Data API access, grants, and RLS policies.';
+}
+
+function logCloudSync(event: string, details: Record<string, number | string>) {
+  if (!CLOUD_SYNC_LOGS_ENABLED) {
+    return;
+  }
+
+  console.info('[WordWiz Supabase sync]', {
+    event,
+    ...details,
+  });
+}
+
+function getScreenContext(screen: Tab, reason: string) {
+  return {
+    screen: getScreenName(screen),
+    reason,
+  };
+}
+
+function getScreenName(screen: Tab) {
+  if (screen === 'home') return 'Home';
+  if (screen === 'words') return 'Words';
+  if (screen === 'cards') return 'Cards';
+  if (screen === 'quiz') return 'Quiz';
+  return 'Dashboard';
 }
 
 function isUserCreatedWord(word: Word) {

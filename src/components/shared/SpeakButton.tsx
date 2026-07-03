@@ -14,7 +14,7 @@ export function SpeakButton({
 }) {
   return (
     <Pressable
-      role="button"
+      accessibilityRole="button"
       accessibilityLabel={`Hear ${term} pronounced`}
       onPress={(event: GestureResponderEvent) => {
         event.stopPropagation();

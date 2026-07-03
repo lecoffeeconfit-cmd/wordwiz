@@ -16,7 +16,7 @@ export function SortButton({
 }) {
   return (
     <Pressable
-      role="button"
+      accessibilityRole="button"
       accessibilityLabel={
         icon === 'text' ? 'Sort alphabetically' : 'Sort by newest'
       }

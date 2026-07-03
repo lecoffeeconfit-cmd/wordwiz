@@ -4,16 +4,18 @@ import { FlatList, Pressable, ScrollView, Text, View } from 'react-native';
 import { COLORS } from '../constants/theme';
 import type { AnalyticsData, LegalPage, QuizAnswer, QuizProgress, QuizQuestion, ReminderSettings, SortMode, Word } from '../types';
 import { styles } from '../styles';
-import { buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, getDayKey, getRecentDays, getStreakMessage, getStreakWeek, getWordMastery, shuffle } from '../utils';
+import { buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, getDayKey, getRecentDays, getStreakMessage, getStreakWeek, getWordMastery, getWordMasteryCategoryId, shuffle, WORD_MASTERY_CATEGORIES, type WordMasteryCategoryId } from '../utils';
 import { DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 import { reportError, trackEvent } from '../services';
 
 export function QuizScreen({
   words,
+  analytics,
   progress,
   onComplete,
 }: {
   words: Word[];
+  analytics: AnalyticsData;
   progress: QuizProgress | null;
   onComplete: (
     score: number,
@@ -29,16 +31,122 @@ export function QuizScreen({
   const [finishedScore, setFinishedScore] = useState<number | null>(null);
   const [answers, setAnswers] = useState<QuizAnswer[]>([]);
   const [quizStartedAt, setQuizStartedAt] = useState(Date.now());
+  const [isPracticeRound, setIsPracticeRound] = useState(false);
+  const [selectedCategory, setSelectedCategory] =
+    useState<WordMasteryCategoryId>('all');
+  const wordMastery = useMemo(
+    () =>
+      words.map((word) => ({
+        word,
+        categoryId: getWordMasteryCategoryId(getWordMastery(word, analytics)),
+      })),
+    [analytics, words],
+  );
+  const categoryCounts = useMemo(
+    () =>
+      WORD_MASTERY_CATEGORIES.reduce(
+        (counts, category) => ({
+          ...counts,
+          [category.id]:
+            category.id === 'all'
+              ? words.length
+              : wordMastery.filter((item) => item.categoryId === category.id)
+                  .length,
+        }),
+        {} as Record<WordMasteryCategoryId, number>,
+      ),
+    [wordMastery, words.length],
+  );
+  const filteredQuizWords = useMemo(
+    () =>
+      selectedCategory === 'all'
+        ? words
+        : wordMastery
+            .filter((item) => item.categoryId === selectedCategory)
+            .map((item) => item.word),
+    [selectedCategory, wordMastery, words],
+  );
+  const selectedCategoryDetails =
+    WORD_MASTERY_CATEGORIES.find(
+      (category) => category.id === selectedCategory,
+    ) ?? WORD_MASTERY_CATEGORIES[0];
+  const canChangeCategory = quiz.length === 0 || finishedScore !== null;
+
+  const categorySelector = (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      contentContainerStyle={styles.practiceCategoryList}
+      style={styles.practiceCategoryScroller}
+    >
+      {WORD_MASTERY_CATEGORIES.map((category) => {
+        const isActive = selectedCategory === category.id;
+        const count = categoryCounts[category.id] ?? 0;
+
+        return (
+          <Pressable
+            key={category.id}
+            accessibilityRole="button"
+            accessibilityLabel={`Practice ${category.label.toLowerCase()}`}
+            accessibilityState={{ selected: isActive }}
+            onPress={() => {
+              if (canChangeCategory) {
+                setSelectedCategory(category.id);
+              }
+            }}
+            style={[
+              styles.practiceCategoryChip,
+              isActive && styles.practiceCategoryChipActive,
+              { borderColor: isActive ? category.color : '#E5DEF5' },
+            ]}
+          >
+            <View
+              style={[
+                styles.practiceCategoryIcon,
+                { backgroundColor: category.pale },
+              ]}
+            >
+              <Ionicons name={category.icon} size={15} color={category.color} />
+            </View>
+            <Text
+              style={[
+                styles.practiceCategoryText,
+                isActive && { color: category.color },
+              ]}
+            >
+              {category.shortLabel}
+            </Text>
+            <Text
+              style={[
+                styles.practiceCategoryCount,
+                isActive && { color: category.color },
+              ]}
+            >
+              {count}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </ScrollView>
+  );
 
   function startQuiz() {
-    setQuiz(buildQuiz(words));
+    if (filteredQuizWords.length === 0) {
+      return;
+    }
+
+    setQuiz(buildQuiz(filteredQuizWords, analytics.quizHistory));
     setQuestionIndex(0);
     setSelected(null);
     setScore(0);
     setFinishedScore(null);
     setAnswers([]);
     setQuizStartedAt(Date.now());
-    trackEvent('quiz_started', { questions: Math.min(words.length, 5) });
+    setIsPracticeRound(Boolean(progress));
+    trackEvent('quiz_started', {
+      category: selectedCategory,
+      questions: Math.min(filteredQuizWords.length, 10),
+    });
   }
 
   function chooseAnswer(option: string) {
@@ -95,6 +203,21 @@ export function QuizScreen({
           subtitle="A little review each day makes words stick."
         />
         <QuizComplete score={progress.score} total={progress.total} />
+        {categorySelector}
+        <Pressable
+          disabled={filteredQuizWords.length === 0}
+          onPress={startQuiz}
+          style={({ pressed }) => [
+            styles.quizPracticeButton,
+            filteredQuizWords.length === 0 && styles.practiceButtonDisabled,
+            pressed && styles.pressed,
+          ]}
+        >
+          <Ionicons name="refresh" size={18} color={COLORS.blue} />
+          <Text style={styles.quizPracticeButtonText}>
+            PRACTICE ANOTHER QUIZ
+          </Text>
+        </Pressable>
       </ScrollView>
     );
   }
@@ -123,7 +246,31 @@ export function QuizScreen({
           title="Practice complete!"
           subtitle="You gave your brain a useful workout."
         />
-        <QuizComplete score={finishedScore} total={quiz.length} />
+        <QuizComplete
+          score={finishedScore}
+          total={quiz.length}
+          mode={isPracticeRound ? 'practice' : 'daily'}
+        />
+        <Text style={styles.quizPracticeNote}>
+          {isPracticeRound
+            ? 'Practice did not replace today’s daily score. It still counted as real review.'
+            : 'Practice again anytime to keep learning.'}
+        </Text>
+        {categorySelector}
+        <Pressable
+          disabled={filteredQuizWords.length === 0}
+          onPress={startQuiz}
+          style={({ pressed }) => [
+            styles.quizPracticeButton,
+            filteredQuizWords.length === 0 && styles.practiceButtonDisabled,
+            pressed && styles.pressed,
+          ]}
+        >
+          <Ionicons name="refresh" size={18} color={COLORS.blue} />
+          <Text style={styles.quizPracticeButtonText}>
+            PRACTICE ANOTHER QUIZ
+          </Text>
+        </Pressable>
       </ScrollView>
     );
   }
@@ -148,20 +295,43 @@ export function QuizScreen({
           </View>
           <Text style={styles.quizIntroTitle}>Ready for today’s challenge?</Text>
           <Text style={styles.quizIntroText}>
-            You’ll match up to 5 words with their meanings. It only takes a
-            minute.
+            You’ll answer a fresh mix of meaning, word match, and true or
+            false questions. It only takes a minute.
           </Text>
           <View style={styles.quizFacts}>
             <QuizFact icon="time-outline" text="About 1 minute" />
             <QuizFact
               icon="help-circle-outline"
-              text={`${Math.min(words.length, 5)} questions`}
+              text={`${Math.min(filteredQuizWords.length, 10)} questions`}
             />
           </View>
+          {categorySelector}
+          <View
+            style={[
+              styles.practiceCategoryBanner,
+              { backgroundColor: selectedCategoryDetails.pale },
+            ]}
+          >
+            <Ionicons
+              name={selectedCategoryDetails.icon}
+              size={17}
+              color={selectedCategoryDetails.color}
+            />
+            <Text
+              style={[
+                styles.practiceCategoryBannerText,
+                { color: selectedCategoryDetails.color },
+              ]}
+            >
+              {filteredQuizWords.length} {selectedCategoryDetails.shortLabel.toLowerCase()} words ready
+            </Text>
+          </View>
           <Pressable
+            disabled={filteredQuizWords.length === 0}
             onPress={startQuiz}
             style={({ pressed }) => [
               styles.primaryButton,
+              filteredQuizWords.length === 0 && styles.primaryButtonDisabled,
               pressed && styles.primaryButtonPressed,
             ]}
           >
@@ -174,6 +344,7 @@ export function QuizScreen({
   }
 
   const question = quiz[questionIndex];
+  const questionsLeft = Math.max(0, quiz.length - questionIndex - 1);
   return (
     <ScrollView
       style={styles.screen}
@@ -182,7 +353,7 @@ export function QuizScreen({
     >
       <ScreenHeader
         eyebrow="DAILY QUIZ"
-        title="Choose the meaning"
+        title="Answer the prompt"
         subtitle={`Question ${questionIndex + 1} of ${quiz.length}`}
       />
       <View style={styles.quizProgressTrack}>
@@ -195,14 +366,37 @@ export function QuizScreen({
       </View>
 
       <View style={styles.questionCard}>
-        <Text style={styles.questionPrompt}>WHAT DOES THIS WORD MEAN?</Text>
+        <Text style={styles.questionPrompt}>{question.prompt}</Text>
         <Text
           adjustsFontSizeToFit
           minimumFontScale={0.62}
-          style={styles.questionWord}
+          style={[
+            styles.questionWord,
+            question.mode !== 'word-to-definition' && styles.questionStatement,
+          ]}
         >
-          {question.word.term}
+          {question.displayText}
         </Text>
+      </View>
+
+      <View style={styles.quizFocusCard}>
+        <View style={styles.quizFocusItem}>
+          <Ionicons name="checkmark-circle-outline" size={18} color={COLORS.greenDark} />
+          <Text style={styles.quizFocusText}>
+            {score} correct
+          </Text>
+        </View>
+        <View style={styles.quizFocusDivider} />
+        <View style={styles.quizFocusItem}>
+          <Ionicons name="flag-outline" size={18} color={COLORS.purpleDark} />
+          <Text style={styles.quizFocusText}>
+            {questionsLeft} {questionsLeft === 1 ? 'question' : 'questions'} left
+          </Text>
+        </View>
+        <View style={styles.quizHintRow}>
+          <Ionicons name="bulb-outline" size={17} color={COLORS.orange} />
+          <Text style={styles.quizHintText}>{question.helperText}</Text>
+        </View>
       </View>
 
       <View style={styles.optionsList}>
@@ -274,7 +468,7 @@ export function QuizScreen({
             <Text style={styles.feedbackText}>
               {selected === question.answer
                 ? 'You matched it perfectly.'
-                : `“${question.word.term}” means ${question.answer.toLowerCase()}`}
+                : question.feedback}
             </Text>
           </View>
         </View>

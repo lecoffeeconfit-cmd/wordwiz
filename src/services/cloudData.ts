@@ -52,6 +52,16 @@ type ReminderSettingsRow = {
   minute: number;
 };
 
+type CloudRequestContext = {
+  screen: string;
+  reason: string;
+};
+
+const MAX_CLOUD_WORDS = 1000;
+const CLOUD_SYNC_LOGS_ENABLED =
+  (typeof __DEV__ !== 'undefined' && __DEV__) ||
+  process.env.EXPO_PUBLIC_WORDWIZ_EGRESS_LOGS === 'true';
+
 const WORD_COLUMNS = [
   'id',
   'term',
@@ -97,6 +107,7 @@ export type UserLearningData = {
 
 export async function fetchUserLearningData(
   userId: string,
+  context?: CloudRequestContext,
 ): Promise<UserLearningData> {
   const [wordsResult, quizResult, reviewsResult, reminderResult] =
     await Promise.all([
@@ -104,7 +115,8 @@ export async function fetchUserLearningData(
         .from('words')
         .select(WORD_COLUMNS)
         .eq('user_id', userId)
-        .order('created_at', { ascending: false }),
+        .order('created_at', { ascending: false })
+        .limit(MAX_CLOUD_WORDS),
       supabase
         .from('quiz_attempts')
         .select(QUIZ_ATTEMPT_COLUMNS)
@@ -133,6 +145,22 @@ export async function fetchUserLearningData(
   if (firstError) {
     throw firstError;
   }
+
+  logCloudRead('words', wordsResult.data, context, {
+    rows: wordsResult.data?.length ?? 0,
+    cappedAt: MAX_CLOUD_WORDS,
+  });
+  logCloudRead('quiz_attempts', quizResult.data, context, {
+    rows: quizResult.data?.length ?? 0,
+    cappedAt: 30,
+  });
+  logCloudRead('card_reviews', reviewsResult.data, context, {
+    rows: reviewsResult.data?.length ?? 0,
+    cappedAt: 80,
+  });
+  logCloudRead('reminder_settings', reminderResult.data, context, {
+    rows: reminderResult.data ? 1 : 0,
+  });
 
   const quizHistory = ((quizResult.data ?? []) as unknown as QuizAttemptRow[]).map(
     mapQuizAttemptRow,
@@ -188,21 +216,53 @@ export async function seedUserLearningData({
   return savedWords;
 }
 
-export async function saveCloudWord(userId: string, word: Word) {
+export async function saveCloudWord(
+  userId: string,
+  word: Word,
+  context?: CloudRequestContext,
+) {
   const payload = toWordPayload(userId, word);
   const query = isUuid(word.id)
-    ? supabase.from('words').upsert({ ...payload, id: word.id }).select(WORD_COLUMNS)
-    : supabase.from('words').insert(payload).select(WORD_COLUMNS);
-  const { data, error } = await query.single();
+    ? supabase.from('words').upsert({ ...payload, id: word.id })
+    : supabase.from('words').insert(payload);
+  const { error } = await query;
 
   if (error) {
     throw getQueryError('words', error);
   }
 
-  return mapWordRow(data as unknown as WordRow);
+  logCloudWrite('words:save', payload, context);
+
+  return word;
 }
 
-export async function deleteCloudWord(userId: string, wordId: string) {
+export async function saveCloudWords(
+  userId: string,
+  words: Word[],
+  context?: CloudRequestContext,
+) {
+  if (words.length === 0) {
+    return;
+  }
+
+  const payloads = words.map((word) => ({
+    ...toWordPayload(userId, word),
+    ...(isUuid(word.id) ? { id: word.id } : {}),
+  }));
+  const { error } = await supabase.from('words').upsert(payloads);
+
+  if (error) {
+    throw getQueryError('words', error);
+  }
+
+  logCloudWrite('words:batch_save', payloads, context, { rows: payloads.length });
+}
+
+export async function deleteCloudWord(
+  userId: string,
+  wordId: string,
+  context?: CloudRequestContext,
+) {
   if (!isUuid(wordId)) {
     return;
   }
@@ -216,11 +276,14 @@ export async function deleteCloudWord(userId: string, wordId: string) {
   if (error) {
     throw getQueryError('words', error);
   }
+
+  logCloudWrite('words:delete', { wordId }, context);
 }
 
 export async function saveCloudCardReview(
   userId: string,
   event: CardStudyEvent,
+  context?: CloudRequestContext,
 ) {
   const { error } = await supabase.from('card_reviews').insert({
     user_id: userId,
@@ -234,12 +297,22 @@ export async function saveCloudCardReview(
   if (error) {
     throw getQueryError('card_reviews', error);
   }
+
+  logCloudWrite(
+    'card_reviews:insert',
+    {
+      wordId: event.wordId,
+      date: event.date,
+    },
+    context,
+  );
 }
 
 export async function saveCloudWordReviews(
   userId: string,
   wordId: string,
   reviews: number,
+  context?: CloudRequestContext,
 ) {
   if (!isUuid(wordId)) {
     return;
@@ -257,11 +330,14 @@ export async function saveCloudWordReviews(
   if (error) {
     throw getQueryError('words', error);
   }
+
+  logCloudWrite('words:review_count', { wordId, reviews }, context);
 }
 
 export async function saveCloudQuizAttempt(
   userId: string,
   attempt: QuizAttempt,
+  context?: CloudRequestContext,
 ) {
   const { error } = await supabase.from('quiz_attempts').insert({
     user_id: userId,
@@ -276,11 +352,21 @@ export async function saveCloudQuizAttempt(
   if (error) {
     throw getQueryError('quiz_attempts', error);
   }
+
+  logCloudWrite(
+    'quiz_attempts:insert',
+    {
+      answers: attempt.answers.length,
+      total: attempt.total,
+    },
+    context,
+  );
 }
 
 export async function saveCloudReminderSettings(
   userId: string,
   settings: ReminderSettings,
+  context?: CloudRequestContext,
 ) {
   const { error } = await supabase.from('reminder_settings').upsert({
     user_id: userId,
@@ -292,6 +378,64 @@ export async function saveCloudReminderSettings(
 
   if (error) {
     throw getQueryError('reminder_settings', error);
+  }
+
+  logCloudWrite(
+    'reminder_settings:upsert',
+    {
+      enabled: settings.enabled,
+      hour: settings.hour,
+      minute: settings.minute,
+    },
+    context,
+  );
+}
+
+function logCloudRead(
+  source: string,
+  payload: unknown,
+  context?: CloudRequestContext,
+  details: Record<string, number> = {},
+) {
+  if (!CLOUD_SYNC_LOGS_ENABLED) {
+    return;
+  }
+
+  console.info('[WordWiz Supabase egress]', {
+    source,
+    direction: 'download',
+    screen: context?.screen ?? 'unknown',
+    reason: context?.reason ?? 'unknown',
+    estimatedBytes: estimatePayloadBytes(payload),
+    ...details,
+  });
+}
+
+function logCloudWrite(
+  source: string,
+  payload: unknown,
+  context?: CloudRequestContext,
+  details: Record<string, number> = {},
+) {
+  if (!CLOUD_SYNC_LOGS_ENABLED) {
+    return;
+  }
+
+  console.info('[WordWiz Supabase request]', {
+    source,
+    direction: 'upload',
+    screen: context?.screen ?? 'unknown',
+    reason: context?.reason ?? 'unknown',
+    estimatedBytes: estimatePayloadBytes(payload),
+    ...details,
+  });
+}
+
+function estimatePayloadBytes(payload: unknown) {
+  try {
+    return new Blob([JSON.stringify(payload ?? null)]).size;
+  } catch {
+    return JSON.stringify(payload ?? null).length;
   }
 }
 

@@ -165,7 +165,7 @@ test('word merge keeps local words and prefers more complete records', () => {
   assert.ok(merged.some((word) => word.term === 'Luminous'));
 });
 
-test('quiz builder creates answer options for up to five words', () => {
+test('quiz builder creates answer options for up to ten words', () => {
   const words = [
     makeWord('1', 'Alpha', 'First'),
     makeWord('2', 'Bravo', 'Second'),
@@ -176,13 +176,62 @@ test('quiz builder creates answer options for up to five words', () => {
   ];
   const questions = quiz.buildQuiz(words);
 
-  assert.equal(questions.length, 5);
+  assert.equal(questions.length, 6);
+  assert.ok(
+    questions.some((question) => question.mode === 'definition-to-word'),
+  );
+  assert.ok(questions.some((question) => question.mode === 'true-false'));
   questions.forEach((question) => {
     assert.ok(question.options.includes(question.answer));
     assert.equal(new Set(question.options).size, question.options.length);
     assert.ok(question.options.length >= 2);
     assert.ok(question.options.length <= 4);
+    assert.ok(question.prompt);
+    assert.ok(question.displayText);
+    assert.ok(question.helperText);
   });
+});
+
+test('quiz builder avoids recently quizzed words when enough alternatives exist', () => {
+  const words = [
+    makeWord('1', 'Alpha', 'First'),
+    makeWord('2', 'Bravo', 'Second'),
+    makeWord('3', 'Charlie', 'Third'),
+    makeWord('4', 'Delta', 'Fourth'),
+    makeWord('5', 'Echo', 'Fifth'),
+    makeWord('6', 'Foxtrot', 'Sixth'),
+    makeWord('7', 'Golf', 'Seventh'),
+    makeWord('8', 'Hotel', 'Eighth'),
+    makeWord('9', 'India', 'Ninth'),
+    makeWord('10', 'Juliet', 'Tenth'),
+    makeWord('11', 'Kilo', 'Eleventh'),
+    makeWord('12', 'Lima', 'Twelfth'),
+    makeWord('13', 'Mike', 'Thirteenth'),
+  ];
+  const recentAttempts = [
+    {
+      id: 'recent-1',
+      date: '2026-01-02',
+      score: 3,
+      total: 3,
+      durationSeconds: 30,
+      completedAt: '2026-01-02T00:00:00.000Z',
+      answers: [
+        { wordId: '1', correct: true },
+        { wordId: '2', correct: false },
+        { wordId: '3', correct: true },
+      ],
+    },
+  ];
+  const questions = quiz.buildQuiz(words, recentAttempts);
+  const questionWordIds = new Set(
+    questions.map((question) => question.word.id),
+  );
+
+  assert.equal(questions.length, 10);
+  assert.equal(questionWordIds.has('1'), false);
+  assert.equal(questionWordIds.has('2'), false);
+  assert.equal(questionWordIds.has('3'), false);
 });
 
 test('quiz completion records progress, analytics, and review counts', () => {
@@ -302,9 +351,9 @@ test('achievement builder unlocks practice milestones', () => {
 
 test('progress colors move through stronger learning states', () => {
   assert.equal(learning.getProgressColor(0), '#2879E8');
-  assert.equal(learning.getProgressColor(40), '#FFD87A');
-  assert.equal(learning.getProgressColor(75), '#F2A65A');
-  assert.equal(learning.getProgressColor(90), '#F4B400');
+  assert.equal(learning.getProgressColor(40), '#8E78FF');
+  assert.equal(learning.getProgressColor(80), '#39C69A');
+  assert.equal(learning.getProgressColor(100), '#F4B400');
 });
 
 test('progress shine appears halfway and peaks at complete', () => {
@@ -315,6 +364,12 @@ test('progress shine appears halfway and peaks at complete', () => {
       learning.getProgressShineOpacity(50),
   );
   assert.equal(learning.getProgressShineOpacity(100), 0.58);
+});
+
+test('hero progress colors stay visible on the blue dashboard card', () => {
+  assert.equal(learning.getHeroProgressColor(0), '#B9F5E0');
+  assert.equal(learning.getHeroProgressColor(50), '#8DE7C7');
+  assert.equal(learning.getHeroProgressColor(90), '#F4B400');
 });
 
 test('wiktionary parser extracts etymology text from heading variants', () => {

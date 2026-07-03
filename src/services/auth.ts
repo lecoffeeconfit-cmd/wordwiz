@@ -9,6 +9,14 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MAX_NAME_LENGTH = 60;
 const MAX_EMAIL_LENGTH = 120;
 const MAX_PASSWORD_LENGTH = 128;
+const AUTH_REQUEST_LOGS_ENABLED =
+  (typeof __DEV__ !== 'undefined' && __DEV__) ||
+  process.env.EXPO_PUBLIC_WORDWIZ_EGRESS_LOGS === 'true';
+
+type AuthRequestContext = {
+  screen: string;
+  reason: string;
+};
 
 export function normalizeEmail(email: string) {
   return email.trim().toLowerCase();
@@ -81,7 +89,11 @@ export function getAuthRedirectUrl() {
   return Linking.createURL('auth/callback');
 }
 
-export async function signInWithSupabase(email: string, password: string) {
+export async function signInWithSupabase(
+  email: string,
+  password: string,
+  context?: AuthRequestContext,
+) {
   const { data, error } = await supabase.auth.signInWithPassword({
     email: normalizeEmail(email),
     password,
@@ -91,6 +103,8 @@ export async function signInWithSupabase(email: string, password: string) {
     throw error;
   }
 
+  logAuthRequest('auth:sign_in_password', data.user, context);
+
   return data.user ? toAuthUser(data.user) : null;
 }
 
@@ -98,10 +112,12 @@ export async function signUpWithSupabase({
   name,
   email,
   password,
+  context,
 }: {
   name: string;
   email: string;
   password: string;
+  context?: AuthRequestContext;
 }) {
   const { data, error } = await supabase.auth.signUp({
     email: normalizeEmail(email),
@@ -118,13 +134,18 @@ export async function signUpWithSupabase({
     throw error;
   }
 
+  logAuthRequest('auth:sign_up', data.user, context);
+
   return {
     user: data.user ? toAuthUser(data.user) : null,
     needsEmailVerification: !data.session,
   };
 }
 
-export async function resendSupabaseEmailVerification(email: string) {
+export async function resendSupabaseEmailVerification(
+  email: string,
+  context?: AuthRequestContext,
+) {
   const { error } = await supabase.auth.resend({
     type: 'signup',
     email: normalizeEmail(email),
@@ -136,9 +157,14 @@ export async function resendSupabaseEmailVerification(email: string) {
   if (error) {
     throw error;
   }
+
+  logAuthRequest('auth:resend_verification', { email: normalizeEmail(email) }, context);
 }
 
-export async function sendSupabasePasswordReset(email: string) {
+export async function sendSupabasePasswordReset(
+  email: string,
+  context?: AuthRequestContext,
+) {
   const { error } = await supabase.auth.resetPasswordForEmail(
     normalizeEmail(email),
   );
@@ -146,9 +172,14 @@ export async function sendSupabasePasswordReset(email: string) {
   if (error) {
     throw error;
   }
+
+  logAuthRequest('auth:password_reset', { email: normalizeEmail(email) }, context);
 }
 
-export async function signInWithOAuthProvider(provider: Provider) {
+export async function signInWithOAuthProvider(
+  provider: Provider,
+  context?: AuthRequestContext,
+) {
   const redirectTo = getAuthRedirectUrl();
 
   const { data, error } = await supabase.auth.signInWithOAuth({
@@ -162,6 +193,8 @@ export async function signInWithOAuthProvider(provider: Provider) {
   if (error) {
     throw error;
   }
+
+  logAuthRequest('auth:oauth_start', { provider }, context);
 
   if (Platform.OS === 'web') {
     return null;
@@ -194,24 +227,56 @@ export async function signInWithOAuthProvider(provider: Provider) {
     throw sessionResult.error;
   }
 
+  logAuthRequest('auth:oauth_set_session', sessionResult.data.user, context);
+
   return sessionResult.data.user ? toAuthUser(sessionResult.data.user) : null;
 }
 
-export async function signOutWithSupabase() {
+export async function signOutWithSupabase(context?: AuthRequestContext) {
   const { error } = await supabase.auth.signOut();
 
   if (error) {
     throw error;
   }
+
+  logAuthRequest('auth:sign_out', null, context);
 }
 
-export async function requestSupabaseAccountDeletion() {
+export async function requestSupabaseAccountDeletion(context?: AuthRequestContext) {
   const { error } = await supabase.functions.invoke('delete-account', {
     method: 'DELETE',
   });
 
   if (error) {
     throw error;
+  }
+
+  logAuthRequest('edge_function:delete_account', null, context);
+}
+
+function logAuthRequest(
+  source: string,
+  payload: unknown,
+  context?: AuthRequestContext,
+) {
+  if (!AUTH_REQUEST_LOGS_ENABLED) {
+    return;
+  }
+
+  console.info('[WordWiz Supabase request]', {
+    source,
+    direction: 'auth/api',
+    screen: context?.screen ?? 'unknown',
+    reason: context?.reason ?? 'unknown',
+    estimatedBytes: estimatePayloadBytes(payload),
+  });
+}
+
+function estimatePayloadBytes(payload: unknown) {
+  try {
+    return new Blob([JSON.stringify(payload ?? null)]).size;
+  } catch {
+    return JSON.stringify(payload ?? null).length;
   }
 }
 
