@@ -84,7 +84,7 @@ function TermsContent() {
       />
       <LegalSection
         title="Dictionary lookups"
-        body="When you use automatic definitions, the word you type may be sent to dictionary and word-history services so WordWiz can retrieve definitions, examples, pronunciation, synonyms, and origin information when available. If a lookup is unavailable, you can still type your own definition."
+        body="When you use automatic definitions, the word you type may be sent to dictionary and word-history services so WordWiz can retrieve definitions, examples, pronunciation, synonyms, antonyms, and origin information when available. If a lookup is unavailable, you can still type your own definition."
       />
       <LegalSection
         title="No guarantees"
@@ -111,7 +111,7 @@ function PrivacyContent() {
       />
       <LegalSection
         title="Automatic definitions"
-        body="If you ask WordWiz to automatically define a word, that word is sent to external dictionary and word-history services to fetch definitions, examples, pronunciation, synonyms, and origin information when available."
+        body="If you ask WordWiz to automatically define a word, that word is sent to external dictionary and word-history services to fetch definitions, examples, pronunciation, synonyms, antonyms, and origin information when available."
       />
       <LegalSection
         title="Notifications"

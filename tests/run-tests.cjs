@@ -56,8 +56,10 @@ function resolveLocalTs(dirname, request) {
 }
 
 const learning = loadTsModule('src/utils/learning.ts');
+const dictionaryUtils = loadTsModule('src/utils/dictionary.ts');
 const quiz = loadTsModule('src/utils/quiz.ts');
 const dictionary = loadTsModule('src/services/dictionary.ts');
+const wordnik = loadTsModule('src/services/wordnik.ts');
 
 function makeWord(id, term, definition, reviews = 0) {
   return {
@@ -89,6 +91,7 @@ test('word saving trims input and creates a new saved word', () => {
     details: {
       simpleDefinition: ' Bright ',
       commonWords: ['bright'],
+      antonyms: ['dim'],
     },
     id: 'word-1',
     createdAt: '2026-01-01T00:00:00.000Z',
@@ -97,7 +100,96 @@ test('word saving trims input and creates a new saved word', () => {
   assert.equal(savedWord.term, 'Luminous');
   assert.equal(savedWord.definition, 'Giving off light.');
   assert.equal(savedWord.simpleDefinition, 'Bright');
+  assert.deepEqual(savedWord.antonyms, ['dim']);
   assert.deepEqual(learning.upsertSavedWord([], savedWord), [savedWord]);
+});
+
+test('word saving preserves optional Wordnik enrichment metadata locally', () => {
+  const savedWord = learning.buildWordFromInput({
+    term: 'resilient',
+    definition: 'Able to recover quickly.',
+    example: 'The resilient team recovered quickly.',
+    details: {
+      wordnik_definitions: [
+        {
+          text: 'Recovering readily from adversity.',
+          attributionText: 'from a Wordnik source',
+        },
+      ],
+      wordnik_examples: ['A resilient system keeps running.'],
+      wordnik_pronunciations: ['ri-zil-yuhnt'],
+      wordnik_etymology: ['From Latin resilire.'],
+      wordnik_related_words: ['strong'],
+      wordnik_antonyms: ['fragile'],
+      wordnik_syllables: ['re', 'sil', 'ient'],
+      wordnik_attribution: ['from a Wordnik source'],
+      wordnik_url: 'https://www.wordnik.com/words/resilient',
+    },
+    id: 'word-wordnik',
+    createdAt: '2026-01-01T00:00:00.000Z',
+  });
+
+  assert.equal(savedWord.wordnik_definitions[0].text, 'Recovering readily from adversity.');
+  assert.deepEqual(savedWord.wordnik_related_words, ['strong']);
+  assert.deepEqual(savedWord.wordnik_antonyms, ['fragile']);
+  assert.equal(savedWord.wordnik_url, 'https://www.wordnik.com/words/resilient');
+});
+
+test('wordnik helper only treats non-empty enrichment as useful', () => {
+  const base = {
+    source: 'wordnik',
+    word: 'resilient',
+    wordnik_definitions: [],
+    wordnik_examples: [],
+    wordnik_pronunciations: [],
+    wordnik_etymology: [],
+    wordnik_related_words: [],
+    wordnik_antonyms: [],
+    wordnik_syllables: [],
+    wordnik_attribution: [],
+    wordnik_url: 'https://www.wordnik.com/words/resilient',
+  };
+
+  assert.equal(wordnik.hasUsefulWordnikData(base), false);
+  assert.equal(
+    wordnik.hasUsefulWordnikData({
+      ...base,
+      wordnik_definitions: [{ text: 'Able to recover quickly.' }],
+    }),
+    true,
+  );
+  assert.equal(
+    wordnik.hasUsefulWordnikData({
+      ...base,
+      wordnik_antonyms: ['weak'],
+    }),
+    true,
+  );
+});
+
+test('history formatting separates concise timeline from narrative', () => {
+  const period = 'Timeline: 1754 - Horace Walpole coined "serendipity" in English. Source - Wiktionary etymology. Evidence - exact dates are not clear.';
+  const origin = '"Serendipity" history from Wiktionary: coined after The Three Princes of Serendip. Today, it is commonly used to mean "happy accidental discovery."';
+
+  const snapshot = dictionaryUtils.formatTimePeriodSnapshot(period, origin, 'Serendipity');
+  const narrative = dictionaryUtils.formatWordHistoryNarrative(origin, 'Serendipity');
+
+  assert.match(snapshot, /First recorded: 1754/);
+  assert.match(snapshot, /Entered English: 1754/);
+  assert.doesNotMatch(narrative, /Timeline:/);
+  assert.doesNotMatch(narrative, /Source -/);
+  assert.match(narrative, /happy accidental discovery/);
+});
+
+test('history formatting uses short fallback for missing older origin', () => {
+  const narrative = dictionaryUtils.formatWordHistoryNarrative(
+    '"Test" is listed as a noun. WordWiz did not find a fully sourced older etymology in the live lookup, so this history note focuses on current use and visible word parts. a aas',
+    'Test',
+  );
+
+  assert.match(narrative, /A fully sourced older origin was not found/);
+  assert.doesNotMatch(narrative, /a aas/);
+  assert.doesNotMatch(narrative, /live lookup/);
 });
 
 test('word saving capitalizes the first letter for display', () => {

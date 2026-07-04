@@ -95,6 +95,7 @@ export default function AppContent() {
   const [isReady, setIsReady] = useState(false);
   const [isCloudLoading, setIsCloudLoading] = useState(false);
   const [appNotice, setAppNotice] = useState<string | null>(null);
+  const [currentDayKey, setCurrentDayKey] = useState(getDayKey());
   const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState(false);
   const [showAddWord, setShowAddWord] = useState(false);
   const [legalPage, setLegalPage] = useState<LegalPage | null>(null);
@@ -187,6 +188,14 @@ export default function AppContent() {
   useEffect(() => {
     setSentryUser(currentUser);
   }, [currentUser]);
+
+  useEffect(() => {
+    const intervalId = setInterval(() => {
+      setCurrentDayKey(getDayKey());
+    }, 30 * 1000);
+
+    return () => clearInterval(intervalId);
+  }, []);
 
   useEffect(() => {
     if (!isReady) {
@@ -299,13 +308,6 @@ export default function AppContent() {
         reportError(error, { area: 'cloud_hydration' });
         trackEvent('cloud_sync_failed', { operation: 'hydrate' });
         setAppNotice('Cloud sync is unavailable right now. Your local learning data is still ready.');
-        if (!cloudWarningShown.current) {
-          cloudWarningShown.current = true;
-          Alert.alert(
-            'Cloud sync needs setup',
-            `WordWiz is still working locally. Supabase said: ${getErrorMessage(error)}`,
-          );
-        }
       } finally {
         if (cloudHydratingUserId.current === userId) {
           cloudHydratingUserId.current = null;
@@ -440,7 +442,7 @@ export default function AppContent() {
   }, [sortMode, words]);
 
   const todayQuizProgress =
-    quizProgress?.date === getDayKey() ? quizProgress : null;
+    quizProgress?.date === currentDayKey ? quizProgress : null;
 
   async function login(email: string, password: string) {
     if (!ensureSupabaseReady()) {
@@ -943,9 +945,8 @@ export default function AppContent() {
     }
 
     cloudWarningShown.current = true;
-    Alert.alert(
-      'Saved locally',
-      'WordWiz kept your change on this device, but cloud sync could not finish yet. Check that the Supabase schema has been run with RLS enabled.',
+    setAppNotice(
+      'Saved on this device. Cloud sync is temporarily unavailable and will try again later.',
     );
   }
 
@@ -1231,14 +1232,6 @@ async function clearLocalLearningData(userId: string) {
 
 function getUserCacheKey(userId: string, key: string) {
   return `@wordwiz/users/${userId}/${key}`;
-}
-
-function getErrorMessage(error: unknown) {
-  if (error instanceof Error && error.message) {
-    return error.message;
-  }
-
-  return 'The cloud request failed. Check Data API access, grants, and RLS policies.';
 }
 
 function logCloudSync(event: string, details: Record<string, number | string>) {

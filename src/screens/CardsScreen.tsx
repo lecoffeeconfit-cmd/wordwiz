@@ -84,6 +84,7 @@ export function CardsScreen({
     ];
   }, [filteredWords, initialWordId]);
   const current = studyWords[cardIndex % Math.max(studyWords.length, 1)];
+  const currentTermLength = current?.term.trim().length ?? 0;
 
   useEffect(() => {
     setCardIndex(0);
@@ -254,37 +255,64 @@ export function CardsScreen({
         </Text>
       </View>
 
-      <View style={styles.cardProgressRow}>
-        {(() => {
-          const cardProgress =
-            (((cardIndex % studyWords.length) + 1) / studyWords.length) * 100;
+      <View style={styles.cardStudyToolbar}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Previous flashcard"
+          onPress={() => browseCard('previous')}
+          style={({ pressed }) => [
+            styles.cardNavigationButton,
+            pressed && styles.pressed,
+          ]}
+        >
+          <Ionicons name="chevron-back" size={22} color={COLORS.purpleDark} />
+        </Pressable>
 
-          return (
-            <>
-        <Text style={styles.cardProgressText}>
-          CARD {(cardIndex % studyWords.length) + 1} OF {studyWords.length}
-        </Text>
-        <View style={styles.progressTrack}>
-          <View
-            style={[
-              styles.progressFill,
-              {
-                width: `${cardProgress}%`,
-              },
-            ]}
-          >
-            <View
-              style={[
-                styles.progressShine,
-                { opacity: getProgressShineOpacity(cardProgress) },
-                cardProgress >= 100 && styles.progressShineComplete,
-              ]}
-            />
-          </View>
+        <View style={styles.cardProgressRow}>
+          {(() => {
+            const cardProgress =
+              (((cardIndex % studyWords.length) + 1) / studyWords.length) * 100;
+
+            return (
+              <>
+                <Text style={styles.cardProgressText}>
+                  CARD {(cardIndex % studyWords.length) + 1} OF{' '}
+                  {studyWords.length}
+                </Text>
+                <View style={styles.progressTrack}>
+                  <View
+                    style={[
+                      styles.progressFill,
+                      {
+                        width: `${cardProgress}%`,
+                      },
+                    ]}
+                  >
+                    <View
+                      style={[
+                        styles.progressShine,
+                        { opacity: getProgressShineOpacity(cardProgress) },
+                        cardProgress >= 100 && styles.progressShineComplete,
+                      ]}
+                    />
+                  </View>
+                </View>
+              </>
+            );
+          })()}
         </View>
-            </>
-          );
-        })()}
+
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Next flashcard"
+          onPress={() => browseCard('next')}
+          style={({ pressed }) => [
+            styles.cardNavigationButton,
+            pressed && styles.pressed,
+          ]}
+        >
+          <Ionicons name="chevron-forward" size={22} color={COLORS.purpleDark} />
+        </Pressable>
       </View>
 
       <Pressable
@@ -324,10 +352,13 @@ export function CardsScreen({
           <View style={styles.flashcardWordRow}>
             <Text
               adjustsFontSizeToFit
-              minimumFontScale={0.62}
+              minimumFontScale={0.48}
+              numberOfLines={1}
               style={[
                 styles.flashcardWord,
-                current.term.trim().length > 12 && styles.flashcardWordLong,
+                currentTermLength > 10 && styles.flashcardWordLong,
+                currentTermLength > 14 && styles.flashcardWordExtraLong,
+                currentTermLength > 20 && styles.flashcardWordTiny,
               ]}
             >
               {current.term}
@@ -376,35 +407,6 @@ export function CardsScreen({
           )}
         </View>
       </Pressable>
-
-      <View style={styles.cardNavigationRow}>
-        <Pressable
-          accessibilityLabel="Previous flashcard"
-          onPress={() => browseCard('previous')}
-          style={({ pressed }) => [
-            styles.cardNavigationButton,
-            styles.cardNavigationButtonSecondary,
-            pressed && styles.pressed,
-          ]}
-        >
-          <Ionicons name="chevron-back" size={20} color={COLORS.purpleDark} />
-          <Text style={styles.cardNavigationButtonTextSecondary}>
-            Previous
-          </Text>
-        </Pressable>
-        <Pressable
-          accessibilityLabel="Next flashcard"
-          onPress={() => browseCard('next')}
-          style={({ pressed }) => [
-            styles.cardNavigationButton,
-            styles.cardNavigationButtonPrimary,
-            pressed && styles.pressed,
-          ]}
-        >
-          <Text style={styles.cardNavigationButtonTextPrimary}>Next</Text>
-          <Ionicons name="chevron-forward" size={20} color={COLORS.white} />
-        </Pressable>
-      </View>
 
       {showAnswer ? (
         <View style={styles.cardActions}>

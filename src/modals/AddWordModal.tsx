@@ -1,14 +1,18 @@
 import { Ionicons } from '@expo/vector-icons';
 import type { ReactNode } from 'react';
 import { useState } from 'react';
-import { Alert, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { Alert, Keyboard, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { COLORS } from '../constants/theme';
 import type { LegalPage, WordDetails } from '../types';
 import { styles } from '../styles';
 import { lookupWordDetails, suggestWordSpellings } from '../services';
 import { InfoChip } from '../components';
-import { inferOriginPeriod } from '../utils';
+import {
+  formatTimePeriodSnapshot,
+  formatWordHistoryNarrative,
+  inferOriginPeriod,
+} from '../utils';
 
 export function AddWordModal({
   visible,
@@ -34,7 +38,9 @@ export function AddWordModal({
   const [originPeriod, setOriginPeriod] = useState('');
   const [basicInfo, setBasicInfo] = useState('');
   const [synonyms, setSynonyms] = useState<string[]>([]);
+  const [antonyms, setAntonyms] = useState<string[]>([]);
   const [commonWordsText, setCommonWordsText] = useState('');
+  const [wordnikDetails, setWordnikDetails] = useState<Partial<WordDetails>>({});
   const [isLookingUp, setIsLookingUp] = useState(false);
   const [lookupStatus, setLookupStatus] = useState('');
   const [spellingSuggestions, setSpellingSuggestions] = useState<string[]>([]);
@@ -50,7 +56,9 @@ export function AddWordModal({
     setOriginPeriod('');
     setBasicInfo('');
     setSynonyms([]);
+    setAntonyms([]);
     setCommonWordsText('');
+    setWordnikDetails({});
     setLookupStatus('');
     setSpellingSuggestions([]);
     onClose();
@@ -81,9 +89,13 @@ export function AddWordModal({
       setOriginPeriod(details.originPeriod ?? '');
       setBasicInfo(details.basicInfo ?? '');
       setSynonyms(details.synonyms ?? []);
+      setAntonyms(details.antonyms ?? []);
       setCommonWordsText((details.commonWords ?? []).join(', '));
+      setWordnikDetails(pickWordnikDetails(details));
       setLookupStatus('Definition found. You can edit anything before saving.');
+      Keyboard.dismiss();
     } catch {
+      setWordnikDetails({});
       const suggestions = await suggestWordSpellings(cleanTerm);
       setSpellingSuggestions(suggestions);
       setLookupStatus(
@@ -111,11 +123,13 @@ export function AddWordModal({
       origin,
       originPeriod,
       synonyms,
+      antonyms,
       commonWords: commonWordsText
         .split(',')
         .map((word) => word.trim())
         .filter(Boolean),
       basicInfo,
+      ...wordnikDetails,
     });
     setTerm('');
     setDefinition('');
@@ -127,7 +141,9 @@ export function AddWordModal({
     setOriginPeriod('');
     setBasicInfo('');
     setSynonyms([]);
+    setAntonyms([]);
     setCommonWordsText('');
+    setWordnikDetails({});
     setLookupStatus('');
     setSpellingSuggestions([]);
   }
@@ -172,9 +188,12 @@ export function AddWordModal({
                 setTerm(value);
                 setLookupStatus('');
                 setSpellingSuggestions([]);
+                setWordnikDetails({});
               }}
               placeholder="e.g. Serendipity"
               autoCapitalize="words"
+              returnKeyType="search"
+              onSubmitEditing={() => autoDefine()}
             />
 
             <Pressable
@@ -215,7 +234,18 @@ export function AddWordModal({
                   size={18}
                   color={definition ? COLORS.purpleDark : COLORS.blue}
                 />
-                <Text style={styles.lookupStatusText}>{lookupStatus}</Text>
+                {definition ? (
+                  <View style={styles.lookupStatusCopy}>
+                    <Text style={styles.lookupStatusTitle}>
+                      Definition found
+                    </Text>
+                    <Text style={styles.lookupStatusHelper}>
+                      You can edit anything before saving.
+                    </Text>
+                  </View>
+                ) : (
+                  <Text style={styles.lookupStatusText}>{lookupStatus}</Text>
+                )}
               </View>
             ) : null}
 
@@ -284,7 +314,11 @@ export function AddWordModal({
               multiline
             />
 
-            {(partOfSpeech || pronunciation || synonyms.length > 0 || commonWordsText) && (
+            {(partOfSpeech ||
+              pronunciation ||
+              synonyms.length > 0 ||
+              antonyms.length > 0 ||
+              commonWordsText) && (
               <View style={styles.lookupInfoCard}>
                 <View style={styles.lookupInfoHeader}>
                   <Ionicons name="reader-outline" size={19} color={COLORS.blue} />
@@ -306,6 +340,11 @@ export function AddWordModal({
                     Similar words: {synonyms.join(', ')}
                   </Text>
                 ) : null}
+                {antonyms.length > 0 ? (
+                  <Text style={styles.lookupInfoText}>
+                    Opposites: {antonyms.join(', ')}
+                  </Text>
+                ) : null}
                 {commonWordsText ? (
                   <Text style={styles.lookupInfoText}>
                     Synonyms: {commonWordsText}
@@ -314,21 +353,15 @@ export function AddWordModal({
               </View>
             )}
 
-            {origin ? (
+            {(origin || originPeriod) ? (
               <View style={styles.historyCard}>
                 <View style={styles.lookupInfoHeader}>
                   <Ionicons name="library-outline" size={19} color={COLORS.purple} />
-                  <Text style={styles.historyTitle}>WORD HISTORY</Text>
+                  <Text style={styles.historyTitle}>TIME PERIOD</Text>
                 </View>
                 <View style={styles.historyDetailRow}>
-                  <Text style={styles.historyDetailLabel}>WHERE FROM</Text>
-                  <Text style={styles.historyText}>{origin}</Text>
-                </View>
-                <View style={styles.historyDetailRow}>
-                  <Text style={styles.historyDetailLabel}>TIME PERIOD</Text>
                   <Text style={styles.historyText}>
-                    {originPeriod ||
-                      'Time period not available from this dictionary source.'}
+                    {formatTimePeriodSnapshot(originPeriod, origin, term)}
                   </Text>
                 </View>
                 <Pressable
@@ -349,20 +382,13 @@ export function AddWordModal({
             <InputGroup
               label="WORD HISTORY"
               icon="library-outline"
-              value={origin}
+              value={origin ? formatWordHistoryNarrative(origin, term) : ''}
               onChangeText={(value) => {
                 setOrigin(value);
                 if (!originPeriod) setOriginPeriod(inferOriginPeriod(value));
               }}
-              placeholder="Where the word came from..."
+              placeholder="Tell the story of how the word developed..."
               multiline
-            />
-            <InputGroup
-              label="TIME PERIOD"
-              icon="time-outline"
-              value={originPeriod}
-              onChangeText={setOriginPeriod}
-              placeholder="e.g. Old English, 1600s, unknown..."
             />
 
             <View style={styles.memoryTip}>
@@ -401,6 +427,20 @@ function openEtymonline(term: string) {
   Linking.openURL(`https://www.etymonline.com/search?q=${query}`);
 }
 
+function pickWordnikDetails(details: WordDetails): Partial<WordDetails> {
+  return {
+    wordnik_definitions: details.wordnik_definitions,
+    wordnik_examples: details.wordnik_examples,
+    wordnik_pronunciations: details.wordnik_pronunciations,
+    wordnik_etymology: details.wordnik_etymology,
+    wordnik_related_words: details.wordnik_related_words,
+    wordnik_antonyms: details.wordnik_antonyms,
+    wordnik_syllables: details.wordnik_syllables,
+    wordnik_attribution: details.wordnik_attribution,
+    wordnik_url: details.wordnik_url,
+  };
+}
+
 function InputGroup({
   label,
   icon,
@@ -409,6 +449,8 @@ function InputGroup({
   placeholder,
   multiline = false,
   autoCapitalize = 'sentences',
+  returnKeyType,
+  onSubmitEditing,
 }: {
   label: string;
   icon: keyof typeof Ionicons.glyphMap;
@@ -417,6 +459,8 @@ function InputGroup({
   placeholder: string;
   multiline?: boolean;
   autoCapitalize?: 'none' | 'sentences' | 'words' | 'characters';
+  returnKeyType?: 'done' | 'go' | 'next' | 'search' | 'send';
+  onSubmitEditing?: () => void;
 }) {
   return (
     <View style={styles.inputGroup}>
@@ -431,6 +475,8 @@ function InputGroup({
         placeholderTextColor="#B5ABC9"
         multiline={multiline}
         autoCapitalize={autoCapitalize}
+        returnKeyType={returnKeyType}
+        onSubmitEditing={onSubmitEditing}
         style={[styles.input, multiline && styles.inputMultiline]}
       />
     </View>

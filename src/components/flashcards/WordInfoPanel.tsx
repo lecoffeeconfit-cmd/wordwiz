@@ -4,6 +4,10 @@ import { Linking, Pressable, Text, View } from 'react-native';
 import { COLORS, TILE_COLORS } from '../../constants/theme';
 import type { Tab, Word } from '../../types';
 import { styles } from '../../styles';
+import {
+  formatTimePeriodSnapshot,
+  formatWordHistoryNarrative,
+} from '../../utils';
 import { SpeakButton } from '../shared/SpeakButton';
 
 export function WordInfoPanel({ word }: { word: Word }) {
@@ -14,7 +18,8 @@ export function WordInfoPanel({ word }: { word: Word }) {
     word.originPeriod ||
     word.basicInfo ||
     word.commonWords?.length ||
-    word.synonyms?.length;
+    word.synonyms?.length ||
+    word.antonyms?.length;
 
   if (!hasInfo) return null;
 
@@ -44,6 +49,18 @@ export function WordInfoPanel({ word }: { word: Word }) {
           </View>
         </View>
       )}
+      {word.antonyms && word.antonyms.length > 0 && (
+        <View style={styles.commonWordsBox}>
+          <Text style={styles.commonWordsTitle}>OPPOSITES</Text>
+          <View style={styles.commonWordsWrap}>
+            {word.antonyms.map((antonym) => (
+              <Text key={antonym} style={styles.commonWordChip}>
+                {antonym}
+              </Text>
+            ))}
+          </View>
+        </View>
+      )}
       {word.synonyms && word.synonyms.length > 0 && (
         <Text style={styles.wordInfoText}>
           Similar words: {word.synonyms.join(', ')}
@@ -53,16 +70,24 @@ export function WordInfoPanel({ word }: { word: Word }) {
         <View style={styles.originBox}>
           <Ionicons name="library-outline" size={17} color={COLORS.blue} />
           <View style={styles.originCopy}>
-            {word.origin && (
-              <>
-                <Text style={styles.originLabel}>WHERE FROM</Text>
-                <Text style={styles.originText}>{word.origin}</Text>
-              </>
-            )}
-            {word.originPeriod && (
+            {(word.origin || word.originPeriod) && (
               <>
                 <Text style={styles.originLabel}>TIME PERIOD</Text>
-                <Text style={styles.originText}>{word.originPeriod}</Text>
+                <Text style={styles.originText}>
+                  {formatTimePeriodSnapshot(
+                    word.originPeriod,
+                    word.origin,
+                    word.term,
+                  )}
+                </Text>
+              </>
+            )}
+            {word.origin && (
+              <>
+                <Text style={styles.originLabel}>WORD HISTORY</Text>
+                <Text style={styles.originText}>
+                  {formatWordHistoryNarrative(word.origin, word.term)}
+                </Text>
               </>
             )}
             <Pressable

@@ -1,4 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
+import { useEffect, useMemo, useState } from 'react';
 import { Text, View } from 'react-native';
 import { COLORS } from '../../constants/theme';
 import { styles } from '../../styles';
@@ -14,6 +15,21 @@ export function QuizComplete({
 }) {
   const percentage = total ? Math.round((score / total) * 100) : 0;
   const isPractice = mode === 'practice';
+  const [now, setNow] = useState(() => Date.now());
+  const refreshParts = useMemo(() => getDailyRefreshParts(now), [now]);
+
+  useEffect(() => {
+    if (isPractice) {
+      return;
+    }
+
+    const intervalId = setInterval(() => {
+      setNow(Date.now());
+    }, 1000);
+
+    return () => clearInterval(intervalId);
+  }, [isPractice]);
+
   return (
     <View style={styles.completeCard}>
       <View style={styles.completeHeaderRow}>
@@ -67,17 +83,57 @@ export function QuizComplete({
           </Text>
         </View>
         <View style={styles.completeNoticeDivider} />
-        <View style={styles.completeNoticeRow}>
-          <View style={styles.comeBackIcon}>
-            <Ionicons name="sunny" size={17} color={COLORS.yellow} />
+        {isPractice ? (
+          <View style={styles.completeNoticeRow}>
+            <View style={styles.comeBackIcon}>
+              <Ionicons name="sunny" size={17} color={COLORS.yellow} />
+            </View>
+            <Text style={styles.comeBackText}>
+              Today’s daily quiz stays locked in
+            </Text>
           </View>
-          <Text style={styles.comeBackText}>
-            {isPractice
-              ? 'Today’s daily quiz stays locked in'
-              : 'Come back tomorrow for a new daily quiz'}
-          </Text>
-        </View>
+        ) : (
+          <View style={styles.quizRefreshTimer}>
+            <View style={styles.quizRefreshHeader}>
+              <View style={styles.quizRefreshIcon}>
+                <Ionicons name="time-outline" size={17} color={COLORS.blue} />
+              </View>
+              <Text style={styles.quizRefreshTitle}>
+                Next daily quiz unlocks in
+              </Text>
+            </View>
+            <View style={styles.quizRefreshTimeRow}>
+              {refreshParts.map((part) => (
+                <View key={part.label} style={styles.quizRefreshTimePill}>
+                  <Text style={styles.quizRefreshTimeValue}>{part.value}</Text>
+                  <Text style={styles.quizRefreshTimeLabel}>{part.label}</Text>
+                </View>
+              ))}
+            </View>
+          </View>
+        )}
       </View>
     </View>
   );
+}
+
+function getDailyRefreshParts(now: number) {
+  const nextDay = new Date(now);
+  nextDay.setDate(nextDay.getDate() + 1);
+  nextDay.setHours(0, 0, 0, 0);
+
+  const remainingSeconds = Math.max(0, Math.ceil((nextDay.getTime() - now) / 1000));
+  const hours = Math.floor(remainingSeconds / 3600);
+  const minutes = Math.floor((remainingSeconds % 3600) / 60);
+  const seconds = remainingSeconds % 60;
+
+  return [
+    { label: 'HRS', value: formatTimerPart(hours) },
+    { label: 'MIN', value: formatTimerPart(minutes) },
+    { label: 'SEC', value: formatTimerPart(seconds) },
+  ];
+}
+
+function formatTimerPart(value: number) {
+  return `${value}`.padStart(2, '0');
 }

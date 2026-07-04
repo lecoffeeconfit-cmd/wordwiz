@@ -5,7 +5,7 @@ import { COLORS } from '../constants/theme';
 import type { AnalyticsData, LegalPage, QuizAnswer, QuizProgress, QuizQuestion, ReminderSettings, SortMode, Word } from '../types';
 import type { AuthUser } from '../types';
 import { styles } from '../styles';
-import { buildAchievements, buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, getDayKey, getHeroProgressColor, getMasteryLevel, getMasteryLevelProgress, getNextMasteryLevel, getProgressColor, getProgressPaleColor, getProgressShineOpacity, getRecentDays, getStreakMessage, getStreakMilestone, getStreakWeek, getWordMastery, getWordMasteryCategory, shuffle } from '../utils';
+import { MASTERY_LEVELS, buildAchievements, buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, getDayKey, getHeroProgressColor, getMasteryLevel, getMasteryLevelProgress, getNextMasteryLevel, getProgressColor, getProgressPaleColor, getProgressShineOpacity, getRecentDays, getStreakMessage, getStreakMilestone, getStreakWeek, getWordMastery, getWordMasteryCategory, shuffle } from '../utils';
 import { DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 
 export function DashboardScreen({
@@ -45,6 +45,10 @@ export function DashboardScreen({
   const accuracy = totalQuizQuestions
     ? Math.round((totalCorrect / totalQuizQuestions) * 100)
     : 0;
+  const quizAccuracySegments = buildQuizAccuracySegments(
+    totalCorrect,
+    totalWrong,
+  );
   const totalSeconds =
     analytics.quizHistory.reduce(
       (total, attempt) => total + attempt.durationSeconds,
@@ -68,6 +72,9 @@ export function DashboardScreen({
   const masteryLevel = getMasteryLevel(overallMastery);
   const nextMasteryLevel = getNextMasteryLevel(overallMastery);
   const masteryLevelProgress = getMasteryLevelProgress(overallMastery);
+  const masteryRingSegments = buildMasteryRingSegments(
+    words.length ? overallMastery : 0,
+  );
   const masteredWords = mastery.filter((item) => item.score >= 100).length;
   const strongWords = mastery.filter(
     (item) => item.score >= 80 && item.score < 100,
@@ -216,14 +223,68 @@ export function DashboardScreen({
           </Text>
         </View>
         <View style={styles.masteryGauge}>
+          <View style={styles.masteryGaugeRing}>
+            {masteryRingSegments.map((segment) => (
+              <View
+                key={segment.shortTitle}
+                style={[
+                  styles.masteryGaugeSegment,
+                  segment.isCurrent && styles.masteryGaugeSegmentActive,
+                  {
+                    borderColor: segment.color,
+                    transform: [
+                      { rotate: `${segment.angle}deg` },
+                      { translateY: -53 },
+                    ],
+                  },
+                ]}
+              >
+                <View
+                  style={[
+                    styles.masteryGaugeSegmentFill,
+                    {
+                      height: `${segment.fillPercent}%`,
+                      backgroundColor: segment.color,
+                    },
+                  ]}
+                />
+              </View>
+            ))}
+          </View>
           <View style={styles.masteryGaugeInner}>
             <Ionicons name="school" size={31} color={COLORS.purpleDark} />
             <Text style={styles.masteryGaugeCount}>
-              {strongWords}/{words.length}
+              {masteryLevelProgress}%
             </Text>
-            <Text style={styles.masteryGaugeLabel}>STRONG</Text>
+            <Text style={styles.masteryGaugeLabel}>TO {nextMasteryLevel?.shortTitle.toUpperCase() ?? 'TOP'}</Text>
           </View>
         </View>
+      </View>
+      <View style={styles.masteryLevelLegend}>
+        {masteryRingSegments.map((segment) => (
+          <View
+            key={segment.shortTitle}
+            style={[
+              styles.masteryLevelLegendItem,
+              segment.isCurrent && styles.masteryLevelLegendItemActive,
+            ]}
+          >
+            <View
+              style={[
+                styles.masteryLevelLegendDot,
+                { backgroundColor: segment.color },
+              ]}
+            />
+            <Text
+              style={[
+                styles.masteryLevelLegendText,
+                segment.isCurrent && styles.masteryLevelLegendTextActive,
+              ]}
+            >
+              {segment.shortTitle}
+            </Text>
+          </View>
+        ))}
       </View>
 
     <View style={styles.statGrid}>
@@ -596,6 +657,23 @@ export function DashboardScreen({
         <View style={styles.accuracyCard}>
           <Text style={styles.dashboardCardLabel}>QUIZ ACCURACY</Text>
           <View style={styles.accuracyGauge}>
+            <View style={styles.accuracyGaugeRing}>
+              {quizAccuracySegments.map((segment) => (
+                <View
+                  key={segment.key}
+                  style={[
+                    styles.accuracyGaugeSegment,
+                    {
+                      backgroundColor: segment.color,
+                      transform: [
+                        { rotate: `${segment.angle}deg` },
+                        { translateY: -50 },
+                      ],
+                    },
+                  ]}
+                />
+              ))}
+            </View>
             <View style={styles.accuracyGaugeInner}>
               <Text style={styles.accuracyValue}>{accuracy}%</Text>
               <Text style={styles.accuracyLabel}>CORRECT</Text>
@@ -1145,6 +1223,49 @@ function normalizeReminderTime(hour: number, minute: number) {
     hour: Math.floor(totalMinutes / 60),
     minute: totalMinutes % 60,
   };
+}
+
+function buildMasteryRingSegments(score: number) {
+  return MASTERY_LEVELS.map((level, index) => {
+    const nextLevel = MASTERY_LEVELS[index + 1];
+    const startScore = level.minScore;
+    const endScore = nextLevel?.minScore ?? 100;
+    const scoreSpan = endScore - startScore;
+    const midScore = startScore + scoreSpan / 2;
+    const segmentProgress =
+      score >= endScore
+        ? 1
+        : score <= startScore
+          ? 0
+          : (score - startScore) / scoreSpan;
+
+    return {
+      shortTitle: level.shortTitle,
+      color: level.color,
+      angle: (midScore / 100) * 360,
+      fillPercent: Math.round(segmentProgress * 100),
+      isCurrent: score >= startScore && score < endScore,
+    };
+  });
+}
+
+function buildQuizAccuracySegments(correct: number, missed: number) {
+  const segmentCount = 100;
+  const total = correct + missed;
+  const correctSegments = total
+    ? Math.round((correct / total) * segmentCount)
+    : 0;
+
+  return Array.from({ length: segmentCount }, (_, index) => ({
+    key: `accuracy-${index}`,
+    angle: (index / segmentCount) * 360,
+    color:
+      total === 0
+        ? '#EDE8F7'
+        : index < correctSegments
+          ? COLORS.teal
+          : COLORS.red,
+  }));
 }
 
 function formatReminderHour(hour: number) {

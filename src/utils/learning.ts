@@ -148,8 +148,18 @@ export function buildWordFromInput({
     origin: details.origin?.trim(),
     originPeriod: details.originPeriod?.trim(),
     synonyms: details.synonyms ?? [],
+    antonyms: details.antonyms ?? [],
     commonWords: details.commonWords ?? [],
     basicInfo: details.basicInfo?.trim(),
+    wordnik_definitions: details.wordnik_definitions,
+    wordnik_examples: details.wordnik_examples,
+    wordnik_pronunciations: details.wordnik_pronunciations,
+    wordnik_etymology: details.wordnik_etymology,
+    wordnik_related_words: details.wordnik_related_words,
+    wordnik_antonyms: details.wordnik_antonyms,
+    wordnik_syllables: details.wordnik_syllables,
+    wordnik_attribution: details.wordnik_attribution,
+    wordnik_url: details.wordnik_url,
     createdAt: existingWord?.createdAt ?? createdAt,
     reviews: existingWord?.reviews ?? 0,
   };
@@ -236,6 +246,7 @@ function getWordCompletenessScore(word: Word) {
     word.originPeriod,
     word.basicInfo,
     ...(word.synonyms ?? []),
+    ...(word.antonyms ?? []),
     ...(word.commonWords ?? []),
   ].filter((value) => Boolean(value?.trim())).length;
 }

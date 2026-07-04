@@ -10,6 +10,7 @@ import {
   inferOriginPeriod,
   makeSimpleDefinition,
 } from '../utils';
+import { lookupWordnikEnrichment, type WordnikEnrichment } from './wordnik';
 
 type WordSuggestion = {
   word?: string;
@@ -110,6 +111,7 @@ export async function lookupWordDetails(rawTerm: string): Promise<WordDetails> {
     conceptNetData,
     wikidataLexeme,
     wikipediaSummary,
+    wordnikResult,
   ] = await Promise.all([
     lookupDictionaryEntry(lookupTerm),
     lookupWiktionaryHistory(lookupTerm),
@@ -117,13 +119,16 @@ export async function lookupWordDetails(rawTerm: string): Promise<WordDetails> {
     lookupConceptNet(lookupTerm),
     lookupWikidataLexeme(lookupTerm),
     lookupWikipediaSummary(lookupTerm),
+    lookupWordnikEnrichment(lookupTerm),
   ]);
+  const wordnik = wordnikResult.ok ? wordnikResult.enrichment : null;
 
   if (
     !dictionaryEntry &&
-    !datamuseWords.length &&
+    !datamuseWords.relatedWords.length &&
     !wikidataLexeme.definitions.length &&
-    !wikipediaSummary
+    !wikipediaSummary &&
+    !wordnik
   ) {
     throw new Error('No dictionary entry found.');
   }
@@ -134,7 +139,10 @@ export async function lookupWordDetails(rawTerm: string): Promise<WordDetails> {
   const preferred = getPreferredDefinition(meanings, lookupTerm);
   const firstMeaning = preferred?.meaning ?? meanings[0];
   const firstDefinition = preferred?.definition;
-  const datamuseDefinition = getDatamuseDefinition(datamuseWords, lookupTerm);
+  const datamuseDefinition = getDatamuseDefinition(
+    datamuseWords.relatedWords,
+    lookupTerm,
+  );
   const wikidataDefinition = wikidataLexeme.definitions.find((item) =>
     isUsefulDefinition(item, lookupTerm),
   );
@@ -142,6 +150,7 @@ export async function lookupWordDetails(rawTerm: string): Promise<WordDetails> {
     wikipediaSummary?.extract && isUsefulDefinition(wikipediaSummary.extract, lookupTerm)
       ? wikipediaSummary.extract
       : null;
+  const wordnikDefinition = getWordnikDefinition(wordnik, lookupTerm);
   const definition =
     fallback?.definition ??
     (firstDefinition?.definition &&
@@ -150,6 +159,7 @@ export async function lookupWordDetails(rawTerm: string): Promise<WordDetails> {
       : datamuseDefinition ??
         wikidataDefinition ??
         firstDefinition?.definition ??
+        wordnikDefinition?.text ??
         wikipediaDefinition ??
         '');
   const exampleDefinition =
@@ -157,27 +167,48 @@ export async function lookupWordDetails(rawTerm: string): Promise<WordDetails> {
       (item) =>
         item.example && !isCircularDefinition(item.example, lookupTerm),
     ) ?? firstDefinition;
-  const example = fallback?.example ?? exampleDefinition?.example ?? fallbackExample(rawTerm);
+  const wordnikExample = wordnik?.wordnik_examples.find((item) =>
+    !isCircularDefinition(item, lookupTerm),
+  );
+  const example =
+    fallback?.example ??
+    exampleDefinition?.example ??
+    wordnikExample ??
+    fallbackExample(rawTerm);
   const simpleDefinition =
     fallback?.simpleDefinition ?? makeSimpleDefinition(definition, rawTerm);
   const pronunciation =
     entry?.phonetic ??
     entry?.phonetics?.find((phonetic) => phonetic.text)?.text ??
+    wordnik?.wordnik_pronunciations[0] ??
     '';
   const synonyms = getSynonymCandidates({
     meanings,
-    datamuseWords,
-    conceptNetWords: conceptNetData.relatedWords,
+    datamuseWords: datamuseWords.relatedWords,
+    conceptNetWords: [
+      ...conceptNetData.relatedWords,
+      ...(wordnik?.wordnik_related_words ?? []),
+    ],
+    lookupTerm,
+  });
+  const antonyms = getAntonymCandidates({
+    meanings,
+    datamuseWords: datamuseWords.antonyms,
+    conceptNetWords: conceptNetData.antonyms,
+    wordnikWords: wordnik?.wordnik_antonyms ?? [],
     lookupTerm,
   });
   const partOfSpeech =
     firstMeaning?.partOfSpeech ||
-    getDatamusePartOfSpeech(datamuseWords) ||
-    wikidataLexeme.partOfSpeech;
+    getDatamusePartOfSpeech(datamuseWords.relatedWords) ||
+    wikidataLexeme.partOfSpeech ||
+    wordnikDefinition?.partOfSpeech ||
+    '';
   const historyFallback = getHistoryFallback(lookupTerm);
   const history = chooseBestHistory([
     historyFallback ? { ...historyFallback, score: 100 } : null,
     wiktionaryHistory ? { ...wiktionaryHistory, score: 85 } : null,
+    wordnik ? getWordnikHistory(wordnik, lookupTerm) : null,
     conceptNetData.history ? { ...conceptNetData.history, score: 70 } : null,
     entry?.origin && !isMissingOrigin(entry.origin)
       ? makeDictionaryOriginHistory({
@@ -195,6 +226,7 @@ export async function lookupWordDetails(rawTerm: string): Promise<WordDetails> {
       partOfSpeech,
       definition,
       synonyms,
+      antonyms,
       meaningCount: meanings.length || (datamuseDefinition ? 1 : 0),
       score: 10,
     }),
@@ -209,6 +241,7 @@ export async function lookupWordDetails(rawTerm: string): Promise<WordDetails> {
     origin: history.origin,
     originPeriod: history.originPeriod,
     synonyms,
+    antonyms,
     commonWords: getSynonyms(synonyms),
     basicInfo: [
       partOfSpeech ? `Usually used as a ${partOfSpeech}.` : '',
@@ -218,12 +251,27 @@ export async function lookupWordDetails(rawTerm: string): Promise<WordDetails> {
           ? `Wikidata lists ${wikidataLexeme.definitions.length} sense glosses for this word.`
           : 'This word has one main meaning group in this dictionary.',
       synonyms.length ? `Synonyms include ${synonyms.slice(0, 3).join(', ')}.` : '',
+      antonyms.length ? `Opposites include ${antonyms.slice(0, 3).join(', ')}.` : '',
       wikipediaSummary?.description
         ? `Wikipedia context: ${wikipediaSummary.description}.`
         : '',
+      wordnik ? makeWordnikAttributionNote(wordnik) : '',
     ]
       .filter(Boolean)
       .join(' '),
+    ...(wordnik
+      ? {
+          wordnik_definitions: wordnik.wordnik_definitions,
+          wordnik_examples: wordnik.wordnik_examples,
+          wordnik_pronunciations: wordnik.wordnik_pronunciations,
+          wordnik_etymology: wordnik.wordnik_etymology,
+          wordnik_related_words: wordnik.wordnik_related_words,
+          wordnik_antonyms: wordnik.wordnik_antonyms,
+          wordnik_syllables: wordnik.wordnik_syllables,
+          wordnik_attribution: wordnik.wordnik_attribution,
+          wordnik_url: wordnik.wordnik_url,
+        }
+      : {}),
   };
 }
 
@@ -248,20 +296,35 @@ async function lookupDictionaryEntry(lookupTerm: string) {
 
 async function lookupDatamuseWords(lookupTerm: string) {
   try {
-    const response = await fetch(
-      `https://api.datamuse.com/words?ml=${encodeURIComponent(
-        lookupTerm,
-      )}&md=dp&max=12`,
-    );
+    const [relatedResponse, antonymResponse] = await Promise.all([
+      fetch(
+        `https://api.datamuse.com/words?ml=${encodeURIComponent(
+          lookupTerm,
+        )}&md=dp&max=12`,
+      ),
+      fetch(
+        `https://api.datamuse.com/words?rel_ant=${encodeURIComponent(
+          lookupTerm,
+        )}&max=8`,
+      ),
+    ]);
 
-    if (!response.ok) {
-      return [];
-    }
+    const relatedWords = relatedResponse.ok
+      ? ((await relatedResponse.json()) as DatamuseWord[]).filter(
+          (item) => item.word,
+        )
+      : [];
+    const antonyms = antonymResponse.ok
+      ? uniqueText(
+          ((await antonymResponse.json()) as DatamuseWord[])
+            .map((item) => item.word ?? '')
+            .filter((word) => itemLooksLikeSynonym(word, lookupTerm)),
+        ).slice(0, 8)
+      : [];
 
-    const words = (await response.json()) as DatamuseWord[];
-    return words.filter((item) => item.word);
+    return { relatedWords, antonyms };
   } catch {
-    return [];
+    return { relatedWords: [], antonyms: [] };
   }
 }
 
@@ -274,17 +337,18 @@ async function lookupConceptNet(lookupTerm: string) {
     );
 
     if (!response.ok) {
-      return { relatedWords: [], history: null };
+      return { relatedWords: [], antonyms: [], history: null };
     }
 
     const data = (await response.json()) as ConceptNetResponse;
     const edges = (data.edges ?? []).filter(isEnglishConceptNetEdge);
     const relatedWords = getConceptNetRelatedWords(edges, lookupTerm);
+    const antonyms = getConceptNetAntonyms(edges, lookupTerm);
     const history = getConceptNetHistory(edges, lookupTerm);
 
-    return { relatedWords, history };
+    return { relatedWords, antonyms, history };
   } catch {
-    return { relatedWords: [], history: null };
+    return { relatedWords: [], antonyms: [], history: null };
   }
 }
 
@@ -399,6 +463,36 @@ function getSynonymCandidates({
     .slice(0, 7);
 }
 
+function getAntonymCandidates({
+  meanings,
+  datamuseWords,
+  conceptNetWords,
+  wordnikWords,
+  lookupTerm,
+}: {
+  meanings: DictionaryMeaning[];
+  datamuseWords: string[];
+  conceptNetWords: string[];
+  wordnikWords: string[];
+  lookupTerm: string;
+}) {
+  return uniqueText(
+    [
+      ...meanings.flatMap((meaning) => [
+        ...(meaning.antonyms ?? []),
+        ...(meaning.definitions ?? []).flatMap(
+          (definitionItem) => definitionItem.antonyms ?? [],
+        ),
+      ]),
+      ...datamuseWords,
+      ...conceptNetWords,
+      ...wordnikWords,
+    ]
+      .map((word) => word.trim().toLowerCase())
+      .filter((word) => itemLooksLikeSynonym(word, lookupTerm)),
+  ).slice(0, 7);
+}
+
 function itemLooksLikeSynonym(word: string, lookupTerm: string) {
   return (
     Boolean(word) &&
@@ -429,6 +523,40 @@ function getDatamusePartOfSpeech(words: DatamuseWord[]) {
   return '';
 }
 
+function getWordnikDefinition(
+  wordnik: WordnikEnrichment | null,
+  lookupTerm: string,
+) {
+  return wordnik?.wordnik_definitions.find((definition) =>
+    isUsefulDefinition(definition.text, lookupTerm),
+  );
+}
+
+function getWordnikHistory(
+  wordnik: WordnikEnrichment,
+  lookupTerm: string,
+): HistoryCandidate | null {
+  const etymology = wordnik.wordnik_etymology.find(Boolean);
+  if (!etymology) {
+    return null;
+  }
+
+  return {
+    score: 82,
+    origin: `"${toDisplayWord(lookupTerm)}" history from Wordnik: ${etymology}`,
+    originPeriod:
+      'Timeline: Wordnik returned an etymology/history note, but not a precise first-use date. Use it as a source clue beside dictionary and Wiktionary evidence.',
+  };
+}
+
+function makeWordnikAttributionNote(wordnik: WordnikEnrichment) {
+  const attributions = wordnik.wordnik_attribution.length
+    ? ` Attribution: ${wordnik.wordnik_attribution.join('; ')}.`
+    : '';
+
+  return `Wordnik enrichment available. Source: ${wordnik.wordnik_url}.${attributions}`;
+}
+
 function isEnglishConceptNetEdge(edge: ConceptNetEdge) {
   return (
     edge.start?.language === 'en' &&
@@ -452,6 +580,18 @@ function getConceptNetRelatedWords(
   return uniqueText(
     edges
       .filter((edge) => allowedRelations.has(edge.rel?.label ?? ''))
+      .sort((first, second) => (second.weight ?? 0) - (first.weight ?? 0))
+      .flatMap((edge) => [edge.start?.label, edge.end?.label])
+      .filter((label): label is string => Boolean(label))
+      .map(cleanConceptLabel)
+      .filter((word) => itemLooksLikeSynonym(word, lookupTerm)),
+  ).slice(0, 8);
+}
+
+function getConceptNetAntonyms(edges: ConceptNetEdge[], lookupTerm: string) {
+  return uniqueText(
+    edges
+      .filter((edge) => edge.rel?.label === 'Antonym')
       .sort((first, second) => (second.weight ?? 0) - (first.weight ?? 0))
       .flatMap((edge) => [edge.start?.label, edge.end?.label])
       .filter((label): label is string => Boolean(label))
@@ -575,6 +715,7 @@ function makeGenericHistory({
   partOfSpeech,
   definition,
   synonyms,
+  antonyms,
   meaningCount,
   score,
 }: {
@@ -582,6 +723,7 @@ function makeGenericHistory({
   partOfSpeech: string;
   definition: string;
   synonyms: string[];
+  antonyms: string[];
   meaningCount: number;
   score: number;
 }): HistoryCandidate {
@@ -592,7 +734,7 @@ function makeGenericHistory({
   return {
     score,
     origin:
-      `"${displayWord}" is listed as a ${speechLabel}${getMeaningHistoryHint(definition)}${getSynonymHistoryHint(synonyms)} WordWiz did not find a fully sourced older etymology in the live lookup, so this history note focuses on current use and visible word parts.`,
+      `"${displayWord}" is listed as a ${speechLabel}${getMeaningHistoryHint(definition)}${getSynonymHistoryHint(synonyms)}${getAntonymHistoryHint(antonyms)} A fully sourced older origin was not found, so this note focuses on current meaning and visible word parts.`,
     originPeriod: makeTimeline({
       displayWord,
       rootClue,
@@ -613,6 +755,13 @@ function getSynonymHistoryHint(synonyms: string[]) {
   const relatedWords = synonyms.slice(0, 3);
   return relatedWords.length
     ? ` Synonyms include ${relatedWords.join(', ')}.`
+    : '';
+}
+
+function getAntonymHistoryHint(antonyms: string[]) {
+  const oppositeWords = antonyms.slice(0, 3);
+  return oppositeWords.length
+    ? ` Opposites include ${oppositeWords.join(', ')}.`
     : '';
 }
 

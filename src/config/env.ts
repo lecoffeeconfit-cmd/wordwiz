@@ -12,6 +12,7 @@ const forbiddenPublicSecrets = [
   process.env.EXPO_PUBLIC_SUPABASE_SERVICE_ROLE_KEY,
   process.env.EXPO_PUBLIC_SERVICE_ROLE_KEY,
   process.env.EXPO_PUBLIC_OPENAI_API_KEY,
+  process.env.EXPO_PUBLIC_WORDNIK_API_KEY,
   process.env.EXPO_PUBLIC_SECRET_KEY,
 ].filter(Boolean);
 

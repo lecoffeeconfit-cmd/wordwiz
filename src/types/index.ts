@@ -26,10 +26,26 @@ export type Word = {
   origin?: string;
   originPeriod?: string;
   synonyms?: string[];
+  antonyms?: string[];
   commonWords?: string[];
   basicInfo?: string;
+  wordnik_definitions?: WordnikDefinition[];
+  wordnik_examples?: string[];
+  wordnik_pronunciations?: string[];
+  wordnik_etymology?: string[];
+  wordnik_related_words?: string[];
+  wordnik_antonyms?: string[];
+  wordnik_syllables?: string[];
+  wordnik_attribution?: string[];
+  wordnik_url?: string;
   createdAt: string;
   reviews: number;
+};
+
+export type WordnikDefinition = {
+  text: string;
+  partOfSpeech?: string;
+  attributionText?: string;
 };
 
 export type WordDetails = Pick<
@@ -42,20 +58,32 @@ export type WordDetails = Pick<
   | 'origin'
   | 'originPeriod'
   | 'synonyms'
+  | 'antonyms'
   | 'commonWords'
   | 'basicInfo'
+  | 'wordnik_definitions'
+  | 'wordnik_examples'
+  | 'wordnik_pronunciations'
+  | 'wordnik_etymology'
+  | 'wordnik_related_words'
+  | 'wordnik_antonyms'
+  | 'wordnik_syllables'
+  | 'wordnik_attribution'
+  | 'wordnik_url'
 >;
 
 export type DictionaryDefinition = {
   definition?: string;
   example?: string;
   synonyms?: string[];
+  antonyms?: string[];
 };
 
 export type DictionaryMeaning = {
   partOfSpeech?: string;
   definitions?: DictionaryDefinition[];
   synonyms?: string[];
+  antonyms?: string[];
 };
 
 export type DictionaryEntry = {

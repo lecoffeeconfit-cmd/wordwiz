@@ -7,3 +7,4 @@ export * from './notifications';
 export * from './speech';
 export * from './sentry';
 export * from './supabase';
+export * from './wordnik';

@@ -1,6 +1,14 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useEffect, useMemo, useState } from 'react';
-import { FlatList, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { useMemo, useRef, useState } from 'react';
+import {
+  FlatList,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import { STARTER_WORDS } from '../constants/data';
 import { COLORS } from '../constants/theme';
 import type { AnalyticsData, LegalPage, QuizAnswer, QuizProgress, QuizQuestion, ReminderSettings, SortMode, Word } from '../types';
@@ -24,6 +32,9 @@ export function WordsScreen({
   onStudy: () => void;
 }) {
   const [searchQuery, setSearchQuery] = useState('');
+  const [isSearchFocused, setIsSearchFocused] = useState(false);
+  const listRef = useRef<FlatList<Word>>(null);
+  const searchBoxY = useRef(0);
   const normalizedSearchQuery = searchQuery.trim().toLowerCase();
   const filteredWords = useMemo(() => {
     if (!normalizedSearchQuery) {
@@ -39,6 +50,7 @@ export function WordsScreen({
         word.pronunciation,
         word.commonWords?.join(' '),
         word.synonyms?.join(' '),
+        word.antonyms?.join(' '),
       ]
         .filter(Boolean)
         .join(' ')
@@ -52,13 +64,36 @@ export function WordsScreen({
       STARTER_WORDS.some((starterWord) => starterWord.id === word.id),
     );
 
+  function scrollSearchIntoView() {
+    setIsSearchFocused(true);
+
+    setTimeout(
+      () => {
+        listRef.current?.scrollToOffset({
+          animated: true,
+          offset: Math.max(searchBoxY.current - 88, 0),
+        });
+      },
+      Platform.OS === 'ios' ? 160 : 80,
+    );
+  }
+
   return (
-    <View style={styles.screen}>
+    <KeyboardAvoidingView
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      style={styles.screen}
+    >
       <FlatList
+        ref={listRef}
         data={filteredWords}
         keyExtractor={(item) => item.id}
+        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+        keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.listContent}
+        contentContainerStyle={[
+          styles.listContent,
+          isSearchFocused && styles.listContentKeyboard,
+        ]}
         ListHeaderComponent={
           <>
             <ScreenHeader
@@ -139,7 +174,12 @@ export function WordsScreen({
             </View>
 
             {words.length > 0 && (
-              <View style={styles.wordSearchBox}>
+              <View
+                onLayout={(event) => {
+                  searchBoxY.current = event.nativeEvent.layout.y;
+                }}
+                style={styles.wordSearchBox}
+              >
                 <Ionicons name="search" size={18} color={COLORS.muted} />
                 <TextInput
                   autoCapitalize="none"
@@ -150,6 +190,8 @@ export function WordsScreen({
                   returnKeyType="search"
                   value={searchQuery}
                   onChangeText={setSearchQuery}
+                  onBlur={() => setIsSearchFocused(false)}
+                  onFocus={scrollSearchIntoView}
                   style={styles.wordSearchInput}
                 />
                 {searchQuery.length > 0 && (
@@ -191,6 +233,6 @@ export function WordsScreen({
           <WordRow word={item} index={index} onRemove={onRemove} />
         )}
       />
-    </View>
+    </KeyboardAvoidingView>
   );
 }

@@ -9,7 +9,7 @@
     "userInterfaceStyle": "light",
     "backgroundColor": "#F8F4FF",
     "splash": {
-      "image": "./assets/splash-icon.png",
+      "image": "./assets/icon.png",
       "resizeMode": "contain",
       "backgroundColor": "#F8F4FF"
     },
@@ -33,12 +33,12 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/splash-icon.png",
+          "image": "./assets/icon.png",
           "imageWidth": 180,
           "resizeMode": "contain",
           "backgroundColor": "#F8F4FF",
           "dark": {
-            "image": "./assets/splash-icon.png",
+            "image": "./assets/icon.png",
             "backgroundColor": "#F8F4FF"
           }
         }
