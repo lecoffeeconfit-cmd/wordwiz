@@ -17,6 +17,22 @@ type WordSuggestion = {
   score?: number;
 };
 
+type DefinitionSource =
+  | 'fallback'
+  | 'dictionary'
+  | 'wiktionary'
+  | 'datamuse'
+  | 'wikidata'
+  | 'wordnik'
+  | 'wikipedia';
+
+export type LookupDefinitionCandidate = {
+  text?: string | null;
+  source: DefinitionSource;
+  partOfSpeech?: string;
+  index?: number;
+};
+
 type DatamuseWord = {
   word?: string;
   tags?: string[];
@@ -65,6 +81,17 @@ type WiktionaryExtractResponse = {
   };
 };
 
+type WiktionaryDefinition = {
+  text: string;
+  partOfSpeech?: string;
+};
+
+type WiktionaryLookupData = {
+  history: Pick<WordDetails, 'origin' | 'originPeriod'> | null;
+  definitions: WiktionaryDefinition[];
+  partOfSpeech: string;
+};
+
 type WikipediaSummaryResponse = {
   type?: string;
   extract?: string;
@@ -106,7 +133,7 @@ export async function lookupWordDetails(rawTerm: string): Promise<WordDetails> {
 
   const [
     dictionaryEntry,
-    wiktionaryHistory,
+    wiktionaryData,
     datamuseWords,
     conceptNetData,
     wikidataLexeme,
@@ -114,7 +141,7 @@ export async function lookupWordDetails(rawTerm: string): Promise<WordDetails> {
     wordnikResult,
   ] = await Promise.all([
     lookupDictionaryEntry(lookupTerm),
-    lookupWiktionaryHistory(lookupTerm),
+    lookupWiktionaryData(lookupTerm),
     lookupDatamuseWords(lookupTerm),
     lookupConceptNet(lookupTerm),
     lookupWikidataLexeme(lookupTerm),
@@ -122,9 +149,12 @@ export async function lookupWordDetails(rawTerm: string): Promise<WordDetails> {
     lookupWordnikEnrichment(lookupTerm),
   ]);
   const wordnik = wordnikResult.ok ? wordnikResult.enrichment : null;
+  const fallback = getDefinitionFallback(lookupTerm);
 
   if (
+    !fallback &&
     !dictionaryEntry &&
+    !wiktionaryData.definitions.length &&
     !datamuseWords.relatedWords.length &&
     !wikidataLexeme.definitions.length &&
     !wikipediaSummary &&
@@ -135,7 +165,6 @@ export async function lookupWordDetails(rawTerm: string): Promise<WordDetails> {
 
   const entry = dictionaryEntry;
   const meanings = entry?.meanings ?? [];
-  const fallback = getDefinitionFallback(lookupTerm);
   const preferred = getPreferredDefinition(meanings, lookupTerm);
   const firstMeaning = preferred?.meaning ?? meanings[0];
   const firstDefinition = preferred?.definition;
@@ -151,17 +180,32 @@ export async function lookupWordDetails(rawTerm: string): Promise<WordDetails> {
       ? wikipediaSummary.extract
       : null;
   const wordnikDefinition = getWordnikDefinition(wordnik, lookupTerm);
-  const definition =
-    fallback?.definition ??
-    (firstDefinition?.definition &&
-    isUsefulDefinition(firstDefinition.definition, lookupTerm)
-      ? firstDefinition.definition
-      : datamuseDefinition ??
-        wikidataDefinition ??
-        firstDefinition?.definition ??
-        wordnikDefinition?.text ??
-        wikipediaDefinition ??
-        '');
+  const definition = selectBestDefinitionForDisplay(
+    [
+      { text: fallback?.definition, source: 'fallback' },
+      {
+        text: firstDefinition?.definition,
+        source: 'dictionary',
+        partOfSpeech: firstMeaning?.partOfSpeech,
+      },
+      ...wiktionaryData.definitions.map((item, index) => ({
+        text: item.text,
+        source: 'wiktionary' as const,
+        partOfSpeech: item.partOfSpeech,
+        index,
+      })),
+      { text: datamuseDefinition, source: 'datamuse' },
+      { text: wikidataDefinition, source: 'wikidata' },
+      { text: wordnikDefinition?.text, source: 'wordnik' },
+      { text: wikipediaDefinition, source: 'wikipedia' },
+      { text: wikipediaSummary?.extract, source: 'wikipedia' },
+    ],
+    lookupTerm,
+  );
+
+  if (!definition) {
+    throw new Error('No dictionary entry found.');
+  }
   const exampleDefinition =
     firstMeaning?.definitions?.find(
       (item) =>
@@ -200,6 +244,7 @@ export async function lookupWordDetails(rawTerm: string): Promise<WordDetails> {
   });
   const partOfSpeech =
     firstMeaning?.partOfSpeech ||
+    wiktionaryData.partOfSpeech ||
     getDatamusePartOfSpeech(datamuseWords.relatedWords) ||
     wikidataLexeme.partOfSpeech ||
     wordnikDefinition?.partOfSpeech ||
@@ -207,7 +252,7 @@ export async function lookupWordDetails(rawTerm: string): Promise<WordDetails> {
   const historyFallback = getHistoryFallback(lookupTerm);
   const history = chooseBestHistory([
     historyFallback ? { ...historyFallback, score: 100 } : null,
-    wiktionaryHistory ? { ...wiktionaryHistory, score: 85 } : null,
+    wiktionaryData.history ? { ...wiktionaryData.history, score: 85 } : null,
     wordnik ? getWordnikHistory(wordnik, lookupTerm) : null,
     conceptNetData.history ? { ...conceptNetData.history, score: 70 } : null,
     entry?.origin && !isMissingOrigin(entry.origin)
@@ -217,7 +262,10 @@ export async function lookupWordDetails(rawTerm: string): Promise<WordDetails> {
           definition,
           sourceOrigin: entry.origin,
           synonyms,
-          meaningCount: meanings.length || (datamuseDefinition ? 1 : 0),
+          meaningCount:
+            meanings.length ||
+            wiktionaryData.definitions.length ||
+            (datamuseDefinition ? 1 : 0),
           score: 65,
         })
       : null,
@@ -227,7 +275,10 @@ export async function lookupWordDetails(rawTerm: string): Promise<WordDetails> {
       definition,
       synonyms,
       antonyms,
-      meaningCount: meanings.length || (datamuseDefinition ? 1 : 0),
+      meaningCount:
+        meanings.length ||
+        wiktionaryData.definitions.length ||
+        (datamuseDefinition ? 1 : 0),
       score: 10,
     }),
   ]);
@@ -247,6 +298,8 @@ export async function lookupWordDetails(rawTerm: string): Promise<WordDetails> {
       partOfSpeech ? `Usually used as a ${partOfSpeech}.` : '',
       meanings.length > 1
         ? `This word has ${meanings.length} common meaning groups.`
+        : wiktionaryData.definitions.length > 1
+          ? `Wiktionary lists ${wiktionaryData.definitions.length} usable definition senses for this word.`
         : wikidataLexeme.definitions.length > 1
           ? `Wikidata lists ${wikidataLexeme.definitions.length} sense glosses for this word.`
           : 'This word has one main meaning group in this dictionary.',
@@ -772,20 +825,169 @@ function getPreferredDefinition(
   const definitions = meanings.flatMap((meaning) =>
     (meaning.definitions ?? [])
       .filter((definition) => definition.definition?.trim())
-      .map((definition) => ({ meaning, definition })),
+      .map((definition, index) => ({ meaning, definition, index })),
   );
 
-  return (
-    definitions.find(
-      ({ definition }) =>
-        isUsefulDefinition(definition.definition ?? '', lookupTerm),
-    ) ?? definitions[0]
+  const scoredDefinitions = definitions
+    .map((item, index) => {
+      const text = cleanLookupDefinitionForDisplay(
+        item.definition.definition ?? '',
+        lookupTerm,
+      );
+      if (!isUsefulDefinition(text, lookupTerm)) {
+        return null;
+      }
+
+      return {
+        item,
+        score: scoreDefinitionCandidate(
+          text,
+          lookupTerm,
+          {
+            source: 'dictionary',
+            partOfSpeech: item.meaning.partOfSpeech,
+            index,
+          },
+          index,
+        ),
+      };
+    })
+    .filter((item): item is { item: (typeof definitions)[number]; score: number } =>
+      Boolean(item),
+    )
+    .sort((first, second) => second.score - first.score);
+
+  return scoredDefinitions[0]?.item ?? definitions[0];
+}
+
+export function selectBestDefinitionForDisplay(
+  candidates: LookupDefinitionCandidate[],
+  lookupTerm: string,
+) {
+  const scoredCandidates = candidates
+    .map((candidate, index) => {
+      const text = cleanLookupDefinitionForDisplay(
+        candidate.text ?? '',
+        lookupTerm,
+      );
+      if (!isUsefulDefinition(text, lookupTerm)) {
+        return null;
+      }
+
+      return {
+        text,
+        index,
+        score: scoreDefinitionCandidate(text, lookupTerm, candidate, index),
+      };
+    })
+    .filter((item): item is { text: string; index: number; score: number } =>
+      Boolean(item),
+    )
+    .sort(
+      (first, second) =>
+        second.score - first.score || first.index - second.index,
+    );
+
+  return scoredCandidates[0]?.text ?? null;
+}
+
+function scoreDefinitionCandidate(
+  text: string,
+  lookupTerm: string,
+  candidate: LookupDefinitionCandidate,
+  fallbackIndex: number,
+) {
+  const sourceWeights: Record<DefinitionSource, number> = {
+    fallback: 100,
+    dictionary: 70,
+    wiktionary: 68,
+    wikidata: 64,
+    wordnik: 60,
+    wikipedia: 58,
+    datamuse: 48,
+  };
+  const source = candidate.source;
+  const sourceIndex = candidate.index ?? fallbackIndex;
+  const normalized = text.toLowerCase();
+  const wordCount = countDefinitionWords(text);
+  let score = sourceWeights[source] ?? 0;
+
+  if (wordCount >= 5 && wordCount <= 28) score += 14;
+  if (wordCount > 38) score -= 8;
+  if (/^(?:a|an|the)\s+/i.test(text)) score += 5;
+  if (
+    /\b(?:device|machine|tool|system|process|fruit|plant|animal|food|object|substance|quality|state|act|place|person)\b/i.test(
+      text,
+    )
+  ) {
+    score += 6;
+  }
+  if (/\b(?:electronic|digital|programmable|software|hardware|data|information)\b/i.test(text)) {
+    score += 12;
+  }
+  if (candidate.partOfSpeech && normalized.includes(candidate.partOfSpeech)) {
+    score += 2;
+  }
+  if (/\b(?:obsolete|archaic|dated|historical|formerly)\b/i.test(text)) {
+    score -= 35;
+  }
+  if (/\b(?:person employed to perform computations|one who computes)\b/i.test(text)) {
+    score -= 60;
+  }
+  if (lookupTerm === 'computer' && /\b(?:computations|computes)\b/i.test(text)) {
+    score -= 20;
+  }
+
+  return score - Math.min(sourceIndex, 12) * 2;
+}
+
+export function cleanLookupDefinitionForDisplay(
+  value: string,
+  lookupTerm: string,
+) {
+  const cleaned = value.replace(/\s+/g, ' ').trim();
+  if (!cleaned) {
+    return '';
+  }
+
+  const term = lookupTerm.trim();
+  if (!term || !startsWithLookupTerm(cleaned, term)) {
+    return cleaned;
+  }
+
+  const opening = cleaned.slice(0, 160);
+  const leadIn = opening.match(
+    /\b(?:is|are|refers to|means|describes)\b\s+/i,
   );
+  if (!leadIn?.index) {
+    return cleaned;
+  }
+
+  const definitionStart = leadIn.index + leadIn[0].length;
+  const rewritten = cleaned.slice(definitionStart).trim();
+
+  return rewritten ? capitalizeDefinition(rewritten) : cleaned;
 }
 
 function isUsefulDefinition(value: string, lookupTerm: string) {
   const text = value.trim();
   if (!text) {
+    return false;
+  }
+
+  if (
+    /did not provide a full dictionary definition|a meaning for .+ was found/i.test(
+      text,
+    )
+  ) {
+    return false;
+  }
+
+  if (
+    /\b(?:misspelling|nonstandard spelling|alternative spelling|obsolete spelling)\s+of\b/i.test(
+      text,
+    )
+  ) {
     return false;
   }
 
@@ -797,7 +999,15 @@ function isUsefulDefinition(value: string, lookupTerm: string) {
     return false;
   }
 
-  return text.replace(/[^\w\s'-]/g, '').split(/\s+/).filter(Boolean).length >= 3;
+  return hasEnoughDefinitionWords(text);
+}
+
+function hasEnoughDefinitionWords(value: string) {
+  return countDefinitionWords(value) >= 3;
+}
+
+function countDefinitionWords(value: string) {
+  return value.replace(/[^\w\s'-]/g, '').split(/\s+/).filter(Boolean).length;
 }
 
 function isCircularDefinition(value: string, lookupTerm: string) {
@@ -809,7 +1019,33 @@ function isCircularDefinition(value: string, lookupTerm: string) {
   return new RegExp(`\\b${escapeRegExp(term)}\\b`, 'i').test(value);
 }
 
+function startsWithLookupTerm(value: string, lookupTerm: string) {
+  return new RegExp(`^\\s*${escapeRegExp(lookupTerm)}\\b`, 'i').test(value);
+}
+
+function capitalizeDefinition(value: string) {
+  return value ? `${value.charAt(0).toUpperCase()}${value.slice(1)}` : value;
+}
+
 function getDefinitionFallback(lookupTerm: string): Partial<WordDetails> | null {
+  if (lookupTerm === 'banana') {
+    return {
+      definition:
+        'A long curved fruit with soft sweet flesh and a yellow skin when ripe.',
+      simpleDefinition: 'A long yellow fruit that is soft and sweet inside.',
+      example: 'She sliced a banana onto her cereal.',
+    };
+  }
+
+  if (lookupTerm === 'computer') {
+    return {
+      definition:
+        'An electronic machine that stores, retrieves, and processes information according to instructions.',
+      simpleDefinition: 'An electronic machine that works with information.',
+      example: 'The computer saved her school project.',
+    };
+  }
+
   if (lookupTerm === 'run') {
     return {
       definition:
@@ -829,6 +1065,10 @@ function getDefinitionFallback(lookupTerm: string): Partial<WordDetails> | null 
   }
 
   return null;
+}
+
+export function getDefinitionFallbackForTest(lookupTerm: string) {
+  return getDefinitionFallback(lookupTerm);
 }
 
 function getHistoryFallback(lookupTerm: string): Partial<WordDetails> | null {
@@ -862,9 +1102,9 @@ function getHistoryFallback(lookupTerm: string): Partial<WordDetails> | null {
   return null;
 }
 
-async function lookupWiktionaryHistory(
+async function lookupWiktionaryData(
   lookupTerm: string,
-): Promise<Pick<WordDetails, 'origin' | 'originPeriod'> | null> {
+): Promise<WiktionaryLookupData> {
   try {
     const data = await fetchWikimediaJson<WiktionaryExtractResponse>(
       `https://en.wiktionary.org/w/api.php?action=query&prop=extracts&explaintext=1&redirects=1&format=json&origin=*&titles=${encodeURIComponent(
@@ -872,15 +1112,17 @@ async function lookupWiktionaryHistory(
       )}`,
     );
 
-    if (!data) return null;
+    if (!data) return getEmptyWiktionaryLookupData();
 
     const page = Object.values(data.query?.pages ?? {}).find(
       (item) => item.extract && !item.missing,
     );
-    const etymology = getWiktionaryEtymology(page?.extract ?? '');
+    const extract = page?.extract ?? '';
+    const etymology = getWiktionaryEtymology(extract);
+    const definitionLookup = getWiktionaryDefinitionLookup(extract, lookupTerm);
 
     if (!etymology) {
-      return null;
+      return { history: null, ...definitionLookup };
     }
 
     const displayWord = toDisplayWord(lookupTerm);
@@ -890,16 +1132,129 @@ async function lookupWiktionaryHistory(
       : 'exact dates are not clear in the source text';
 
     return {
-      origin: `"${displayWord}" history from Wiktionary: ${etymology}`,
-      originPeriod: `Timeline: ${makeTimelineLead(timeClues)} Source - Wiktionary etymology. Evidence - ${periodText}. Learning note - older word histories often show roots first, then how English usage changed over time.`,
+      history: {
+        origin: `"${displayWord}" history from Wiktionary: ${etymology}`,
+        originPeriod: `Timeline: ${makeTimelineLead(timeClues)} Source - Wiktionary etymology. Evidence - ${periodText}. Learning note - older word histories often show roots first, then how English usage changed over time.`,
+      },
+      ...definitionLookup,
     };
   } catch {
-    return null;
+    return getEmptyWiktionaryLookupData();
   }
+}
+
+function getEmptyWiktionaryLookupData(): WiktionaryLookupData {
+  return { history: null, definitions: [], partOfSpeech: '' };
 }
 
 export function getWiktionaryEtymologyForTest(extract: string) {
   return getWiktionaryEtymology(extract);
+}
+
+export function getWiktionaryDefinitionLookupForTest(
+  extract: string,
+  lookupTerm: string,
+) {
+  return getWiktionaryDefinitionLookup(extract, lookupTerm);
+}
+
+function getWiktionaryDefinitionLookup(
+  extract: string,
+  lookupTerm: string,
+): Pick<WiktionaryLookupData, 'definitions' | 'partOfSpeech'> {
+  const englishText = getEnglishExtract(extract);
+  if (!englishText) {
+    return { definitions: [], partOfSpeech: '' };
+  }
+
+  const definitions: WiktionaryDefinition[] = [];
+  let currentPartOfSpeech = '';
+
+  englishText
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .forEach((line) => {
+      const heading = getWiktionaryHeadingName(line);
+      if (heading) {
+        currentPartOfSpeech = getWiktionaryPartOfSpeech(heading);
+        return;
+      }
+
+      if (!currentPartOfSpeech) {
+        return;
+      }
+
+      const definition = getWiktionaryDefinitionLine(line, lookupTerm);
+      if (definition) {
+        definitions.push({
+          text: definition,
+          partOfSpeech: currentPartOfSpeech,
+        });
+      }
+    });
+
+  const uniqueDefinitions = uniqueText(definitions.map((item) => item.text)).map(
+    (text) => ({
+      text,
+      partOfSpeech: definitions.find((item) => item.text === text)?.partOfSpeech,
+    }),
+  );
+
+  return {
+    definitions: uniqueDefinitions,
+    partOfSpeech: uniqueDefinitions[0]?.partOfSpeech ?? '',
+  };
+}
+
+function getWiktionaryHeadingName(line: string) {
+  const markedHeading = line.match(/^=+\s*([^=]+?)\s*=+$/);
+  if (markedHeading) {
+    return markedHeading[1]?.trim() ?? '';
+  }
+
+  const bareHeading = line.match(
+    /^(English|Etymology(?:\s+\d+)?|Pronunciation|Noun(?:\s+\d+)?|Verb(?:\s+\d+)?|Adjective(?:\s+\d+)?|Adverb(?:\s+\d+)?|Interjection|Preposition|Conjunction|Determiner|Pronoun|Proper noun|Synonyms|Antonyms|Derived terms|Related terms|Descendants|Translations|References|Further reading|Anagrams)$/i,
+  );
+
+  return bareHeading?.[1]?.trim() ?? '';
+}
+
+function getWiktionaryPartOfSpeech(heading: string) {
+  const normalizedHeading = heading.replace(/\s+\d+$/, '').toLowerCase();
+  const headings: Record<string, string> = {
+    noun: 'noun',
+    verb: 'verb',
+    adjective: 'adjective',
+    adverb: 'adverb',
+    interjection: 'interjection',
+    preposition: 'preposition',
+    conjunction: 'conjunction',
+    determiner: 'determiner',
+    pronoun: 'pronoun',
+    'proper noun': 'proper noun',
+  };
+
+  return headings[normalizedHeading] ?? '';
+}
+
+function getWiktionaryDefinitionLine(line: string, lookupTerm: string) {
+  const match = line.match(/^#\s*(?![#*:;])(.+)/);
+  if (!match) {
+    return null;
+  }
+
+  const cleaned = cleanWiktionaryDefinitionText(match[1] ?? '');
+  return isUsefulDefinition(cleaned, lookupTerm) ? cleaned : null;
+}
+
+function cleanWiktionaryDefinitionText(value: string) {
+  return value
+    .replace(/^\((?:[^)]{1,40})\)\s*/g, '')
+    .replace(/\{\{[^}]+\}\}/g, '')
+    .replace(/\[\[|\]\]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function getWiktionaryEtymology(extract: string) {
@@ -939,7 +1294,7 @@ function getEnglishExtract(extract: string) {
 
   const afterEnglish = englishMatch[1];
   const nextLanguageIndex = afterEnglish.search(
-    /\n(?:Afrikaans|Arabic|Chinese|Dutch|French|German|Greek|Italian|Japanese|Latin|Middle English|Old English|Portuguese|Russian|Spanish|Swedish|Welsh)\n/,
+    /\n=*\s*(?:Afrikaans|Arabic|Chinese|Dutch|French|German|Greek|Italian|Japanese|Latin|Middle English|Old English|Portuguese|Russian|Spanish|Swedish|Welsh)\s*=*\n/,
   );
 
   return nextLanguageIndex >= 0

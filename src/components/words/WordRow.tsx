@@ -14,10 +14,12 @@ function getLetterColor(term: string) {
 
 export function WordRow({
   word,
+  onPress,
   onRemove,
 }: {
   word: Word;
   index: number;
+  onPress?: (word: Word) => void;
   onRemove: (word: Word) => void;
 }) {
   const letterColor = getLetterColor(word.term);
@@ -25,6 +27,10 @@ export function WordRow({
 
   return (
     <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`Study ${word.term} flashcard`}
+      accessibilityHint="Opens this word in flashcards"
+      onPress={() => onPress?.(word)}
       onLongPress={() => onRemove(word)}
       style={({ pressed }) => [
         styles.wordRow,

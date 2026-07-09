@@ -87,11 +87,12 @@ export function HomeScreen({
     .slice(0, 2);
 
   return (
-    <ScrollView
-      style={styles.screen}
-      contentContainerStyle={styles.homeContent}
-      showsVerticalScrollIndicator={false}
-    >
+    <View style={styles.homeScreenShell}>
+      <ScrollView
+        style={styles.screen}
+        contentContainerStyle={styles.homeContent}
+        showsVerticalScrollIndicator={false}
+      >
       <View style={styles.homeHero}>
         <View style={styles.heroCloudOne} />
         <View style={styles.heroCloudTwo} />
@@ -100,11 +101,13 @@ export function HomeScreen({
           <View style={styles.avatarBadge}>
             <Text style={styles.avatarText}>W</Text>
           </View>
-          <View style={styles.homeStatsPill}>
-            <Ionicons name="flame" size={15} color={streakMilestone.color} />
-            <Text style={styles.homeStatsPillText}>{streakStats.current}</Text>
-            <Ionicons name="school" size={15} color={COLORS.purpleDark} />
-            <Text style={styles.homeStatsPillText}>{overallMastery}%</Text>
+          <View style={styles.homeTopActions}>
+            <View style={styles.homeStatsPill}>
+              <Ionicons name="flame" size={15} color={streakMilestone.color} />
+              <Text style={styles.homeStatsPillText}>{streakStats.current}</Text>
+              <Ionicons name="school" size={15} color={COLORS.purpleDark} />
+              <Text style={styles.homeStatsPillText}>{overallMastery}%</Text>
+            </View>
           </View>
         </View>
         <View style={styles.paperPlane}>
@@ -318,7 +321,23 @@ export function HomeScreen({
             : 'Daily reminders are off. Turn them on in Stats.'}
         </Text>
       </View>
-    </ScrollView>
+      </ScrollView>
+
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Quick add word"
+        onPress={onAddWord}
+        style={({ pressed }) => [
+          styles.homeFloatingAddButton,
+          pressed && styles.homeFloatingAddButtonPressed,
+        ]}
+      >
+        <View style={styles.homeFloatingAddIcon}>
+          <Ionicons name="add" size={24} color={COLORS.white} />
+        </View>
+        <Text style={styles.homeFloatingAddText}>Add word</Text>
+      </Pressable>
+    </View>
   );
 }
 

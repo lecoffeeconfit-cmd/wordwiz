@@ -23,6 +23,7 @@ export function WordsScreen({
   onAdd,
   onRemove,
   onStudy,
+  onSelectWord,
 }: {
   words: Word[];
   sortMode: SortMode;
@@ -30,6 +31,7 @@ export function WordsScreen({
   onAdd: () => void;
   onRemove: (word: Word) => void;
   onStudy: () => void;
+  onSelectWord: (word: Word) => void;
 }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearchFocused, setIsSearchFocused] = useState(false);
@@ -230,7 +232,12 @@ export function WordsScreen({
           </View>
         }
         renderItem={({ item, index }) => (
-          <WordRow word={item} index={index} onRemove={onRemove} />
+          <WordRow
+            word={item}
+            index={index}
+            onPress={onSelectWord}
+            onRemove={onRemove}
+          />
         )}
       />
     </KeyboardAvoidingView>

@@ -7,6 +7,7 @@ import type { AuthUser } from '../types';
 import { styles } from '../styles';
 import { MASTERY_LEVELS, buildAchievements, buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, getDayKey, getHeroProgressColor, getMasteryLevel, getMasteryLevelProgress, getNextMasteryLevel, getProgressColor, getProgressPaleColor, getProgressShineOpacity, getRecentDays, getStreakMessage, getStreakMilestone, getStreakWeek, getWordMastery, getWordMasteryCategory, shuffle } from '../utils';
 import { DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
+import { LessonProgressRing } from '../components/dashboard/LessonProgressRing';
 
 export function DashboardScreen({
   words,
@@ -222,43 +223,11 @@ export function DashboardScreen({
               : 'Top rank reached'}
           </Text>
         </View>
-        <View style={styles.masteryGauge}>
-          <View style={styles.masteryGaugeRing}>
-            {masteryRingSegments.map((segment) => (
-              <View
-                key={segment.shortTitle}
-                style={[
-                  styles.masteryGaugeSegment,
-                  segment.isCurrent && styles.masteryGaugeSegmentActive,
-                  {
-                    borderColor: segment.color,
-                    transform: [
-                      { rotate: `${segment.angle}deg` },
-                      { translateY: -53 },
-                    ],
-                  },
-                ]}
-              >
-                <View
-                  style={[
-                    styles.masteryGaugeSegmentFill,
-                    {
-                      height: `${segment.fillPercent}%`,
-                      backgroundColor: segment.color,
-                    },
-                  ]}
-                />
-              </View>
-            ))}
-          </View>
-          <View style={styles.masteryGaugeInner}>
-            <Ionicons name="school" size={31} color={COLORS.purpleDark} />
-            <Text style={styles.masteryGaugeCount}>
-              {masteryLevelProgress}%
-            </Text>
-            <Text style={styles.masteryGaugeLabel}>TO {nextMasteryLevel?.shortTitle.toUpperCase() ?? 'TOP'}</Text>
-          </View>
-        </View>
+        <LessonProgressRing
+          progress={masteryLevelProgress}
+          masteryScore={words.length ? overallMastery : 0}
+          lessonTitle={`TO ${nextMasteryLevel?.shortTitle.toUpperCase() ?? 'TOP'}`}
+        />
       </View>
       <View style={styles.masteryLevelLegend}>
         {masteryRingSegments.map((segment) => (
@@ -1026,46 +995,71 @@ export function DashboardScreen({
               index === 0 ? 'Latest quiz' : `Quiz ${recentQuizzes.length - index}`;
             const status =
               percent >= 80 ? 'Strong' : percent >= 50 ? 'Building' : 'Needs review';
+            const tone = getQuizTrendTone(percent);
             return (
-              <View key={attempt.id} style={styles.trendRow}>
+              <View
+                key={attempt.id}
+                style={[
+                  styles.trendRow,
+                  {
+                    backgroundColor: tone.surface,
+                    borderColor: tone.border,
+                  },
+                ]}
+              >
                 <View style={styles.trendRowHeader}>
                   <View style={styles.trendLabelCopy}>
                     <Text style={styles.trendTitle}>{trendLabel}</Text>
                     <Text style={styles.trendDate}>{dateLabel}</Text>
                   </View>
-                  <Text style={styles.trendScore}>
+                  <Text
+                    style={[
+                      styles.trendScore,
+                      {
+                        color: tone.scoreText,
+                        backgroundColor: tone.scoreBackground,
+                      },
+                    ]}
+                  >
                     {attempt.score}/{attempt.total} correct
                   </Text>
                 </View>
-                <View style={styles.trendTrack}>
+                <View
+                  style={[
+                    styles.trendTrack,
+                    { backgroundColor: tone.track },
+                  ]}
+                >
                   <View
                     style={[
                       styles.trendFill,
                       {
                         width: `${percent}%`,
-                        backgroundColor: getProgressColor(percent),
+                        backgroundColor: tone.fill,
                       },
                     ]}
                   >
-                    <View
-                      style={[
-                        styles.progressShine,
-                        { opacity: getProgressShineOpacity(percent) },
-                        percent >= 100 && styles.progressShineComplete,
-                      ]}
-                    />
+                    {percent >= 80 ? (
+                      <View pointerEvents="none" style={styles.trendSparkleCluster}>
+                        <View style={styles.trendSparkleLarge} />
+                        <View style={styles.trendSparkleSmall} />
+                        <View style={styles.trendGlint} />
+                      </View>
+                    ) : null}
                   </View>
                 </View>
                 <View style={styles.trendFooter}>
                   <Text
                     style={[
                       styles.trendStatus,
-                      { color: getProgressColor(percent) },
+                      { color: tone.status },
                     ]}
                   >
                     {status}
                   </Text>
-                  <Text style={styles.trendPercent}>{percent}%</Text>
+                  <Text style={[styles.trendPercent, { color: tone.percent }]}>
+                    {percent}%
+                  </Text>
                 </View>
               </View>
             );
@@ -1197,7 +1191,17 @@ function ReminderTimeStepper({
         >
           <Ionicons name="remove" size={18} color={COLORS.blue} />
         </Pressable>
-        <Text style={styles.reminderStepperValue}>{value}</Text>
+        {label === 'Hour' ? (
+          <View style={styles.reminderHourValue}>
+            {value.split(' ').map((part) => (
+              <Text key={part} style={styles.reminderStepperValue}>
+                {part}
+              </Text>
+            ))}
+          </View>
+        ) : (
+          <Text style={styles.reminderStepperValue}>{value}</Text>
+        )}
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={`Increase reminder ${label.toLowerCase()}`}
@@ -1247,6 +1251,58 @@ function buildMasteryRingSegments(score: number) {
       isCurrent: score >= startScore && score < endScore,
     };
   });
+}
+
+function getQuizTrendTone(percent: number) {
+  if (percent >= 90) {
+    return {
+      fill: COLORS.green,
+      status: '#248B71',
+      percent: '#248B71',
+      scoreText: '#248B71',
+      scoreBackground: '#E8FBF4',
+      surface: '#FDFFFC',
+      border: '#C9F3E6',
+      track: '#EAF7F2',
+    };
+  }
+
+  if (percent >= 70) {
+    return {
+      fill: COLORS.teal,
+      status: '#168F83',
+      percent: '#168F83',
+      scoreText: '#168F83',
+      scoreBackground: '#E9FBF7',
+      surface: '#FDFFFE',
+      border: '#C9F2EA',
+      track: '#EAF7F5',
+    };
+  }
+
+  if (percent >= 40) {
+    return {
+      fill: COLORS.orange,
+      status: '#B76D1B',
+      percent: '#B76D1B',
+      scoreText: '#B76D1B',
+      scoreBackground: '#FFF0DC',
+      surface: '#FFFEFC',
+      border: '#F4DEBF',
+      track: '#F7EFE5',
+    };
+  }
+
+  return {
+    fill: COLORS.pink,
+    status: '#C94C75',
+    percent: '#C94C75',
+    scoreText: '#C94C75',
+    scoreBackground: '#FFEAF1',
+    surface: '#FFFCFD',
+    border: '#F4D7E3',
+    track: '#F7EAF0',
+  };
 }
 
 function buildQuizAccuracySegments(correct: number, missed: number) {

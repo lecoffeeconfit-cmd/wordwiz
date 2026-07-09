@@ -11,11 +11,13 @@ export function CardsScreen({
   words,
   analytics,
   initialWordId,
+  onEditWord,
   onReview,
 }: {
   words: Word[];
   analytics: AnalyticsData;
   initialWordId?: string | null;
+  onEditWord?: (word: Word) => void;
   onReview: (
     wordId: string,
     remembered: boolean,
@@ -389,7 +391,7 @@ export function CardsScreen({
                   Full meaning: {current.definition}
                 </Text>
               )}
-              <WordInfoPanel word={current} />
+              <WordInfoPanel word={current} onEdit={onEditWord} />
               <View style={styles.exampleBox}>
                 <Ionicons
                   name="chatbox-ellipses-outline"

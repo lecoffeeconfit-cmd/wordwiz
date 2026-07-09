@@ -98,6 +98,7 @@ export default function AppContent() {
   const [currentDayKey, setCurrentDayKey] = useState(getDayKey());
   const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState(false);
   const [showAddWord, setShowAddWord] = useState(false);
+  const [wordToEdit, setWordToEdit] = useState<Word | null>(null);
   const [legalPage, setLegalPage] = useState<LegalPage | null>(null);
   const cloudHydratedUserId = useRef<string | null>(null);
   const cloudHydratingUserId = useRef<string | null>(null);
@@ -393,6 +394,21 @@ export default function AppContent() {
   function openCards(wordId?: string) {
     setInitialCardWordId(wordId ?? null);
     setActiveTab('cards');
+  }
+
+  function openAddWord() {
+    setWordToEdit(null);
+    setShowAddWord(true);
+  }
+
+  function openEditWord(word: Word) {
+    setWordToEdit(word);
+    setShowAddWord(true);
+  }
+
+  function closeWordModal() {
+    setShowAddWord(false);
+    setWordToEdit(null);
   }
 
   useEffect(() => {
@@ -691,6 +707,7 @@ export default function AppContent() {
     definition: string,
     example: string,
     details: Partial<WordDetails> = {},
+    options: { closeAfterSave?: boolean } = {},
   ) {
     const cleanTerm = term.trim();
     const isReplacingStarterWord = STARTER_WORDS.some(
@@ -732,8 +749,11 @@ export default function AppContent() {
       updatedExisting: Boolean(existingWord && !isReplacingStarterWord),
       hasSimpleDefinition: Boolean(savedWord.simpleDefinition),
     });
-    setShowAddWord(false);
-    setActiveTab('words');
+    if (options.closeAfterSave !== false) {
+      setShowAddWord(false);
+      setWordToEdit(null);
+      setActiveTab('words');
+    }
   }
 
   function removeWord(wordToRemove: Word) {
@@ -970,7 +990,7 @@ export default function AppContent() {
           words={words}
           analytics={analytics}
           reminderSettings={reminderSettings}
-          onAddWord={() => setShowAddWord(true)}
+          onAddWord={openAddWord}
           onStudy={() => openCards()}
           onReviewWord={(wordId) => openCards(wordId)}
           onQuiz={() => setActiveTab('quiz')}
@@ -985,9 +1005,10 @@ export default function AppContent() {
           words={sortedWords}
           sortMode={sortMode}
           onChangeSort={setSortMode}
-          onAdd={() => setShowAddWord(true)}
+          onAdd={openAddWord}
           onRemove={removeWord}
           onStudy={() => openCards()}
+          onSelectWord={(word) => openCards(word.id)}
         />
       );
     }
@@ -998,6 +1019,7 @@ export default function AppContent() {
           words={sortedWords}
           analytics={analytics}
           initialWordId={initialCardWordId}
+          onEditWord={openEditWord}
           onReview={recordCardReview}
         />
       );
@@ -1118,7 +1140,8 @@ export default function AppContent() {
       )}
       <AddWordModal
         visible={showAddWord}
-        onClose={() => setShowAddWord(false)}
+        wordToEdit={wordToEdit}
+        onClose={closeWordModal}
         onAdd={addWord}
       />
       <LegalModal page={legalPage} onClose={() => setLegalPage(null)} />

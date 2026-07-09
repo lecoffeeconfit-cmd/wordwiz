@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const Module = require('node:module');
 const path = require('node:path');
+const parser = require('@babel/parser');
 const ts = require('typescript');
 
 const projectRoot = path.resolve(__dirname, '..');
@@ -82,6 +83,129 @@ function test(name, fn) {
     throw error;
   }
 }
+
+function walkAst(node, parent, visit) {
+  if (!node || typeof node !== 'object') {
+    return;
+  }
+
+  visit(node, parent);
+
+  for (const key of Object.keys(node)) {
+    if (
+      [
+        'loc',
+        'start',
+        'end',
+        'leadingComments',
+        'trailingComments',
+        'innerComments',
+      ].includes(key)
+    ) {
+      continue;
+    }
+
+    const value = node[key];
+    if (Array.isArray(value)) {
+      value.forEach((child) => walkAst(child, node, visit));
+    } else {
+      walkAst(value, node, visit);
+    }
+  }
+}
+
+function getJsxName(node) {
+  if (!node) return '';
+  if (node.type === 'JSXIdentifier') return node.name;
+  if (node.type === 'JSXMemberExpression') {
+    return `${getJsxName(node.object)}.${getJsxName(node.property)}`;
+  }
+  return '';
+}
+
+function listFiles(dir, predicate) {
+  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      return entry.name === 'node_modules' ? [] : listFiles(fullPath, predicate);
+    }
+
+    return predicate(fullPath) ? [fullPath] : [];
+  });
+}
+
+function expressionCanRenderString(expression) {
+  if (!expression) return false;
+  if (expression.type === 'StringLiteral' || expression.type === 'TemplateLiteral') {
+    return true;
+  }
+  if (expression.type === 'ConditionalExpression') {
+    return (
+      expressionCanRenderString(expression.consequent) ||
+      expressionCanRenderString(expression.alternate)
+    );
+  }
+  if (expression.type === 'LogicalExpression') {
+    return expressionCanRenderString(expression.right);
+  }
+  return false;
+}
+
+test('native container JSX does not render raw text nodes', () => {
+  const nativeContainers = new Set([
+    'Animated.ScrollView',
+    'Animated.View',
+    'FlatList',
+    'KeyboardAvoidingView',
+    'LinearGradient',
+    'Modal',
+    'Pressable',
+    'SafeAreaView',
+    'ScrollView',
+    'TouchableOpacity',
+    'View',
+  ]);
+  const violations = [];
+  const sourceFiles = listFiles(path.join(projectRoot, 'src'), (file) =>
+    file.endsWith('.tsx'),
+  );
+
+  sourceFiles.forEach((file) => {
+    const source = fs.readFileSync(file, 'utf8');
+    const ast = parser.parse(source, {
+      sourceType: 'module',
+      plugins: ['typescript', 'jsx'],
+    });
+
+    walkAst(ast, null, (node, parent) => {
+      if (!parent || parent.type !== 'JSXElement') {
+        return;
+      }
+
+      const parentName = getJsxName(parent.openingElement.name);
+      if (!nativeContainers.has(parentName)) {
+        return;
+      }
+
+      if (node.type === 'JSXText' && node.value.trim()) {
+        violations.push(
+          `${path.relative(projectRoot, file)}:${node.loc.start.line} raw text ${JSON.stringify(node.value.trim())}`,
+        );
+      }
+
+      if (
+        node.type === 'JSXExpressionContainer' &&
+        expressionCanRenderString(node.expression)
+      ) {
+        violations.push(
+          `${path.relative(projectRoot, file)}:${node.loc.start.line} string expression inside ${parentName}`,
+        );
+      }
+    });
+  });
+
+  assert.deepEqual(violations, []);
+});
 
 test('word saving trims input and creates a new saved word', () => {
   const savedWord = learning.buildWordFromInput({
@@ -165,6 +289,152 @@ test('wordnik helper only treats non-empty enrichment as useful', () => {
     }),
     true,
   );
+});
+
+test('dictionary cleanup turns circular encyclopedia openings into definitions', () => {
+  const cleaned = dictionary.cleanLookupDefinitionForDisplay(
+    'Sinicization, sinofication, sinification, or sinonization is the process by which non-Chinese societies come under the influence of Chinese culture.',
+    'sinicization',
+  );
+
+  assert.equal(
+    cleaned,
+    'The process by which non-Chinese societies come under the influence of Chinese culture.',
+  );
+});
+
+test('dictionary ranking prefers modern common definitions over older senses', () => {
+  const definition = dictionary.selectBestDefinitionForDisplay(
+    [
+      {
+        source: 'dictionary',
+        text: 'A person employed to perform computations; one who computes.',
+      },
+      {
+        source: 'dictionary',
+        text: 'A programmable electronic device that stores, retrieves, and processes data.',
+      },
+    ],
+    'computer',
+  );
+
+  assert.equal(
+    definition,
+    'A programmable electronic device that stores, retrieves, and processes data.',
+  );
+});
+
+test('dictionary selection rejects placeholder definitions', () => {
+  const definition = dictionary.selectBestDefinitionForDisplay(
+    [
+      {
+        source: 'datamuse',
+        text: 'A meaning for Bananna was found, but this source did not provide a full dictionary definition.',
+      },
+    ],
+    'bananna',
+  );
+
+  assert.equal(definition, null);
+});
+
+test('dictionary fallbacks cover common words with reliable definitions', () => {
+  const computer = dictionary.getDefinitionFallbackForTest('computer');
+  const banana = dictionary.getDefinitionFallbackForTest('banana');
+
+  assert.match(computer.definition, /electronic machine/i);
+  assert.match(computer.simpleDefinition, /information/i);
+  assert.match(banana.definition, /fruit/i);
+  assert.match(banana.simpleDefinition, /yellow fruit/i);
+});
+
+test('wiktionary definition parser extracts English dictionary senses', () => {
+  const extract = `
+==English==
+===Etymology===
+From a local language.
+
+===Noun===
+# A small Australian marsupial with a short tail.
+#: The quokka rested in the shade.
+
+===Verb===
+# To smile warmly in a photograph.
+
+==Spanish==
+===Noun===
+# A Spanish-language definition that should not be used.
+`;
+  const lookup = dictionary.getWiktionaryDefinitionLookupForTest(
+    extract,
+    'quokka',
+  );
+
+  assert.deepEqual(
+    lookup.definitions.map((item) => item.text),
+    [
+      'A small Australian marsupial with a short tail.',
+      'To smile warmly in a photograph.',
+    ],
+  );
+  assert.equal(lookup.partOfSpeech, 'noun');
+});
+
+test('wiktionary definition parser rejects misspelling entries', () => {
+  const extract = `
+English
+Noun
+# Misspelling of banana.
+`;
+  const lookup = dictionary.getWiktionaryDefinitionLookupForTest(
+    extract,
+    'bananna',
+  );
+
+  assert.deepEqual(lookup.definitions, []);
+});
+
+test('simple definitions are distinct and written in plainer English', () => {
+  const definition = 'Able to recover quickly after something difficult.';
+  const simpleDefinition = dictionaryUtils.makeSimpleDefinition(
+    definition,
+    'resilient',
+  );
+
+  assert.equal(simpleDefinition, 'Able to bounce back after something hard');
+  assert.notEqual(simpleDefinition.toLowerCase(), definition.toLowerCase());
+});
+
+test('simple definitions do not truncate in the middle of a word', () => {
+  const simpleDefinition = dictionaryUtils.makeSimpleDefinition(
+    'The process by which non-Chinese societies or groups are acculturated or assimilated into Chinese culture.',
+    'Sinicization',
+  );
+
+  assert.equal(
+    simpleDefinition,
+    'The process by which non-Chinese societies or groups are acculturated',
+  );
+});
+
+test('word saving replaces duplicate simple definitions', () => {
+  const savedWord = learning.buildWordFromInput({
+    term: '  Curious ',
+    definition: 'Eager to know or learn something.',
+    example: 'The curious student asked a question.',
+    details: {
+      simpleDefinition: 'Eager to know or learn something.',
+    },
+    id: 'word-simple',
+    createdAt: '2026-01-01T00:00:00.000Z',
+  });
+
+  assert.equal(savedWord.definition, 'Eager to know or learn something.');
+  assert.equal(
+    savedWord.simpleDefinition,
+    'Wanting to learn or ask questions',
+  );
+  assert.notEqual(savedWord.simpleDefinition, savedWord.definition);
 });
 
 test('history formatting separates concise timeline from narrative', () => {
@@ -385,6 +655,10 @@ test('mastery levels follow the WordWiz rank track', () => {
   assert.equal(learning.getMasteryLevel(90).title, 'Grandmaster WordWiz');
   assert.equal(learning.getNextMasteryLevel(89).title, 'Grandmaster WordWiz');
   assert.equal(learning.getNextMasteryLevel(100), null);
+  assert.deepEqual(
+    learning.MASTERY_LEVELS.map((level) => level.color),
+    ['#89CFF0', '#39C69A', '#8DE7C7', '#FFD87A', '#8E78FF', '#F2A65A', '#FF7E9F'],
+  );
 });
 
 test('mastery level progress measures progress to the next rank', () => {
@@ -442,7 +716,7 @@ test('achievement builder unlocks practice milestones', () => {
 });
 
 test('progress colors move through stronger learning states', () => {
-  assert.equal(learning.getProgressColor(0), '#2879E8');
+  assert.equal(learning.getProgressColor(0), '#89CFF0');
   assert.equal(learning.getProgressColor(40), '#8E78FF');
   assert.equal(learning.getProgressColor(80), '#39C69A');
   assert.equal(learning.getProgressColor(100), '#F4B400');
@@ -459,7 +733,7 @@ test('progress shine appears halfway and peaks at complete', () => {
 });
 
 test('hero progress colors stay visible on the blue dashboard card', () => {
-  assert.equal(learning.getHeroProgressColor(0), '#B9F5E0');
+  assert.equal(learning.getHeroProgressColor(0), '#89CFF0');
   assert.equal(learning.getHeroProgressColor(50), '#8DE7C7');
   assert.equal(learning.getHeroProgressColor(90), '#F4B400');
 });

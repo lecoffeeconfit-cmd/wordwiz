@@ -9,18 +9,22 @@ import type {
   WordDetails,
 } from '../types';
 import { getDayKey, getPreviousDayKey, getRecentDays } from './date';
+import { makeDistinctSimpleDefinition } from './dictionary';
+
+export const NOVICE_MASTERY_COLOR = '#89CFF0';
 
 export function getProgressColor(score: number) {
   if (score >= 100) return '#F4B400';
   if (score >= 80) return '#39C69A';
   if (score >= 40) return '#8E78FF';
-  return '#2879E8';
+  return NOVICE_MASTERY_COLOR;
 }
 
 export function getHeroProgressColor(score: number) {
   if (score >= 90) return '#F4B400';
   if (score >= 75) return '#FFD87A';
   if (score >= 50) return '#8DE7C7';
+  if (score < 15) return NOVICE_MASTERY_COLOR;
   return '#B9F5E0';
 }
 
@@ -136,12 +140,17 @@ export function buildWordFromInput({
   createdAt: string;
 }): Word {
   const cleanTerm = formatSavedWordTerm(term);
+  const cleanDefinition = definition.trim();
 
   return {
     id: existingWord?.id ?? id,
     term: cleanTerm,
-    definition: definition.trim(),
-    simpleDefinition: details.simpleDefinition?.trim(),
+    definition: cleanDefinition,
+    simpleDefinition: makeDistinctSimpleDefinition(
+      details.simpleDefinition,
+      cleanDefinition,
+      cleanTerm,
+    ),
     example: example.trim(),
     partOfSpeech: details.partOfSpeech?.trim(),
     pronunciation: details.pronunciation?.trim(),
@@ -331,7 +340,7 @@ export const MASTERY_LEVELS = [
     title: 'Novice WordWiz',
     shortTitle: 'Novice',
     minScore: 0,
-    color: '#2879E8',
+    color: NOVICE_MASTERY_COLOR,
     encouragement: 'Start with a few honest reviews.',
   },
   {

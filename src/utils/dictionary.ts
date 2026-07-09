@@ -8,16 +8,116 @@ export function fallbackExample(word: string) {
 }
 
 export function makeSimpleDefinition(definition: string, word: string) {
-  const firstSentence = definition.split(/[.;:]/)[0]?.trim();
+  const displayWord = word.trim() || 'this word';
+  const firstSentence = cleanDefinitionText(
+    definition.split(/[.;:]/)[0] ?? '',
+  );
   if (!firstSentence) {
-    return `A simple meaning for ${word.trim() || 'this word'}.`;
+    return `A plain meaning for ${displayWord}.`;
   }
 
-  return firstSentence
-    .replace(/^used to describe\s+/i, '')
-    .replace(/^relating to\s+/i, 'About ')
-    .replace(/\s+/g, ' ')
-    .slice(0, 95);
+  const simpleDefinition = simplifyDefinitionText(firstSentence);
+  if (!definitionsMatch(simpleDefinition, definition)) {
+    return simpleDefinition;
+  }
+
+  return `In plain English, ${lowercaseFirst(simpleDefinition)}`;
+}
+
+export function makeDistinctSimpleDefinition(
+  simpleDefinition: string | undefined,
+  definition: string,
+  word: string,
+) {
+  const cleanedSimpleDefinition = cleanDefinitionText(simpleDefinition ?? '');
+  if (
+    cleanedSimpleDefinition &&
+    !definitionsMatch(cleanedSimpleDefinition, definition)
+  ) {
+    return cleanedSimpleDefinition;
+  }
+
+  return makeSimpleDefinition(definition, word);
+}
+
+function simplifyDefinitionText(value: string) {
+  const simpleText = [
+    [/^used to describe\s+/i, ''],
+    [/^relating to\s+/i, 'About '],
+    [/^of or relating to\s+/i, 'About '],
+    [/^connected with\s+/i, 'About '],
+    [/^characterized by\s+/i, 'Having '],
+    [/^having the quality of\s+/i, 'Having '],
+    [/^a person who\s+/i, 'Someone who '],
+    [/^one who\s+/i, 'Someone who '],
+    [/^the act of\s+/i, 'Doing '],
+    [/^the state of being\s+/i, 'Being '],
+    [/\bobtain(?:ing)?\b/gi, 'get'],
+    [/\butili[sz]e(?:s|d|ing)?\b/gi, 'use'],
+    [/\bcommence(?:s|d|ing)?\b/gi, 'start'],
+    [/\bterminate(?:s|d|ing)?\b/gi, 'end'],
+    [/\bassistance\b/gi, 'help'],
+    [/\bapproximately\b/gi, 'about'],
+    [/\bnumerous\b/gi, 'many'],
+    [/\bdifficult\b/gi, 'hard'],
+    [/\badversity\b/gi, 'hard times'],
+    [/\bendeavo[u]?r(?:s|ed|ing)?\b/gi, 'try'],
+    [/\binquire(?:s|d|ing)?\b/gi, 'ask'],
+    [/\bdemonstrate(?:s|d|ing)?\b/gi, 'show'],
+    [/\bbrightly\b/gi, 'very bright'],
+    [/\brecover quickly(?: from| after)?\b/gi, 'bounce back after'],
+    [
+      /\beager to know or learn something\b/gi,
+      'wanting to learn or ask questions',
+    ],
+    [/\bgiving off light\b/gi, 'making light'],
+  ].reduce(
+    (text, [pattern, replacement]) =>
+      text.replace(pattern as RegExp, replacement as string),
+    value,
+  );
+
+  return capitalizeFirst(truncateAtWordBoundary(cleanDefinitionText(simpleText), 82));
+}
+
+function cleanDefinitionText(value: string) {
+  return value.replace(/\s+/g, ' ').trim();
+}
+
+function truncateAtWordBoundary(value: string, maxLength: number) {
+  if (value.length <= maxLength) {
+    return value;
+  }
+
+  const truncated = value.slice(0, maxLength).trimEnd();
+  const lastSpace = truncated.lastIndexOf(' ');
+
+  const wordBoundaryText = lastSpace > 40 ? truncated.slice(0, lastSpace) : truncated;
+
+  return wordBoundaryText.replace(/\s+\b(?:and|or|the|a|an|of|by|to|into)\b$/i, '');
+}
+
+function definitionsMatch(left: string, right: string) {
+  return (
+    normalizeDefinitionForComparison(left) ===
+    normalizeDefinitionForComparison(right)
+  );
+}
+
+function normalizeDefinitionForComparison(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^\w\s'-]/g, '')
+    .replace(/\s+/g, ' ');
+}
+
+function lowercaseFirst(value: string) {
+  return value ? `${value.charAt(0).toLowerCase()}${value.slice(1)}` : value;
+}
+
+function capitalizeFirst(value: string) {
+  return value ? `${value.charAt(0).toUpperCase()}${value.slice(1)}` : value;
 }
 
 export function getSynonyms(words: string[]) {
