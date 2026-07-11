@@ -16,11 +16,25 @@ production-ready in Supabase.
 supabase functions deploy delete-account
 ```
 
-4. In Supabase Auth settings:
+4. Deploy the Wordnik enrichment Edge Function:
+
+```bash
+supabase functions deploy wordnik-enrich
+```
+
+5. In Supabase Auth settings:
    - keep email confirmation enabled
    - configure the production site URL
    - add local and production redirect URLs
    - configure Google, Apple, and Microsoft providers if using social login
+
+## App Store privacy
+
+- Ensure the hosted privacy policy discloses that typed lookup words may be sent
+  to dictionary and reference providers, including DictionaryAPI, Wiktionary,
+  Datamuse, ConceptNet, Wikidata, Wikipedia, and Wordnik.
+- Complete App Store Connect privacy labels for account contact information,
+  user-created learning content, user ID, and Sentry diagnostics.
 
 ## Manual user isolation test
 

@@ -14,20 +14,16 @@ export function getGreeting() {
   return 'Good evening';
 }
 
-export function getTodayReviewCount(analytics: AnalyticsData) {
+export function getTodayQuizCount(analytics: AnalyticsData) {
   const today = getDayKey();
-  return (
-    analytics.cardHistory.filter((event) => event.date === today).length +
-    analytics.quizHistory
-      .filter((attempt) => attempt.date === today)
-      .reduce((total, attempt) => total + attempt.total, 0)
-  );
+  return analytics.quizHistory.filter((attempt) => attempt.date === today).length;
 }
 
 export function HomeScreen({
   words,
   analytics,
   reminderSettings,
+  dailyQuizGoal,
   onAddWord,
   onStudy,
   onReviewWord,
@@ -37,6 +33,7 @@ export function HomeScreen({
   words: Word[];
   analytics: AnalyticsData;
   reminderSettings: ReminderSettings;
+  dailyQuizGoal: number;
   onAddWord: () => void;
   onStudy: () => void;
   onReviewWord: (wordId: string) => void;
@@ -76,7 +73,8 @@ export function HomeScreen({
     ...achievements.filter((achievement) => achievement.unlocked),
     ...achievements.filter((achievement) => !achievement.unlocked),
   ].slice(0, 3);
-  const todayReviews = getTodayReviewCount(analytics);
+  const todayQuizzes = getTodayQuizCount(analytics);
+  const completedDailyQuizzes = Math.min(todayQuizzes, dailyQuizGoal);
   const nextWords = [...words]
     .sort(
       (first, second) =>
@@ -126,8 +124,22 @@ export function HomeScreen({
       <View style={styles.homeOverviewCard}>
         <View style={styles.overviewHeader}>
           <Text style={styles.homeSectionTitle}>Today’s learning</Text>
-          <View style={styles.overviewProgressRing}>
-            <Text style={styles.overviewProgressText}>{Math.min(todayReviews, 5)}/5</Text>
+          <View
+            accessible
+            accessibilityLabel={`${completedDailyQuizzes} of ${dailyQuizGoal} daily quizzes completed`}
+            style={styles.overviewDailyGoal}
+          >
+            <View style={styles.overviewDailyGoalCopy}>
+              <Text style={styles.overviewDailyGoalLabel}>DAILY GOAL</Text>
+              <Text style={styles.overviewDailyGoalCaption}>
+                {dailyQuizGoal === 1 ? 'Quiz' : 'Quizzes'}
+              </Text>
+            </View>
+            <View style={styles.overviewProgressRing}>
+              <Text style={styles.overviewProgressText}>
+                {completedDailyQuizzes}/{dailyQuizGoal}
+              </Text>
+            </View>
           </View>
         </View>
         <View style={styles.homeIdeaGrid}>
@@ -163,7 +175,7 @@ export function HomeScreen({
       <View style={styles.homeSkillCard}>
         <View style={styles.homeSkillCopy}>
           <Text style={styles.homeSkillTitle}>
-            {formatStudyTime(Math.max(totalSeconds, 0))} spent learning
+            {formatStudyTime(Math.max(totalSeconds, 0))} total learning time
           </Text>
           <Text style={styles.homeSkillSubtitle}>
             Mastery is about {overallMastery}% across your saved words.

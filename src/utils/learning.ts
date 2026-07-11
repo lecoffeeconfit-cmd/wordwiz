@@ -17,7 +17,7 @@ export function getProgressColor(score: number) {
   if (score >= 100) return '#F4B400';
   if (score >= 80) return '#39C69A';
   if (score >= 40) return '#8E78FF';
-  return NOVICE_MASTERY_COLOR;
+  return '#3E9BDA';
 }
 
 export function getHeroProgressColor(score: number) {

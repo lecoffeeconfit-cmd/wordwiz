@@ -45,8 +45,6 @@ export function setSentryUser(user: AuthUser | null) {
     user
       ? {
           id: user.id,
-          email: user.email,
-          username: user.name,
         }
       : null,
   );

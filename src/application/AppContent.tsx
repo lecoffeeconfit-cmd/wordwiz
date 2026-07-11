@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import * as SplashScreen from 'expo-splash-screen';
+import * as WebBrowser from 'expo-web-browser';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Platform, Pressable, Text, View } from 'react-native';
@@ -12,7 +13,7 @@ import {
   STARTER_WORDS,
 } from '../constants/data';
 import { COLORS } from '../constants/theme';
-import { AddWordModal, LegalModal } from '../modals';
+import { AddWordModal } from '../modals';
 import {
   CardsScreen,
   DashboardScreen,
@@ -77,6 +78,10 @@ import {
 
 const ONBOARDING_KEY = '@wordwiz/onboarding-complete/v1';
 const CLOUD_HYDRATE_CACHE_MS = 30 * 60 * 1000;
+const LEGAL_PAGE_URLS: Record<LegalPage, string> = {
+  privacy: 'https://lecoffeeconfit-cmd.github.io/wordwiz-legal/',
+  terms: 'https://lecoffeeconfit-cmd.github.io/wordwiz-legal/terms.html',
+};
 const CLOUD_SYNC_LOGS_ENABLED =
   (typeof __DEV__ !== 'undefined' && __DEV__) ||
   process.env.EXPO_PUBLIC_WORDWIZ_EGRESS_LOGS === 'true';
@@ -92,6 +97,7 @@ export default function AppContent() {
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
   const [reminderSettings, setReminderSettings] =
     useState<ReminderSettings>(DEFAULT_REMINDER);
+  const [dailyQuizGoal, setDailyQuizGoal] = useState(1);
   const [isReady, setIsReady] = useState(false);
   const [isCloudLoading, setIsCloudLoading] = useState(false);
   const [appNotice, setAppNotice] = useState<string | null>(null);
@@ -99,7 +105,6 @@ export default function AppContent() {
   const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState(false);
   const [showAddWord, setShowAddWord] = useState(false);
   const [wordToEdit, setWordToEdit] = useState<Word | null>(null);
-  const [legalPage, setLegalPage] = useState<LegalPage | null>(null);
   const cloudHydratedUserId = useRef<string | null>(null);
   const cloudHydratingUserId = useRef<string | null>(null);
   const cloudWarningShown = useRef(false);
@@ -113,6 +118,16 @@ export default function AppContent() {
 
     hasHiddenNativeSplash.current = true;
     SplashScreen.hide();
+  }, []);
+
+  const openLegalPage = useCallback((page: LegalPage) => {
+    void WebBrowser.openBrowserAsync(LEGAL_PAGE_URLS[page]).catch((error) => {
+      reportError(error, { area: 'open_legal_page', page });
+      Alert.alert(
+        'Could not open page',
+        'Please check your internet connection and try again.',
+      );
+    });
   }, []);
 
   useEffect(() => {
@@ -131,6 +146,7 @@ export default function AppContent() {
           setQuizProgress(null);
           setAnalytics(EMPTY_ANALYTICS);
           setReminderSettings(DEFAULT_REMINDER);
+          setDailyQuizGoal(1);
           return;
         }
 
@@ -156,12 +172,14 @@ export default function AppContent() {
           setQuizProgress(null);
           setAnalytics(EMPTY_ANALYTICS);
           setReminderSettings(DEFAULT_REMINDER);
+          setDailyQuizGoal(1);
         }
       } catch (error) {
         reportError(error, { area: 'app_boot' });
         setWords(STARTER_WORDS);
         setAnalytics(EMPTY_ANALYTICS);
         setReminderSettings(DEFAULT_REMINDER);
+        setDailyQuizGoal(1);
         setAppNotice('WordWiz had trouble loading saved data, so it opened with starter words.');
       } finally {
         await clearLegacyLearningData();
@@ -208,6 +226,7 @@ export default function AppContent() {
       setQuizProgress(null);
       setAnalytics(EMPTY_ANALYTICS);
       setReminderSettings(DEFAULT_REMINDER);
+      setDailyQuizGoal(1);
       return;
     }
 
@@ -218,12 +237,13 @@ export default function AppContent() {
 
   async function loadUserCache(userId: string) {
     try {
-      const [savedWords, savedQuiz, savedAnalytics, savedReminder] =
+      const [savedWords, savedQuiz, savedAnalytics, savedReminder, savedDailyQuizGoal] =
         await Promise.all([
           AsyncStorage.getItem(getUserCacheKey(userId, 'words')),
           AsyncStorage.getItem(getUserCacheKey(userId, 'quiz-progress')),
           AsyncStorage.getItem(getUserCacheKey(userId, 'analytics')),
           AsyncStorage.getItem(getUserCacheKey(userId, 'reminder-settings')),
+          AsyncStorage.getItem(getUserCacheKey(userId, 'daily-quiz-goal')),
         ]);
 
       setWords(savedWords ? JSON.parse(savedWords) : STARTER_WORDS);
@@ -234,12 +254,14 @@ export default function AppContent() {
           ? { ...DEFAULT_REMINDER, ...JSON.parse(savedReminder) }
           : DEFAULT_REMINDER,
       );
+      setDailyQuizGoal(clampDailyQuizGoal(Number(savedDailyQuizGoal) || 1));
     } catch (error) {
       reportError(error, { area: 'load_user_cache' });
       setWords(STARTER_WORDS);
       setQuizProgress(null);
       setAnalytics(EMPTY_ANALYTICS);
       setReminderSettings(DEFAULT_REMINDER);
+      setDailyQuizGoal(1);
       setAppNotice('Saved data on this device could not be read. You can keep learning with starter words.');
     }
   }
@@ -446,6 +468,15 @@ export default function AppContent() {
       );
     }
   }, [currentUser, isReady, reminderSettings]);
+
+  useEffect(() => {
+    if (isReady && currentUser) {
+      AsyncStorage.setItem(
+        getUserCacheKey(currentUser.id, 'daily-quiz-goal'),
+        String(dailyQuizGoal),
+      );
+    }
+  }, [currentUser, dailyQuizGoal, isReady]);
 
   const sortedWords = useMemo(() => {
     return [...words].sort((first, second) => {
@@ -689,6 +720,7 @@ export default function AppContent() {
       setQuizProgress(null);
       setAnalytics(EMPTY_ANALYTICS);
       setReminderSettings(DEFAULT_REMINDER);
+      setDailyQuizGoal(1);
       setActiveTab('home');
       Alert.alert(
         'Account deleted',
@@ -696,8 +728,8 @@ export default function AppContent() {
       );
     } catch {
       Alert.alert(
-        'Delete account needs setup',
-        'WordWiz is ready for account deletion, but the Supabase delete-account Edge Function must be deployed first. Your account was not deleted.',
+        'Could not delete account',
+        'Your account was not deleted. Please try again, or contact howardlt94@gmail.com if the problem continues.',
       );
     }
   }
@@ -717,6 +749,9 @@ export default function AppContent() {
     const existingWord = words.find(
       (word) => word.term.toLowerCase() === cleanTerm.toLowerCase(),
     );
+    if (existingWord && wordToEdit?.id !== existingWord.id) {
+      return;
+    }
     const wordData = buildWordFromInput({
       existingWord: isReplacingStarterWord ? undefined : existingWord,
       term: cleanTerm,
@@ -990,6 +1025,7 @@ export default function AppContent() {
           words={words}
           analytics={analytics}
           reminderSettings={reminderSettings}
+          dailyQuizGoal={dailyQuizGoal}
           onAddWord={openAddWord}
           onStudy={() => openCards()}
           onReviewWord={(wordId) => openCards(wordId)}
@@ -1042,8 +1078,10 @@ export default function AppContent() {
         analytics={analytics}
         currentUser={currentUser}
         reminderSettings={reminderSettings}
+        dailyQuizGoal={dailyQuizGoal}
         onUpdateReminder={updateReminder}
-        onOpenLegal={setLegalPage}
+        onUpdateDailyQuizGoal={(goal) => setDailyQuizGoal(clampDailyQuizGoal(goal))}
+        onOpenLegal={openLegalPage}
         onLogout={logout}
         onDeleteAccount={deleteAccount}
       />
@@ -1141,10 +1179,11 @@ export default function AppContent() {
       <AddWordModal
         visible={showAddWord}
         wordToEdit={wordToEdit}
+        words={words}
+        onEditExisting={setWordToEdit}
         onClose={closeWordModal}
         onAdd={addWord}
       />
-      <LegalModal page={legalPage} onClose={() => setLegalPage(null)} />
     </SafeAreaView>
   );
 }
@@ -1249,12 +1288,17 @@ async function clearLocalLearningData(userId: string) {
     getUserCacheKey(userId, 'quiz-progress'),
     getUserCacheKey(userId, 'analytics'),
     getUserCacheKey(userId, 'reminder-settings'),
+    getUserCacheKey(userId, 'daily-quiz-goal'),
     getUserCacheKey(userId, 'cloud-hydrated-at'),
   ]);
 }
 
 function getUserCacheKey(userId: string, key: string) {
   return `@wordwiz/users/${userId}/${key}`;
+}
+
+function clampDailyQuizGoal(goal: number) {
+  return Math.max(1, Math.min(5, Math.round(goal)));
 }
 
 function logCloudSync(event: string, details: Record<string, number | string>) {

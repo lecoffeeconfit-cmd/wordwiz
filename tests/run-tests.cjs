@@ -665,6 +665,7 @@ test('mastery level progress measures progress to the next rank', () => {
   assert.equal(learning.getMasteryLevelProgress(0), 0);
   assert.equal(learning.getMasteryLevelProgress(7), 47);
   assert.equal(learning.getMasteryLevelProgress(15), 0);
+  assert.equal(learning.getMasteryLevelProgress(40), 67);
   assert.equal(learning.getMasteryLevelProgress(100), 100);
 });
 
@@ -716,7 +717,7 @@ test('achievement builder unlocks practice milestones', () => {
 });
 
 test('progress colors move through stronger learning states', () => {
-  assert.equal(learning.getProgressColor(0), '#89CFF0');
+  assert.equal(learning.getProgressColor(0), '#3E9BDA');
   assert.equal(learning.getProgressColor(40), '#8E78FF');
   assert.equal(learning.getProgressColor(80), '#39C69A');
   assert.equal(learning.getProgressColor(100), '#F4B400');

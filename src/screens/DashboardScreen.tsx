@@ -14,7 +14,9 @@ export function DashboardScreen({
   analytics,
   currentUser,
   reminderSettings,
+  dailyQuizGoal,
   onUpdateReminder,
+  onUpdateDailyQuizGoal,
   onOpenLegal,
   onLogout,
   onDeleteAccount,
@@ -23,7 +25,9 @@ export function DashboardScreen({
   analytics: AnalyticsData;
   currentUser: AuthUser | null;
   reminderSettings: ReminderSettings;
+  dailyQuizGoal: number;
   onUpdateReminder: (settings: ReminderSettings) => void;
+  onUpdateDailyQuizGoal: (goal: number) => void;
   onOpenLegal: (page: LegalPage) => void;
   onLogout: () => void;
   onDeleteAccount: () => void;
@@ -133,7 +137,7 @@ export function DashboardScreen({
     1,
     ...weeklyActivity.map((day) => day.activityScore),
   );
-  const recentQuizzes = analytics.quizHistory.slice(-5).reverse();
+  const recentQuizzes = analytics.quizHistory.slice(0, 5);
   const streakStats = calculateStreakStats(analytics);
   const streak = streakStats.current;
   const streakMilestone = getStreakMilestone(streakStats);
@@ -194,7 +198,7 @@ export function DashboardScreen({
         <View style={styles.heroCopy}>
           <Text style={styles.heroLabel}>ESTIMATED MASTERY</Text>
           <Text style={styles.heroLevelTitle}>{masteryLevel.title}</Text>
-          <Text style={styles.heroValue}>{overallMastery}%</Text>
+          <Text style={styles.heroValue}>{masteryLevelProgress}%</Text>
           <Text style={styles.heroText}>
             {masteryLevel.encouragement}
           </Text>
@@ -204,15 +208,15 @@ export function DashboardScreen({
                 styles.heroLevelFill,
                 {
                   width: `${Math.max(masteryLevelProgress, words.length ? 6 : 0)}%`,
-                  backgroundColor: getHeroProgressColor(overallMastery),
+                  backgroundColor: getHeroProgressColor(masteryLevelProgress),
                 },
               ]}
             >
               <View
                 style={[
                   styles.progressShine,
-                  { opacity: getProgressShineOpacity(overallMastery) },
-                  overallMastery >= 100 && styles.progressShineComplete,
+                  { opacity: getProgressShineOpacity(masteryLevelProgress) },
+                  masteryLevelProgress >= 100 && styles.progressShineComplete,
                 ]}
               />
             </View>
@@ -1091,6 +1095,63 @@ export function DashboardScreen({
         </View>
       </View>
 
+      <View style={styles.dailyGoalCard}>
+        <View style={styles.dailyGoalHeader}>
+          <View style={styles.dailyGoalIcon}>
+            <Ionicons name="trophy-outline" size={23} color={COLORS.teal} />
+          </View>
+          <View style={styles.dailyGoalCopy}>
+            <Text style={styles.dailyGoalLabel}>DAILY PRACTICE</Text>
+            <Text style={styles.dailyGoalTitle}>Quiz goal</Text>
+          </View>
+          <View style={styles.dailyGoalBadge}>
+            <Text style={styles.dailyGoalBadgeText}>
+              {dailyQuizGoal} {dailyQuizGoal === 1 ? 'quiz' : 'quizzes'}
+            </Text>
+          </View>
+        </View>
+        <Text style={styles.dailyGoalText}>
+          Choose how many quizzes you want to complete each day. Every finished
+          quiz counts, even when it has fewer than ten questions.
+        </Text>
+        <View style={styles.dailyGoalStepper}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Decrease daily quiz goal"
+            accessibilityState={{ disabled: dailyQuizGoal <= 1 }}
+            disabled={dailyQuizGoal <= 1}
+            onPress={() => onUpdateDailyQuizGoal(dailyQuizGoal - 1)}
+            style={({ pressed }) => [
+              styles.dailyGoalStepButton,
+              dailyQuizGoal <= 1 && styles.dailyGoalStepButtonDisabled,
+              pressed && dailyQuizGoal > 1 && styles.pressed,
+            ]}
+          >
+            <Ionicons name="remove" size={21} color={COLORS.teal} />
+          </Pressable>
+          <View style={styles.dailyGoalValue}>
+            <Text style={styles.dailyGoalNumber}>{dailyQuizGoal}</Text>
+            <Text style={styles.dailyGoalUnit}>
+              {dailyQuizGoal === 1 ? 'QUIZ PER DAY' : 'QUIZZES PER DAY'}
+            </Text>
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Increase daily quiz goal"
+            accessibilityState={{ disabled: dailyQuizGoal >= 5 }}
+            disabled={dailyQuizGoal >= 5}
+            onPress={() => onUpdateDailyQuizGoal(dailyQuizGoal + 1)}
+            style={({ pressed }) => [
+              styles.dailyGoalStepButton,
+              dailyQuizGoal >= 5 && styles.dailyGoalStepButtonDisabled,
+              pressed && dailyQuizGoal < 5 && styles.pressed,
+            ]}
+          >
+            <Ionicons name="add" size={21} color={COLORS.teal} />
+          </Pressable>
+        </View>
+      </View>
+
       <View style={styles.accountCard}>
         <View style={styles.accountAvatar}>
           <Text style={styles.accountAvatarText}>
@@ -1254,54 +1315,54 @@ function buildMasteryRingSegments(score: number) {
 }
 
 function getQuizTrendTone(percent: number) {
-  if (percent >= 90) {
+  if (percent >= 100) {
     return {
-      fill: COLORS.green,
-      status: '#248B71',
-      percent: '#248B71',
-      scoreText: '#248B71',
-      scoreBackground: '#E8FBF4',
-      surface: '#FDFFFC',
-      border: '#C9F3E6',
-      track: '#EAF7F2',
+      fill: '#F4B400',
+      status: '#D89F00',
+      percent: COLORS.muted,
+      scoreText: COLORS.blue,
+      scoreBackground: COLORS.bluePale,
+      surface: '#FFFCFF',
+      border: '#E8DEFA',
+      track: '#F8E29A',
     };
   }
 
-  if (percent >= 70) {
+  if (percent >= 80) {
     return {
       fill: COLORS.teal,
-      status: '#168F83',
-      percent: '#168F83',
-      scoreText: '#168F83',
-      scoreBackground: '#E9FBF7',
-      surface: '#FDFFFE',
-      border: '#C9F2EA',
-      track: '#EAF7F5',
+      status: COLORS.teal,
+      percent: COLORS.muted,
+      scoreText: COLORS.blue,
+      scoreBackground: COLORS.bluePale,
+      surface: '#FFFCFF',
+      border: '#E8DEFA',
+      track: '#EFEAF8',
     };
   }
 
   if (percent >= 40) {
     return {
-      fill: COLORS.orange,
-      status: '#B76D1B',
-      percent: '#B76D1B',
-      scoreText: '#B76D1B',
-      scoreBackground: '#FFF0DC',
-      surface: '#FFFEFC',
-      border: '#F4DEBF',
-      track: '#F7EFE5',
+      fill: COLORS.purple,
+      status: COLORS.purple,
+      percent: COLORS.muted,
+      scoreText: COLORS.blue,
+      scoreBackground: COLORS.bluePale,
+      surface: '#FFFCFF',
+      border: '#E8DEFA',
+      track: '#EFEAF8',
     };
   }
 
   return {
-    fill: COLORS.pink,
-    status: '#C94C75',
-    percent: '#C94C75',
-    scoreText: '#C94C75',
-    scoreBackground: '#FFEAF1',
-    surface: '#FFFCFD',
-    border: '#F4D7E3',
-    track: '#F7EAF0',
+    fill: COLORS.blue,
+    status: COLORS.blue,
+    percent: COLORS.muted,
+    scoreText: COLORS.blue,
+    scoreBackground: COLORS.bluePale,
+    surface: '#FFFCFF',
+    border: '#E8DEFA',
+    track: '#EFEAF8',
   };
 }
 

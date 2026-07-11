@@ -19,6 +19,8 @@ export function AddWordModal({
   onClose,
   onAdd,
   wordToEdit,
+  words = [],
+  onEditExisting,
 }: {
   visible: boolean;
   onClose: () => void;
@@ -30,6 +32,8 @@ export function AddWordModal({
     options?: { closeAfterSave?: boolean },
   ) => void | Promise<void>;
   wordToEdit?: Word | null;
+  words?: Word[];
+  onEditExisting?: (word: Word) => void;
 }) {
   const [term, setTerm] = useState('');
   const [definition, setDefinition] = useState('');
@@ -42,6 +46,7 @@ export function AddWordModal({
   const [basicInfo, setBasicInfo] = useState('');
   const [synonyms, setSynonyms] = useState<string[]>([]);
   const [antonyms, setAntonyms] = useState<string[]>([]);
+  const [antonymsText, setAntonymsText] = useState('');
   const [commonWordsText, setCommonWordsText] = useState('');
   const [wordnikDetails, setWordnikDetails] = useState<Partial<WordDetails>>({});
   const [isLookingUp, setIsLookingUp] = useState(false);
@@ -64,6 +69,11 @@ export function AddWordModal({
   const basicInfoInputRef = useRef<TextInput>(null);
   const timePeriodInputRef = useRef<TextInput>(null);
   const historyInputRef = useRef<TextInput>(null);
+  const duplicateWord = words.find(
+    (word) =>
+      word.id !== wordToEdit?.id &&
+      word.term.trim().toLowerCase() === term.trim().toLowerCase(),
+  );
 
   useEffect(() => {
     if (!visible) {
@@ -86,6 +96,7 @@ export function AddWordModal({
     setBasicInfo(wordToEdit.basicInfo ?? '');
     setSynonyms(wordToEdit.synonyms ?? []);
     setAntonyms(wordToEdit.antonyms ?? []);
+    setAntonymsText((wordToEdit.antonyms ?? []).join(', '));
     setCommonWordsText((wordToEdit.commonWords ?? []).join(', '));
     setWordnikDetails(pickWordnikDetails(wordToEdit));
     setLookupStatus('Edit anything, then save your changes.');
@@ -110,6 +121,7 @@ export function AddWordModal({
     setBasicInfo('');
     setSynonyms([]);
     setAntonyms([]);
+    setAntonymsText('');
     setCommonWordsText('');
     setWordnikDetails({});
     setLookupStatus('');
@@ -144,6 +156,7 @@ export function AddWordModal({
       setBasicInfo(details.basicInfo ?? '');
       setSynonyms(details.synonyms ?? []);
       setAntonyms(details.antonyms ?? []);
+      setAntonymsText((details.antonyms ?? []).join(', '));
       setCommonWordsText((details.commonWords ?? []).join(', '));
       setWordnikDetails(pickWordnikDetails(details));
       closeSectionEditors();
@@ -181,7 +194,7 @@ export function AddWordModal({
       origin,
       originPeriod,
       synonyms,
-      antonyms,
+      antonyms: parseListText(antonymsText),
       commonWords: getCommonWords(),
       basicInfo,
       ...wordnikDetails,
@@ -253,7 +266,7 @@ export function AddWordModal({
         pronunciation,
         basicInfo,
         synonymsText: synonyms.join(', '),
-        antonymsText: antonyms.join(', '),
+        antonymsText,
         commonWordsText,
       });
       setIsEditingBasicInfo(true);
@@ -268,6 +281,7 @@ export function AddWordModal({
     setBasicInfo(nextBasicInfo.basicInfo);
     setSynonyms(nextBasicInfo.synonyms);
     setAntonyms(nextBasicInfo.antonyms);
+    setAntonymsText(nextBasicInfo.antonyms.join(', '));
     setCommonWordsText(nextBasicInfo.commonWordsText);
     setIsEditingBasicInfo(false);
     Keyboard.dismiss();
@@ -317,6 +331,11 @@ export function AddWordModal({
   }
 
   function submit() {
+    if (duplicateWord) {
+      Keyboard.dismiss();
+      return;
+    }
+
     if (!term.trim() || !definition.trim() || !example.trim()) {
       Alert.alert(
         'A little more detail',
@@ -341,6 +360,7 @@ export function AddWordModal({
     setBasicInfo('');
     setSynonyms([]);
     setAntonyms([]);
+    setAntonymsText('');
     setCommonWordsText('');
     setWordnikDetails({});
     setLookupStatus('');
@@ -368,35 +388,21 @@ export function AddWordModal({
             keyboardShouldPersistTaps="handled"
           >
             <View style={styles.modalTopRow}>
-              <Pressable onPress={close} style={styles.closeButton}>
-                <Ionicons name="close" size={23} color={COLORS.ink} />
-              </Pressable>
+              <View style={styles.modalTopActionSlot}>
+                <Pressable onPress={close} style={styles.closeButton}>
+                  <Ionicons name="close" size={23} color={COLORS.ink} />
+                </Pressable>
+              </View>
               <View style={styles.modalStep}>
                 <Ionicons name="sparkles" size={16} color={COLORS.purpleDark} />
                 <Text style={styles.modalStepText}>NEW DISCOVERY</Text>
               </View>
-              <View style={styles.closeButtonPlaceholder} />
+              <View style={styles.modalTopActionSlot} />
             </View>
 
-            <View style={styles.modalTitleRow}>
-              <Text style={styles.modalTitle}>
-                {wordToEdit ? 'Edit word' : 'Add a word'}
-              </Text>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={wordToEdit ? 'Save changes' : 'Save word'}
-                onPress={submit}
-                style={({ pressed }) => [
-                  styles.modalMiniSaveButton,
-                  pressed && styles.pressed,
-                ]}
-              >
-                <Ionicons name="checkmark-circle" size={17} color={COLORS.white} />
-                <Text style={styles.modalMiniSaveButtonText}>
-                  {wordToEdit ? 'Save changes' : 'Save word'}
-                </Text>
-              </Pressable>
-            </View>
+            <Text style={styles.modalTitle}>
+              {wordToEdit ? 'Edit word' : 'Add a word'}
+            </Text>
             <Text style={styles.modalSubtitle}>
               Writing it in your own words helps it stick.
             </Text>
@@ -416,6 +422,32 @@ export function AddWordModal({
               returnKeyType="search"
               onSubmitEditing={() => autoDefine()}
             />
+
+            {duplicateWord ? (
+              <View style={styles.duplicateWordNotice}>
+                <View style={styles.duplicateWordIcon}>
+                  <Ionicons name="bookmark" size={19} color={COLORS.orange} />
+                </View>
+                <View style={styles.duplicateWordCopy}>
+                  <Text style={styles.duplicateWordTitle}>Already in your words</Text>
+                  <Text style={styles.duplicateWordText}>
+                    {duplicateWord.term} is saved already. Open it to review or update it.
+                  </Text>
+                </View>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Edit saved word ${duplicateWord.term}`}
+                  onPress={() => onEditExisting?.(duplicateWord)}
+                  style={({ pressed }) => [
+                    styles.duplicateWordAction,
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <Text style={styles.duplicateWordActionText}>Edit</Text>
+                  <Ionicons name="arrow-forward" size={13} color={COLORS.orange} />
+                </Pressable>
+              </View>
+            ) : null}
 
             <Pressable
               onPress={() => autoDefine()}
@@ -462,14 +494,30 @@ export function AddWordModal({
                   color={hasLookupDefinition ? COLORS.purpleDark : COLORS.blue}
                 />
                 {hasLookupDefinition ? (
-                  <View style={styles.lookupStatusCopy}>
-                    <Text style={styles.lookupStatusTitle}>
-                      Definition found
-                    </Text>
-                    <Text style={styles.lookupStatusHelper}>
-                      You can edit anything before saving.
-                    </Text>
-                  </View>
+                  <>
+                    <View style={styles.lookupStatusCopy}>
+                      <Text style={styles.lookupStatusTitle}>
+                        Definition found
+                      </Text>
+                      <Text style={styles.lookupStatusHelper}>
+                        Review the details or add it now.
+                      </Text>
+                    </View>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={wordToEdit ? 'Quick save changes' : 'Quick add word'}
+                      onPress={submit}
+                      style={({ pressed }) => [
+                        styles.lookupQuickAddButton,
+                        pressed && styles.pressed,
+                      ]}
+                    >
+                      <Ionicons name="add" size={16} color={COLORS.white} />
+                      <Text style={styles.lookupQuickAddButtonText}>
+                        {wordToEdit ? 'Quick save' : 'Quick add'}
+                      </Text>
+                    </Pressable>
+                  </>
                 ) : (
                   <Text style={styles.lookupStatusText}>{lookupStatus}</Text>
                 )}
@@ -534,6 +582,13 @@ export function AddWordModal({
               inputRef={synonymsInputRef}
             />
             <InputGroup
+              label="OPPOSITES (ANTONYMS)"
+              icon="swap-horizontal-outline"
+              value={antonymsText}
+              onChangeText={setAntonymsText}
+              placeholder="slow, stop, stay"
+            />
+            <InputGroup
               label="USE IT IN A SENTENCE"
               icon="chatbox-ellipses-outline"
               value={example}
@@ -545,7 +600,7 @@ export function AddWordModal({
             {(partOfSpeech ||
               pronunciation ||
               synonyms.length > 0 ||
-              antonyms.length > 0 ||
+              antonymsText.trim() ||
               commonWordsText ||
               basicInfo) && (
               <View style={styles.lookupInfoCard}>
@@ -664,9 +719,9 @@ export function AddWordModal({
                         Similar words: {synonyms.join(', ')}
                       </Text>
                     ) : null}
-                    {antonyms.length > 0 ? (
+                    {parseListText(antonymsText).length > 0 ? (
                       <Text style={styles.lookupInfoText}>
-                        Opposites: {antonyms.join(', ')}
+                        Opposites: {parseListText(antonymsText).join(', ')}
                       </Text>
                     ) : null}
                     {commonWordsText ? (
@@ -803,6 +858,8 @@ export function AddWordModal({
             </View>
 
             <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={wordToEdit ? 'Save changes' : 'Save word'}
               onPress={submit}
               style={({ pressed }) => [
                 styles.primaryButton,
@@ -814,6 +871,7 @@ export function AddWordModal({
               </Text>
               <Ionicons name="checkmark" size={22} color={COLORS.white} />
             </Pressable>
+
           </ScrollView>
         </KeyboardAvoidingView>
       </SafeAreaView>

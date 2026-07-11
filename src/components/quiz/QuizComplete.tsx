@@ -31,9 +31,9 @@ export function QuizComplete({
   }, [isPractice]);
 
   return (
-    <View style={styles.completeCard}>
+    <View style={[styles.completeCard, !isPractice && styles.completeCardDaily]}>
       <View style={styles.completeHeaderRow}>
-        <View style={styles.completeBadge}>
+        <View style={[styles.completeBadge, !isPractice && styles.completeBadgeDaily]}>
           <Ionicons
             name={isPractice ? 'sparkles' : 'checkmark'}
             size={34}
@@ -41,7 +41,7 @@ export function QuizComplete({
           />
         </View>
         <View style={styles.completeHeaderCopy}>
-          <Text style={styles.completeEyebrow}>
+          <Text style={[styles.completeEyebrow, !isPractice && styles.completeEyebrowDaily]}>
             {isPractice ? 'PRACTICE ROUND' : 'DAILY QUIZ'}
           </Text>
           <Text style={styles.completeTitle}>
@@ -49,11 +49,21 @@ export function QuizComplete({
           </Text>
         </View>
       </View>
-      <View style={styles.completeScoreCard}>
-        <Text style={styles.completeScore}>
-          {score} <Text style={styles.completeTotal}>/ {total}</Text>
-        </Text>
-        <Text style={styles.completeScoreLabel}>CORRECT</Text>
+      <View style={[styles.completeScoreCard, !isPractice && styles.completeScoreCardDaily]}>
+        <View style={styles.completeScoreMain}>
+          <Text style={styles.completeScoreLabel}>YOUR SCORE</Text>
+          <Text
+            style={[
+              styles.completeScore,
+              !isPractice && { color: getDailyScoreColor(percentage) },
+            ]}
+          >
+            {score} <Text style={styles.completeTotal}>/ {total}</Text>
+          </Text>
+          <Text style={styles.completeScoreMeta}>
+            CORRECT · {percentage}% ACCURACY
+          </Text>
+        </View>
       </View>
       <Text style={styles.completeText}>
         {percentage === 100
@@ -62,7 +72,7 @@ export function QuizComplete({
             ? 'Great practice. Every review makes your memory stronger.'
             : 'Good start. The flashcards are ready for another look.'}
       </Text>
-      <View style={styles.completeNoticeCard}>
+      <View style={[styles.completeNoticeCard, !isPractice && styles.completeNoticeCardDaily]}>
         <View style={styles.completeNoticeRow}>
           <View
             style={[
@@ -96,7 +106,7 @@ export function QuizComplete({
           <View style={styles.quizRefreshTimer}>
             <View style={styles.quizRefreshHeader}>
               <View style={styles.quizRefreshIcon}>
-                <Ionicons name="time-outline" size={17} color={COLORS.blue} />
+                <Ionicons name="time-outline" size={17} color={COLORS.orange} />
               </View>
               <Text style={styles.quizRefreshTitle}>
                 Next daily quiz unlocks in
@@ -136,4 +146,10 @@ function getDailyRefreshParts(now: number) {
 
 function formatTimerPart(value: number) {
   return `${value}`.padStart(2, '0');
+}
+
+function getDailyScoreColor(percentage: number) {
+  if (percentage >= 100) return '#F4B400';
+  if (percentage >= 60) return COLORS.greenDark;
+  return COLORS.orange;
 }

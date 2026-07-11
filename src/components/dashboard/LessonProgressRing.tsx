@@ -74,20 +74,13 @@ const MASTERY_RING_SEGMENTS: MasteryRingSegment[] = MASTERY_LEVELS.map(
 );
 
 const MASTERY_BOUNDARY_LINES = [
-  ...MASTERY_LEVELS.slice(1).map((level) => ({
-    score: level.minScore,
-    color: level.color,
-  })),
-  {
-    score: 100,
-    color: MASTERY_LEVELS[0].color,
-  },
-].map(({ score, color }) => {
+  ...MASTERY_LEVELS.slice(1).map((level) => level.minScore),
+  100,
+].map((score) => {
   const radians = ((score / 100) * 360 - 90) * (Math.PI / 180);
 
   return {
     score,
-    color,
     innerX: CENTER + Math.cos(radians) * (RING_INNER_RADIUS - 0.5),
     innerY: CENTER + Math.sin(radians) * (RING_INNER_RADIUS - 0.5),
     outerX: CENTER + Math.cos(radians) * (RING_OUTER_RADIUS + 0.5),
@@ -291,7 +284,6 @@ export function LessonProgressRing({
               segment={segment}
               animatedScore={animatedMasteryScore}
               shimmerTravel={shimmerTravel}
-              glowPulse={glowPulse}
             />
           ))}
           {MASTERY_BOUNDARY_LINES.map((line) => (
@@ -406,12 +398,10 @@ function SegmentArc({
   segment,
   animatedScore,
   shimmerTravel,
-  glowPulse,
 }: {
   segment: MasteryRingSegment;
   animatedScore: SharedValue<number>;
   shimmerTravel: SharedValue<number>;
-  glowPulse: SharedValue<number>;
 }) {
   const trackDasharray = `${segment.arcLength} ${CIRCUMFERENCE - segment.arcLength}`;
   const strokeDashoffset = -segment.startLength;
@@ -427,21 +417,6 @@ function SegmentArc({
 
     return {
       opacity: segmentProgress > 0.002 ? 1 : 0,
-      strokeDasharray: `${fillLength} ${CIRCUMFERENCE - fillLength}`,
-    };
-  });
-
-  const glowAnimatedProps = useAnimatedProps(() => {
-    const segmentProgress = getSegmentProgress(
-      animatedScore.value,
-      segment.startScore,
-      segment.endScore,
-    );
-    const glowProgress = clampUnit((segmentProgress - 0.75) / 0.25);
-    const fillLength = Math.max(0.01, segment.arcLength * segmentProgress);
-
-    return {
-      opacity: glowProgress * 0.2 + glowPulse.value * glowProgress * 0.1,
       strokeDasharray: `${fillLength} ${CIRCUMFERENCE - fillLength}`,
     };
   });
@@ -485,18 +460,6 @@ function SegmentArc({
         cy={CENTER}
         r={RADIUS}
         stroke={segment.color}
-        strokeWidth={STROKE_WIDTH + 9}
-        strokeLinecap="butt"
-        fill="transparent"
-        strokeDashoffset={strokeDashoffset}
-        animatedProps={glowAnimatedProps}
-        transform={rotateToTop}
-      />
-      <AnimatedCircle
-        cx={CENTER}
-        cy={CENTER}
-        r={RADIUS}
-        stroke={segment.color}
         strokeWidth={STROKE_WIDTH}
         strokeLinecap="butt"
         fill="transparent"
@@ -525,26 +488,15 @@ function LevelBoundaryLine({
   line: (typeof MASTERY_BOUNDARY_LINES)[number];
 }) {
   return (
-    <>
-      <Line
-        x1={line.innerX}
-        y1={line.innerY}
-        x2={line.outerX}
-        y2={line.outerY}
-        stroke="rgba(20,31,70,0.14)"
-        strokeWidth={4}
-        strokeLinecap="butt"
-      />
-      <Line
-        x1={line.innerX}
-        y1={line.innerY}
-        x2={line.outerX}
-        y2={line.outerY}
-        stroke={line.color}
-        strokeWidth={2.4}
-        strokeLinecap="butt"
-      />
-    </>
+    <Line
+      x1={line.innerX}
+      y1={line.innerY}
+      x2={line.outerX}
+      y2={line.outerY}
+      stroke="rgba(255,255,255,0.42)"
+      strokeWidth={1.25}
+      strokeLinecap="butt"
+    />
   );
 }
 
