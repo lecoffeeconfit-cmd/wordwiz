@@ -13,6 +13,7 @@ export function QuizScreen({
   analytics,
   progress,
   onComplete,
+  onReviewCards,
 }: {
   words: Word[];
   analytics: AnalyticsData;
@@ -23,6 +24,7 @@ export function QuizScreen({
     durationSeconds: number,
     answers: QuizAnswer[],
   ) => Promise<void>;
+  onReviewCards: () => void;
 }) {
   const [quiz, setQuiz] = useState<QuizQuestion[]>([]);
   const [questionIndex, setQuestionIndex] = useState(0);
@@ -203,6 +205,17 @@ export function QuizScreen({
           subtitle="A little review each day makes words stick."
         />
         <QuizComplete score={progress.score} total={progress.total} />
+        <Pressable
+          onPress={onReviewCards}
+          style={({ pressed }) => [
+            styles.quizFlashcardButton,
+            pressed && styles.pressed,
+          ]}
+        >
+          <Ionicons name="albums-outline" size={19} color={COLORS.greenDark} />
+          <Text style={styles.quizFlashcardButtonText}>REVIEW FLASHCARDS</Text>
+          <Ionicons name="arrow-forward" size={17} color={COLORS.greenDark} />
+        </Pressable>
         {categorySelector}
         <Pressable
           disabled={filteredQuizWords.length === 0}
@@ -256,6 +269,17 @@ export function QuizScreen({
             ? 'Practice did not replace today’s daily score. It still counted as real review.'
             : 'Practice again anytime to keep learning.'}
         </Text>
+        <Pressable
+          onPress={onReviewCards}
+          style={({ pressed }) => [
+            styles.quizFlashcardButton,
+            pressed && styles.pressed,
+          ]}
+        >
+          <Ionicons name="albums-outline" size={19} color={COLORS.greenDark} />
+          <Text style={styles.quizFlashcardButtonText}>REVIEW FLASHCARDS</Text>
+          <Ionicons name="arrow-forward" size={17} color={COLORS.greenDark} />
+        </Pressable>
         {categorySelector}
         <Pressable
           disabled={filteredQuizWords.length === 0}

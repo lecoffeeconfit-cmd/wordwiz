@@ -58,6 +58,7 @@ function resolveLocalTs(dirname, request) {
 
 const learning = loadTsModule('src/utils/learning.ts');
 const dictionaryUtils = loadTsModule('src/utils/dictionary.ts');
+const dateUtils = loadTsModule('src/utils/date.ts');
 const quiz = loadTsModule('src/utils/quiz.ts');
 const dictionary = loadTsModule('src/services/dictionary.ts');
 const wordnik = loadTsModule('src/services/wordnik.ts');
@@ -228,6 +229,27 @@ test('word saving trims input and creates a new saved word', () => {
   assert.deepEqual(learning.upsertSavedWord([], savedWord), [savedWord]);
 });
 
+test('word added timestamps use concise, human-friendly dates', () => {
+  const now = new Date('2026-07-13T12:00:00.000Z');
+
+  assert.equal(
+    dateUtils.formatWordAddedDate('2026-07-13T08:00:00.000Z', now),
+    'Added today',
+  );
+  assert.equal(
+    dateUtils.formatWordAddedDate('2026-07-12T08:00:00.000Z', now),
+    'Added yesterday',
+  );
+  assert.equal(
+    dateUtils.formatWordAddedDate('2026-05-04T08:00:00.000Z', now),
+    'Added May 4',
+  );
+  assert.equal(
+    dateUtils.formatWordAddedDate('2025-05-04T08:00:00.000Z', now),
+    'Added May 4, 2025',
+  );
+});
+
 test('word saving preserves optional Wordnik enrichment metadata locally', () => {
   const savedWord = learning.buildWordFromInput({
     term: 'resilient',
@@ -324,6 +346,35 @@ test('dictionary ranking prefers modern common definitions over older senses', (
   );
 });
 
+test('definition options preserve ranked sources and remove duplicates', () => {
+  const options = dictionary.rankDefinitionCandidates(
+    [
+      {
+        source: 'dictionary',
+        text: 'A bright glow produced by a source of light.',
+        partOfSpeech: 'noun',
+      },
+      {
+        source: 'wiktionary',
+        text: 'A bright glow produced by a source of light.',
+        partOfSpeech: 'noun',
+      },
+      {
+        source: 'wordnik',
+        text: 'The visible brightness that shines from something.',
+        partOfSpeech: 'noun',
+      },
+    ],
+    'radiance',
+  );
+
+  assert.equal(options.length, 2);
+  assert.equal(options[0].source, 'Dictionary');
+  assert.equal(options[0].recommended, true);
+  assert.equal(options[1].source, 'Wordnik');
+  assert.equal(options[1].recommended, false);
+});
+
 test('dictionary selection rejects placeholder definitions', () => {
   const definition = dictionary.selectBestDefinitionForDisplay(
     [
@@ -401,11 +452,11 @@ test('simple definitions are distinct and written in plainer English', () => {
     'resilient',
   );
 
-  assert.equal(simpleDefinition, 'Able to bounce back after something hard');
+  assert.equal(simpleDefinition, 'Able to bounce back after something hard.');
   assert.notEqual(simpleDefinition.toLowerCase(), definition.toLowerCase());
 });
 
-test('simple definitions do not truncate in the middle of a word', () => {
+test('simple definitions preserve the full first sentence', () => {
   const simpleDefinition = dictionaryUtils.makeSimpleDefinition(
     'The process by which non-Chinese societies or groups are acculturated or assimilated into Chinese culture.',
     'Sinicization',
@@ -413,7 +464,20 @@ test('simple definitions do not truncate in the middle of a word', () => {
 
   assert.equal(
     simpleDefinition,
-    'The process by which non-Chinese societies or groups are acculturated',
+    'In plain English, the process by which non-Chinese societies or groups are acculturated or assimilated into Chinese culture.',
+  );
+});
+
+test('flashcards use the complete definition when a saved summary ends mid-sentence', () => {
+  const definition =
+    'A combination of events which have come together by chance to make a surprisingly good or wonderful outcome.';
+
+  assert.equal(
+    dictionaryUtils.getCompleteFlashcardDefinition(
+      definition,
+      'A combination of events which have come together by chance to make a surprisingly good or wonde',
+    ),
+    definition,
   );
 });
 
@@ -432,7 +496,7 @@ test('word saving replaces duplicate simple definitions', () => {
   assert.equal(savedWord.definition, 'Eager to know or learn something.');
   assert.equal(
     savedWord.simpleDefinition,
-    'Wanting to learn or ask questions',
+    'Wanting to learn or ask questions.',
   );
   assert.notEqual(savedWord.simpleDefinition, savedWord.definition);
 });
@@ -500,6 +564,54 @@ test('word saving updates an existing word without duplicating it', () => {
   assert.equal(result[0].createdAt, existing.createdAt);
   assert.equal(result[0].reviews, 3);
   assert.equal(result[0].definition, 'Full of light');
+});
+
+test('flashcard alphabetical ordering is case-insensitive and does not mutate words', () => {
+  const words = [
+    makeWord('3', 'zebra', 'A striped animal.'),
+    makeWord('1', 'Apple', 'A fruit.'),
+    makeWord('2', 'banana', 'A yellow fruit.'),
+  ];
+
+  assert.deepEqual(
+    learning.sortWordsAlphabetically(words).map((word) => word.term),
+    ['Apple', 'banana', 'zebra'],
+  );
+  assert.deepEqual(
+    words.map((word) => word.term),
+    ['zebra', 'Apple', 'banana'],
+  );
+});
+
+test('review ordering always puts the most missed words before new words', () => {
+  const words = [
+    makeWord('new', 'New word', 'A new word.', 0),
+    makeWord('missed-once', 'Missed once', 'A missed word.', 4),
+    makeWord('missed-twice', 'Missed twice', 'Another missed word.', 4),
+  ];
+  const analytics = {
+    cardHistory: [],
+    quizHistory: [
+      {
+        id: 'quiz-1',
+        date: '2026-07-13',
+        score: 0,
+        total: 3,
+        durationSeconds: 30,
+        completedAt: '2026-07-13T12:00:00.000Z',
+        answers: [
+          { wordId: 'missed-once', correct: false },
+          { wordId: 'missed-twice', correct: false },
+          { wordId: 'missed-twice', correct: false },
+        ],
+      },
+    ],
+  };
+
+  assert.deepEqual(
+    learning.sortWordsForReview(words, analytics).map((word) => word.id),
+    ['missed-twice', 'missed-once', 'new'],
+  );
 });
 
 test('word merge keeps local words and prefers more complete records', () => {
@@ -623,6 +735,34 @@ test('quiz completion records progress, analytics, and review counts', () => {
   assert.equal(reviewedWords[1].reviews, 1);
 });
 
+test('quiz attempt labels keep the first quiz of a day as daily', () => {
+  const dailyAttempt = {
+    id: 'daily-1',
+    date: '2026-01-01',
+    score: 2,
+    total: 2,
+    durationSeconds: 12,
+    completedAt: '2026-01-01T09:00:00.000Z',
+    answers: [],
+  };
+  const practiceAttempt = {
+    ...dailyAttempt,
+    id: 'practice-1',
+    completedAt: '2026-01-01T14:00:00.000Z',
+  };
+  const nextDailyAttempt = {
+    ...dailyAttempt,
+    id: 'daily-2',
+    date: '2026-01-02',
+    completedAt: '2026-01-02T09:00:00.000Z',
+  };
+  const history = [practiceAttempt, nextDailyAttempt, dailyAttempt];
+
+  assert.equal(learning.getQuizAttemptKind(dailyAttempt, history), 'daily');
+  assert.equal(learning.getQuizAttemptKind(practiceAttempt, history), 'practice');
+  assert.equal(learning.getQuizAttemptKind(nextDailyAttempt, history), 'daily');
+});
+
 test('review priority favors missed words over ordinary new words', () => {
   const missedWord = makeWord('1', 'Acerbic', 'Sharp or biting', 1);
   const newWord = makeWord('2', 'Luminous', 'Giving off light', 0);
@@ -659,6 +799,13 @@ test('mastery levels follow the WordWiz rank track', () => {
     learning.MASTERY_LEVELS.map((level) => level.color),
     ['#89CFF0', '#39C69A', '#8DE7C7', '#FFD87A', '#8E78FF', '#F2A65A', '#FF7E9F'],
   );
+});
+
+test('word mastery categories distinguish proficient words from WordWiz ranks', () => {
+  assert.equal(learning.getWordMasteryCategory(100).label, 'Proficient words');
+  assert.equal(learning.getWordMasteryCategory(100).shortLabel, 'Proficient');
+  assert.equal(learning.getMasteryLevel(92).shortTitle, 'Grandmaster');
+  assert.equal(learning.getMasteryLevel(100).shortTitle, 'Grandmaster');
 });
 
 test('mastery level progress measures progress to the next rank', () => {
@@ -713,6 +860,37 @@ test('achievement builder unlocks practice milestones', () => {
   assert.equal(
     achievements.find((achievement) => achievement.id === 'word-loop').unlocked,
     true,
+  );
+});
+
+test('achievement builder recognizes three quizzes in one day', () => {
+  const quizHistory = Array.from({ length: 3 }, (_, index) => ({
+    id: `quiz-${index}`,
+    date: '2026-01-02',
+    score: 1,
+    total: 2,
+    durationSeconds: 10,
+    completedAt: `2026-01-02T0${index}:00:00.000Z`,
+    answers: [],
+  }));
+  const achievements = learning.buildAchievements({
+    words: [],
+    analytics: { cardHistory: [], quizHistory },
+  });
+
+  assert.equal(
+    achievements.find((achievement) => achievement.id === 'quiz-day-3').unlocked,
+    true,
+  );
+  assert.equal(
+    achievements.find((achievement) => achievement.id === 'quiz-day-5').unlocked,
+    false,
+  );
+  assert.ok(
+    achievements.some(
+      (achievement) =>
+        achievement.id.startsWith('review-horizon-') && !achievement.unlocked,
+    ),
   );
 });
 

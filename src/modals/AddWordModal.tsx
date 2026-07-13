@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Alert, Keyboard, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { COLORS } from '../constants/theme';
-import type { Word, WordDetails } from '../types';
+import type { DefinitionOption, Word, WordDetails } from '../types';
 import { styles } from '../styles';
 import { lookupWordDetails, suggestWordSpellings } from '../services';
 import { InfoChip } from '../components';
@@ -12,6 +12,7 @@ import {
   formatTimePeriodSnapshot,
   formatWordHistoryNarrative,
   inferOriginPeriod,
+  makeSimpleDefinition,
 } from '../utils';
 
 export function AddWordModal({
@@ -49,6 +50,8 @@ export function AddWordModal({
   const [antonymsText, setAntonymsText] = useState('');
   const [commonWordsText, setCommonWordsText] = useState('');
   const [wordnikDetails, setWordnikDetails] = useState<Partial<WordDetails>>({});
+  const [definitionOptions, setDefinitionOptions] = useState<DefinitionOption[]>([]);
+  const [definitionOptionIndex, setDefinitionOptionIndex] = useState(0);
   const [isLookingUp, setIsLookingUp] = useState(false);
   const [lookupStatus, setLookupStatus] = useState('');
   const [spellingSuggestions, setSpellingSuggestions] = useState<string[]>([]);
@@ -99,6 +102,8 @@ export function AddWordModal({
     setAntonymsText((wordToEdit.antonyms ?? []).join(', '));
     setCommonWordsText((wordToEdit.commonWords ?? []).join(', '));
     setWordnikDetails(pickWordnikDetails(wordToEdit));
+    setDefinitionOptions([]);
+    setDefinitionOptionIndex(0);
     setLookupStatus('Edit anything, then save your changes.');
     setSpellingSuggestions([]);
     closeSectionEditors();
@@ -124,6 +129,8 @@ export function AddWordModal({
     setAntonymsText('');
     setCommonWordsText('');
     setWordnikDetails({});
+    setDefinitionOptions([]);
+    setDefinitionOptionIndex(0);
     setLookupStatus('');
     setSpellingSuggestions([]);
     closeSectionEditors();
@@ -147,6 +154,8 @@ export function AddWordModal({
       const details = await lookupWordDetails(cleanTerm);
       const nextDefinition = details.definition.trim();
       setDefinition(nextDefinition);
+      setDefinitionOptions(details.definitionOptions ?? []);
+      setDefinitionOptionIndex(0);
       setSimpleDefinition(details.simpleDefinition ?? '');
       setExample(details.example);
       setPartOfSpeech(details.partOfSpeech ?? '');
@@ -168,6 +177,8 @@ export function AddWordModal({
       Keyboard.dismiss();
     } catch {
       setWordnikDetails({});
+      setDefinitionOptions([]);
+      setDefinitionOptionIndex(0);
       const suggestions = await suggestWordSpellings(cleanTerm);
       setSpellingSuggestions(suggestions);
       setLookupStatus(
@@ -363,6 +374,8 @@ export function AddWordModal({
     setAntonymsText('');
     setCommonWordsText('');
     setWordnikDetails({});
+    setDefinitionOptions([]);
+    setDefinitionOptionIndex(0);
     setLookupStatus('');
     setSpellingSuggestions([]);
     closeSectionEditors();
@@ -370,6 +383,9 @@ export function AddWordModal({
 
   const hasLookupDefinition =
     lookupStatus.startsWith('Definition found') && definition.trim().length > 0;
+  const viewedDefinitionOption = definitionOptions[definitionOptionIndex];
+  const viewedDefinitionIsSelected =
+    viewedDefinitionOption?.text.trim() === definition.trim();
 
   return (
     <Modal
@@ -416,6 +432,8 @@ export function AddWordModal({
                 setLookupStatus('');
                 setSpellingSuggestions([]);
                 setWordnikDetails({});
+                setDefinitionOptions([]);
+                setDefinitionOptionIndex(0);
               }}
               placeholder="e.g. Serendipity"
               autoCapitalize="words"
@@ -505,16 +523,16 @@ export function AddWordModal({
                     </View>
                     <Pressable
                       accessibilityRole="button"
-                      accessibilityLabel={wordToEdit ? 'Quick save changes' : 'Quick add word'}
+                      accessibilityLabel="Quick save word"
                       onPress={submit}
                       style={({ pressed }) => [
                         styles.lookupQuickAddButton,
                         pressed && styles.pressed,
                       ]}
                     >
-                      <Ionicons name="add" size={16} color={COLORS.white} />
+                      <Ionicons name="checkmark" size={16} color={COLORS.white} />
                       <Text style={styles.lookupQuickAddButtonText}>
-                        {wordToEdit ? 'Quick save' : 'Quick add'}
+                        Quick save
                       </Text>
                     </Pressable>
                   </>
@@ -554,6 +572,168 @@ export function AddWordModal({
                     </Pressable>
                   ))}
                 </View>
+              </View>
+            ) : null}
+
+            {definitionOptions.length > 0 ? (
+              <View style={styles.definitionPicker}>
+                <View style={styles.definitionPickerHeader}>
+                  <View style={styles.definitionPickerIcon}>
+                    <Ionicons name="layers-outline" size={18} color={COLORS.blue} />
+                  </View>
+                  <View style={styles.definitionPickerToggleCopy}>
+                    <Text style={styles.definitionPickerTitle}>Definition options</Text>
+                    <Text style={styles.definitionPickerHelper}>
+                      {definitionOptions.length > 1
+                        ? `Recommended · ${definitionOptions.length} sources available`
+                        : 'Recommended · 1 source available'}
+                    </Text>
+                  </View>
+                </View>
+
+                {viewedDefinitionOption ? (
+                  <Pressable
+                    accessibilityRole="radio"
+                    accessibilityState={{ checked: viewedDefinitionIsSelected }}
+                    accessibilityLabel={`Use definition from ${viewedDefinitionOption.source}`}
+                    onPress={() => {
+                      setDefinition(viewedDefinitionOption.text);
+                      setSimpleDefinition(
+                        makeSimpleDefinition(viewedDefinitionOption.text, term),
+                      );
+                      if (viewedDefinitionOption.partOfSpeech) {
+                        setPartOfSpeech(viewedDefinitionOption.partOfSpeech);
+                      }
+                    }}
+                    style={({ pressed }) => [
+                      styles.definitionOptionCard,
+                      viewedDefinitionIsSelected && styles.definitionOptionCardSelected,
+                      pressed && styles.pressed,
+                    ]}
+                  >
+                    <View style={styles.definitionOptionHeader}>
+                      <View style={styles.definitionSourceRow}>
+                        <Text style={styles.definitionSource}>
+                          {viewedDefinitionOption.source}
+                        </Text>
+                        {viewedDefinitionOption.partOfSpeech ? (
+                          <Text style={styles.definitionPartOfSpeech}>
+                            {viewedDefinitionOption.partOfSpeech}
+                          </Text>
+                        ) : null}
+                        {viewedDefinitionOption.recommended ? (
+                          <View style={styles.definitionRecommendedBadge}>
+                            <Text style={styles.definitionRecommendedText}>
+                              RECOMMENDED
+                            </Text>
+                          </View>
+                        ) : null}
+                      </View>
+                      <View
+                        style={[
+                          styles.definitionSelectionMark,
+                          viewedDefinitionIsSelected &&
+                            styles.definitionSelectionMarkSelected,
+                        ]}
+                      >
+                        {viewedDefinitionIsSelected ? (
+                          <Ionicons name="checkmark" size={13} color={COLORS.white} />
+                        ) : null}
+                      </View>
+                    </View>
+                    <Text style={styles.definitionOptionText}>
+                      {viewedDefinitionOption.text}
+                    </Text>
+                    <View style={styles.definitionOptionAction}>
+                      <Ionicons
+                        name={
+                          viewedDefinitionIsSelected
+                            ? 'checkmark-circle'
+                            : 'add-circle-outline'
+                        }
+                        size={15}
+                        color={
+                          viewedDefinitionIsSelected
+                            ? COLORS.greenDark
+                            : COLORS.blue
+                        }
+                      />
+                      <Text
+                        style={[
+                          styles.definitionOptionActionText,
+                          viewedDefinitionIsSelected &&
+                            styles.definitionOptionActionTextSelected,
+                        ]}
+                      >
+                        {viewedDefinitionIsSelected
+                          ? 'Selected'
+                          : 'Use this definition'}
+                      </Text>
+                    </View>
+                  </Pressable>
+                ) : null}
+
+                {definitionOptions.length > 1 ? (
+                <View style={styles.definitionCarouselControls}>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Previous definition"
+                    disabled={definitionOptionIndex === 0}
+                    onPress={() =>
+                      setDefinitionOptionIndex((index) => Math.max(0, index - 1))
+                    }
+                    style={({ pressed }) => [
+                      styles.definitionCarouselArrow,
+                      definitionOptionIndex === 0 &&
+                        styles.definitionCarouselArrowDisabled,
+                      pressed && definitionOptionIndex > 0 && styles.pressed,
+                    ]}
+                  >
+                    <Ionicons name="chevron-back" size={17} color={COLORS.blue} />
+                  </Pressable>
+                  <View style={styles.definitionCarouselDots}>
+                    <Text style={styles.definitionOptionPosition}>
+                      {definitionOptionIndex + 1} of {definitionOptions.length}
+                    </Text>
+                    <View style={styles.definitionCarouselDotRow}>
+                      {definitionOptions.map((option, index) => (
+                        <View
+                          key={`${option.source}-${index}`}
+                          style={[
+                            styles.definitionCarouselDot,
+                            index === definitionOptionIndex &&
+                              styles.definitionCarouselDotActive,
+                          ]}
+                        />
+                      ))}
+                    </View>
+                  </View>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Next definition"
+                    disabled={definitionOptionIndex === definitionOptions.length - 1}
+                    onPress={() =>
+                      setDefinitionOptionIndex((index) =>
+                        Math.min(definitionOptions.length - 1, index + 1),
+                      )
+                    }
+                    style={({ pressed }) => [
+                      styles.definitionCarouselArrow,
+                      definitionOptionIndex === definitionOptions.length - 1 &&
+                        styles.definitionCarouselArrowDisabled,
+                      pressed &&
+                        definitionOptionIndex < definitionOptions.length - 1 &&
+                        styles.pressed,
+                    ]}
+                  >
+                    <Ionicons name="chevron-forward" size={17} color={COLORS.blue} />
+                  </Pressable>
+                </View>
+                ) : null}
+
+                <Text style={styles.definitionPickerFootnote}>
+                  Use the arrows to compare meanings, then tap a card to select it.
+                </Text>
               </View>
             ) : null}
 

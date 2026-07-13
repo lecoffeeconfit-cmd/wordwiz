@@ -32,12 +32,30 @@ export function makeDistinctSimpleDefinition(
   const cleanedSimpleDefinition = cleanDefinitionText(simpleDefinition ?? '');
   if (
     cleanedSimpleDefinition &&
+    !isIncompleteDefinitionPrefix(cleanedSimpleDefinition, definition) &&
     !definitionsMatch(cleanedSimpleDefinition, definition)
   ) {
     return cleanedSimpleDefinition;
   }
 
   return makeSimpleDefinition(definition, word);
+}
+
+export function getCompleteFlashcardDefinition(
+  definition: string,
+  simpleDefinition?: string,
+) {
+  const cleanedDefinition = cleanDefinitionText(definition);
+  const cleanedSimpleDefinition = cleanDefinitionText(simpleDefinition ?? '');
+
+  if (
+    !cleanedSimpleDefinition ||
+    isIncompleteDefinitionPrefix(cleanedSimpleDefinition, cleanedDefinition)
+  ) {
+    return cleanedDefinition;
+  }
+
+  return cleanedSimpleDefinition;
 }
 
 function simplifyDefinitionText(value: string) {
@@ -77,24 +95,32 @@ function simplifyDefinitionText(value: string) {
     value,
   );
 
-  return capitalizeFirst(truncateAtWordBoundary(cleanDefinitionText(simpleText), 82));
+  return ensureSentenceEnding(capitalizeFirst(cleanDefinitionText(simpleText)));
 }
 
 function cleanDefinitionText(value: string) {
   return value.replace(/\s+/g, ' ').trim();
 }
 
-function truncateAtWordBoundary(value: string, maxLength: number) {
-  if (value.length <= maxLength) {
+function ensureSentenceEnding(value: string) {
+  if (!value || /[.!?]$/.test(value)) {
     return value;
   }
 
-  const truncated = value.slice(0, maxLength).trimEnd();
-  const lastSpace = truncated.lastIndexOf(' ');
+  return `${value}.`;
+}
 
-  const wordBoundaryText = lastSpace > 40 ? truncated.slice(0, lastSpace) : truncated;
+function isIncompleteDefinitionPrefix(simpleDefinition: string, definition: string) {
+  const normalizedSimpleDefinition = normalizeDefinitionForComparison(
+    simpleDefinition,
+  );
+  const normalizedDefinition = normalizeDefinitionForComparison(definition);
 
-  return wordBoundaryText.replace(/\s+\b(?:and|or|the|a|an|of|by|to|into)\b$/i, '');
+  return (
+    !/[.!?]$/.test(simpleDefinition.trim()) &&
+    normalizedDefinition.length > normalizedSimpleDefinition.length &&
+    normalizedDefinition.startsWith(normalizedSimpleDefinition)
+  );
 }
 
 function definitionsMatch(left: string, right: string) {

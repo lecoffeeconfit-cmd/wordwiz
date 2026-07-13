@@ -3,6 +3,7 @@ import { Pressable, Text, View } from 'react-native';
 import { COLORS, TILE_COLORS } from '../../constants/theme';
 import type { Word } from '../../types';
 import { styles } from '../../styles';
+import { formatWordAddedDate } from '../../utils';
 import { SpeakButton } from '../shared/SpeakButton';
 
 function getLetterColor(term: string) {
@@ -73,6 +74,12 @@ export function WordRow({
             {word.pronunciation}
           </Text>
         )}
+        <View style={styles.wordAddedMeta}>
+          <Ionicons name="calendar-outline" size={11} color={COLORS.muted} />
+          <Text style={styles.wordAddedText}>
+            {formatWordAddedDate(word.createdAt)}
+          </Text>
+        </View>
       </View>
       <View style={styles.reviewCount}>
         <Ionicons name="refresh" size={13} color={COLORS.muted} />

@@ -5,7 +5,7 @@ import { COLORS } from '../constants/theme';
 import type { AnalyticsData, LegalPage, QuizAnswer, QuizProgress, QuizQuestion, ReminderSettings, SortMode, Word } from '../types';
 import type { AuthUser } from '../types';
 import { styles } from '../styles';
-import { MASTERY_LEVELS, buildAchievements, buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, getDayKey, getHeroProgressColor, getMasteryLevel, getMasteryLevelProgress, getNextMasteryLevel, getProgressColor, getProgressPaleColor, getProgressShineOpacity, getRecentDays, getStreakMessage, getStreakMilestone, getStreakWeek, getWordMastery, getWordMasteryCategory, shuffle } from '../utils';
+import { MASTERY_LEVELS, buildAchievements, buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, getDayKey, getHeroProgressColor, getMasteryLevel, getMasteryLevelProgress, getNextMasteryLevel, getProgressColor, getProgressPaleColor, getProgressShineOpacity, getQuizAttemptKind, getRecentDays, getStreakMessage, getStreakMilestone, getStreakWeek, getWordMastery, getWordMasteryCategory, shuffle } from '../utils';
 import { DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 import { LessonProgressRing } from '../components/dashboard/LessonProgressRing';
 
@@ -34,6 +34,8 @@ export function DashboardScreen({
 }) {
   const [achievementsExpanded, setAchievementsExpanded] = useState(false);
   const [masteryExpanded, setMasteryExpanded] = useState(false);
+  const [quizTrendExpanded, setQuizTrendExpanded] = useState(false);
+  const [practiceEstimateExpanded, setPracticeEstimateExpanded] = useState(false);
   const [activityWindow, setActivityWindow] = useState<7 | 30>(7);
   const masterSparkleScale = useRef(new Animated.Value(1)).current;
   const todayKey = getDayKey();
@@ -96,6 +98,13 @@ export function DashboardScreen({
       total + (item.score >= 80 ? 0 : Math.ceil((80 - item.score) / 14)),
     0,
   );
+  const estimatedMinutes = remainingReviews
+    ? Math.max(1, Math.ceil((remainingReviews * 20) / 60))
+    : 0;
+  const typicalQuizSize = Math.max(1, Math.min(words.length, 10));
+  const estimatedQuizCount = remainingReviews
+    ? Math.max(1, Math.ceil(remainingReviews / typicalQuizSize))
+    : 0;
   const weeklyActivity = recentDays.map((day) => {
     const dayCardEvents = analytics.cardHistory.filter(
       (event) => event.date === day.key,
@@ -138,6 +147,9 @@ export function DashboardScreen({
     ...weeklyActivity.map((day) => day.activityScore),
   );
   const recentQuizzes = analytics.quizHistory.slice(0, 5);
+  const quizTrendAttempts = quizTrendExpanded
+    ? analytics.quizHistory
+    : recentQuizzes;
   const streakStats = calculateStreakStats(analytics);
   const streak = streakStats.current;
   const streakMilestone = getStreakMilestone(streakStats);
@@ -351,7 +363,8 @@ export function DashboardScreen({
             </Pressable>
           </View>
           <Text style={styles.reminderText}>
-            Get a friendly nudge to review words and protect your streak.
+            Smart reminders adapt to your streak, quiz goal, new words, and
+            reviews.
           </Text>
           <View style={styles.reminderCustomTime}>
             <View style={styles.reminderCustomHeader}>
@@ -662,7 +675,7 @@ export function DashboardScreen({
           <View style={styles.levelStack}>
             <LevelRow
               color={getWordMasteryCategory(100).color}
-              label="Master words"
+              label="Proficient words"
               value={masteredWords}
               sparkly
             />
@@ -885,9 +898,7 @@ export function DashboardScreen({
                           { color: wordCategory.color },
                         ]}
                       >
-                        {isMasterWord
-                          ? wordCategory.shortLabel
-                          : getMasteryLevel(item.score).shortTitle}
+                        {getMasteryLevel(item.score).shortTitle}
                       </Text>
                     </View>
                     <View style={styles.masteryPercentRow}>
@@ -965,7 +976,7 @@ export function DashboardScreen({
                   {masteryExpanded ? 'Showing all words' : 'Showing top words'}
                 </Text>
                 <Text style={styles.masterySummaryText}>
-                  {masteredWords} master · {strongWords} strong · {buildingWords} building
+                  {masteredWords} proficient · {strongWords} strong · {buildingWords} building
                 </Text>
               </View>
               <Text style={styles.masterySummaryAction}>
@@ -984,10 +995,11 @@ export function DashboardScreen({
       <DashboardSection title="QUIZ TREND" badge="Recent">
         {recentQuizzes.length === 0 ? (
           <Text style={styles.dashboardEmptyText}>
-            Complete a daily quiz and your score trend will appear here.
+            Complete a daily quiz and your progress will appear here.
           </Text>
         ) : (
-          recentQuizzes.map((attempt, index) => {
+          <>
+            {quizTrendAttempts.map((attempt) => {
             const percent = attempt.total
               ? Math.round((attempt.score / attempt.total) * 100)
               : 0;
@@ -995,8 +1007,9 @@ export function DashboardScreen({
               'en-US',
               { month: 'short', day: 'numeric' },
             );
-            const trendLabel =
-              index === 0 ? 'Latest quiz' : `Quiz ${recentQuizzes.length - index}`;
+            const quizKind = getQuizAttemptKind(attempt, analytics.quizHistory);
+            const isPracticeQuiz = quizKind === 'practice';
+            const trendLabel = isPracticeQuiz ? 'Practice quiz' : 'Daily quiz';
             const status =
               percent >= 80 ? 'Strong' : percent >= 50 ? 'Building' : 'Needs review';
             const tone = getQuizTrendTone(percent);
@@ -1013,7 +1026,14 @@ export function DashboardScreen({
               >
                 <View style={styles.trendRowHeader}>
                   <View style={styles.trendLabelCopy}>
-                    <Text style={styles.trendTitle}>{trendLabel}</Text>
+                    <View style={styles.trendTitleRow}>
+                      <Ionicons
+                        name={isPracticeQuiz ? 'sparkles' : 'checkmark-circle'}
+                        size={14}
+                        color={isPracticeQuiz ? COLORS.purple : COLORS.greenDark}
+                      />
+                      <Text style={styles.trendTitle}>{trendLabel}</Text>
+                    </View>
                     <Text style={styles.trendDate}>{dateLabel}</Text>
                   </View>
                   <Text
@@ -1067,33 +1087,92 @@ export function DashboardScreen({
                 </View>
               </View>
             );
-          })
+            })}
+            {analytics.quizHistory.length > recentQuizzes.length ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={
+                  quizTrendExpanded
+                    ? 'Show recent quiz history'
+                    : 'View all quiz history'
+                }
+                onPress={() => setQuizTrendExpanded((expanded) => !expanded)}
+                style={({ pressed }) => [
+                  styles.trendHistoryToggle,
+                  pressed && styles.pressed,
+                ]}
+              >
+                <Text style={styles.trendHistoryToggleText}>
+                  {quizTrendExpanded
+                    ? 'Show recent quizzes'
+                    : `View all ${analytics.quizHistory.length} quizzes`}
+                </Text>
+                <Ionicons
+                  name={quizTrendExpanded ? 'chevron-up' : 'chevron-down'}
+                  size={16}
+                  color={COLORS.purpleDark}
+                />
+              </Pressable>
+            ) : null}
+          </>
         )}
       </DashboardSection>
 
-      <View style={styles.insightCard}>
-        <View style={styles.insightIcon}>
-          <Ionicons name="sparkles" size={23} color={COLORS.purple} />
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Practice estimate details"
+        accessibilityHint="Shows the reviews, quizzes, and study time behind this estimate"
+        accessibilityState={{ expanded: practiceEstimateExpanded }}
+        onPress={() => setPracticeEstimateExpanded((expanded) => !expanded)}
+        style={({ pressed }) => [styles.insightCard, pressed && styles.pressed]}
+      >
+        <View style={styles.insightHeader}>
+          <View style={styles.insightIcon}>
+            <Ionicons name="sparkles" size={23} color={COLORS.purple} />
+          </View>
+          <View style={styles.insightCopy}>
+            <Text style={styles.insightLabel}>PRACTICE ESTIMATE</Text>
+            <Text style={styles.insightTitle}>
+              {remainingReviews === 0 && words.length > 0
+                ? 'Your words are in great shape'
+                : `${remainingReviews} reviews to Word Mastery`}
+            </Text>
+            <Text style={styles.insightText}>
+              {words.length === 0
+                ? 'Add words and practice them to unlock a learning estimate.'
+                : remainingReviews === 0
+                  ? 'Keep using them naturally to help the meanings last.'
+                  : `About ${estimatedMinutes} more minutes to move your saved words into the strong zone.`}
+            </Text>
+          </View>
+          <View style={styles.insightChevron}>
+            <Ionicons
+              name={practiceEstimateExpanded ? 'chevron-up' : 'chevron-down'}
+              size={18}
+              color={COLORS.purpleDark}
+            />
+          </View>
         </View>
-        <View style={styles.insightCopy}>
-          <Text style={styles.insightLabel}>PRACTICE ESTIMATE</Text>
-          <Text style={styles.insightTitle}>
-            {remainingReviews === 0 && words.length > 0
-              ? 'Your words are in great shape'
-              : `${remainingReviews} reviews to Word Mastery`}
-          </Text>
-          <Text style={styles.insightText}>
-            {words.length === 0
-              ? 'Add words and practice them to unlock a learning estimate.'
-              : remainingReviews === 0
-                ? 'Keep using them naturally to help the meanings last.'
-                : `About ${Math.max(
-                    1,
-                    Math.ceil((remainingReviews * 20) / 60),
-                  )} more minutes to move your saved words into the strong zone.`}
-          </Text>
-        </View>
-      </View>
+        {practiceEstimateExpanded && words.length > 0 ? (
+          <View style={styles.insightDetails}>
+            <PracticeEstimateDetail
+              icon="layers-outline"
+              title={`${remainingReviews} review${remainingReviews === 1 ? '' : 's'} left`}
+              text="Short, repeated recall sessions move words toward the strong zone."
+            />
+            <PracticeEstimateDetail
+              icon="help-circle-outline"
+              title={`About ${estimatedQuizCount} ${estimatedQuizCount === 1 ? 'quiz' : 'quizzes'}`}
+              text={`Based on quizzes of about ${typicalQuizSize} ${typicalQuizSize === 1 ? 'word' : 'words'} each.`}
+            />
+            <PracticeEstimateDetail
+              icon="time-outline"
+              title={`About ${estimatedMinutes} ${estimatedMinutes === 1 ? 'minute' : 'minutes'}`}
+              text="Estimated at roughly 20 seconds per review."
+            />
+          </View>
+        ) : null}
+      </Pressable>
 
       <View style={styles.dailyGoalCard}>
         <View style={styles.dailyGoalHeader}>
@@ -1223,6 +1302,28 @@ export function DashboardScreen({
         repeated reviews. It is not a scientific assessment.
       </Text>
     </ScrollView>
+  );
+}
+
+function PracticeEstimateDetail({
+  icon,
+  title,
+  text,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  title: string;
+  text: string;
+}) {
+  return (
+    <View style={styles.insightDetailRow}>
+      <View style={styles.insightDetailIcon}>
+        <Ionicons name={icon} size={15} color={COLORS.purpleDark} />
+      </View>
+      <View style={styles.insightDetailCopy}>
+        <Text style={styles.insightDetailTitle}>{title}</Text>
+        <Text style={styles.insightDetailText}>{text}</Text>
+      </View>
+    </View>
   );
 }
 

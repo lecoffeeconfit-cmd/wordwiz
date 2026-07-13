@@ -37,6 +37,7 @@ import {
   validateName,
   validatePassword,
   cancelReminder,
+  buildSmartReminderMessages,
   deleteCloudWord,
   fetchUserLearningData,
   reportError,
@@ -71,7 +72,10 @@ import {
   applyQuizReviews,
   buildQuizCompletion,
   buildWordFromInput,
+  calculateStreakStats,
   getDayKey,
+  getNextMasteryLevel,
+  getWordMastery,
   mergeWordLists,
   upsertSavedWord,
 } from '../utils';
@@ -110,6 +114,16 @@ export default function AppContent() {
   const cloudWarningShown = useRef(false);
   const latestWords = useRef<Word[]>([]);
   const hasHiddenNativeSplash = useRef(false);
+  const lastReminderRefreshKey = useRef<string | null>(null);
+  const smartReminderContext = useMemo(
+    () => buildCurrentReminderContext(words, analytics, dailyQuizGoal),
+    [analytics, currentDayKey, dailyQuizGoal, words],
+  );
+  const smartReminderMessages = useMemo(
+    () => buildSmartReminderMessages(smartReminderContext),
+    [smartReminderContext],
+  );
+  const smartReminderRefreshKey = `${reminderSettings.hour}:${reminderSettings.minute}:${JSON.stringify(smartReminderContext)}`;
 
   const hideNativeSplash = useCallback(() => {
     if (hasHiddenNativeSplash.current) {
@@ -215,6 +229,44 @@ export default function AppContent() {
 
     return () => clearInterval(intervalId);
   }, []);
+
+  useEffect(() => {
+    if (
+      !isReady ||
+      !currentUser ||
+      !reminderSettings.enabled ||
+      Platform.OS === 'web' ||
+      lastReminderRefreshKey.current === smartReminderRefreshKey
+    ) {
+      return;
+    }
+
+    const timeoutId = setTimeout(() => {
+      lastReminderRefreshKey.current = smartReminderRefreshKey;
+      void scheduleDailyReminder(
+        reminderSettings,
+        smartReminderMessages,
+      )
+        .then((scheduledSettings) => {
+          setReminderSettings(scheduledSettings);
+          saveReminderToCloud(scheduledSettings);
+        })
+        .catch((error) => {
+          lastReminderRefreshKey.current = null;
+          reportError(error, { area: 'refresh_smart_reminders' });
+        });
+    }, 750);
+
+    return () => clearTimeout(timeoutId);
+  }, [
+    currentUser,
+    isReady,
+    reminderSettings.enabled,
+    reminderSettings.hour,
+    reminderSettings.minute,
+    smartReminderMessages,
+    smartReminderRefreshKey,
+  ]);
 
   useEffect(() => {
     if (!isReady) {
@@ -939,8 +991,14 @@ export default function AppContent() {
     try {
       if (!nextSettings.enabled) {
         await cancelReminder(reminderSettings);
-        setReminderSettings({ ...nextSettings, notificationId: undefined });
-        saveReminderToCloud({ ...nextSettings, notificationId: undefined });
+        const disabledSettings = {
+          ...nextSettings,
+          notificationId: undefined,
+          notificationIds: undefined,
+        };
+        lastReminderRefreshKey.current = null;
+        setReminderSettings(disabledSettings);
+        saveReminderToCloud(disabledSettings);
         trackEvent('reminder_updated', { enabled: false });
         return;
       }
@@ -956,7 +1014,11 @@ export default function AppContent() {
         return;
       }
 
-      const scheduledSettings = await scheduleDailyReminder(nextSettings);
+      const scheduledSettings = await scheduleDailyReminder(
+        nextSettings,
+        smartReminderMessages,
+      );
+      lastReminderRefreshKey.current = `${scheduledSettings.hour}:${scheduledSettings.minute}:${JSON.stringify(smartReminderContext)}`;
       setReminderSettings(scheduledSettings);
       saveReminderToCloud(scheduledSettings);
       trackEvent('reminder_updated', {
@@ -1068,6 +1130,7 @@ export default function AppContent() {
           analytics={analytics}
           progress={todayQuizProgress}
           onComplete={completeQuiz}
+          onReviewCards={() => openCards()}
         />
       );
     }
@@ -1333,6 +1396,47 @@ function isUserCreatedWord(word: Word) {
 
 function isStarterWordId(wordId: string) {
   return STARTER_WORDS.some((starterWord) => starterWord.id === wordId);
+}
+
+function buildCurrentReminderContext(
+  words: Word[],
+  analytics: AnalyticsData,
+  dailyQuizGoal: number,
+) {
+  const dayKey = getDayKey();
+  const userWords = words.filter(isUserCreatedWord);
+  const masteryScores = userWords.map((word) =>
+    getWordMastery(word, analytics),
+  );
+  const overallMastery = masteryScores.length
+    ? Math.round(
+        masteryScores.reduce((total, score) => total + score, 0) /
+          masteryScores.length,
+      )
+    : 0;
+  const nextLevel = getNextMasteryLevel(overallMastery);
+  const quizzesToday = analytics.quizHistory.filter(
+    (attempt) => attempt.date === dayKey,
+  ).length;
+  const hasCardPracticeToday = analytics.cardHistory.some(
+    (event) => event.date === dayKey,
+  );
+
+  return {
+    currentStreak: calculateStreakStats(analytics).current,
+    hasPracticedToday: hasCardPracticeToday || quizzesToday > 0,
+    dueReviewCount: userWords.filter(
+      (word) => word.reviews > 0 && getWordMastery(word, analytics) < 80,
+    ).length,
+    quizzesToday,
+    dailyQuizGoal,
+    unreviewedNewWordCount: userWords.filter((word) => word.reviews === 0)
+      .length,
+    pointsToNextLevel: nextLevel
+      ? Math.max(0, nextLevel.minScore - overallMastery)
+      : null,
+    dayKey,
+  };
 }
 
 async function clearLegacyLearningData() {

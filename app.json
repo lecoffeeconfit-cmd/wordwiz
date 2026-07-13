@@ -7,7 +7,7 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
-    "backgroundColor": "#F8F4FF",
+    "backgroundColor": "#F2EFFF",
     "plugins": [
       [
         "@sentry/react-native/expo",
@@ -31,10 +31,10 @@
           "image": "./assets/splash-icon.png",
           "imageWidth": 180,
           "resizeMode": "contain",
-          "backgroundColor": "#F8F4FF",
+          "backgroundColor": "#F2EFFF",
           "dark": {
             "image": "./assets/splash-icon.png",
-            "backgroundColor": "#F8F4FF"
+            "backgroundColor": "#F2EFFF"
           }
         }
       ],

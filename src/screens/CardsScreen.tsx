@@ -4,7 +4,7 @@ import { FlatList, Pressable, ScrollView, Text, View } from 'react-native';
 import { COLORS } from '../constants/theme';
 import type { AnalyticsData, LegalPage, QuizAnswer, QuizProgress, QuizQuestion, ReminderSettings, SortMode, Word } from '../types';
 import { styles } from '../styles';
-import { buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, getDayKey, getProgressShineOpacity, getRecentDays, getStreakMessage, getStreakWeek, getWordMastery, getWordMasteryCategoryId, shuffle, WORD_MASTERY_CATEGORIES, type WordMasteryCategoryId } from '../utils';
+import { buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, formatWordAddedDate, getCompleteFlashcardDefinition, getDayKey, getRecentDays, getStreakMessage, getStreakWeek, getWordMastery, getWordMasteryCategoryId, shuffle, sortWordsAlphabetically, WORD_MASTERY_CATEGORIES, type WordMasteryCategoryId } from '../utils';
 import { DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, SpeakButton, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 
 export function CardsScreen({
@@ -27,6 +27,10 @@ export function CardsScreen({
   const [cardIndex, setCardIndex] = useState(0);
   const [showAnswer, setShowAnswer] = useState(false);
   const [cardStartedAt, setCardStartedAt] = useState(Date.now());
+  const [deckOrder, setDeckOrder] = useState<'alphabetical' | 'random'>(
+    'alphabetical',
+  );
+  const [shuffleVersion, setShuffleVersion] = useState(0);
   const [selectedCategory, setSelectedCategory] =
     useState<WordMasteryCategoryId>('all');
   const wordMastery = useMemo(
@@ -65,34 +69,47 @@ export function CardsScreen({
     WORD_MASTERY_CATEGORIES.find(
       (category) => category.id === selectedCategory,
     ) ?? WORD_MASTERY_CATEGORIES[0];
+  const alphabeticalWords = useMemo(
+    () => sortWordsAlphabetically(filteredWords),
+    [filteredWords],
+  );
   const studyWords = useMemo(() => {
-    const shuffledWords = shuffle(filteredWords);
-    if (!initialWordId) {
-      return shuffledWords;
-    }
-
-    const selectedIndex = shuffledWords.findIndex(
-      (word) => word.id === initialWordId,
-    );
-    if (selectedIndex <= 0) {
-      return shuffledWords;
-    }
-
-    const selectedWord = shuffledWords[selectedIndex];
-    return [
-      selectedWord,
-      ...shuffledWords.slice(0, selectedIndex),
-      ...shuffledWords.slice(selectedIndex + 1),
-    ];
-  }, [filteredWords, initialWordId]);
+    return deckOrder === 'random' ? shuffle(alphabeticalWords) : alphabeticalWords;
+  }, [alphabeticalWords, deckOrder, shuffleVersion]);
   const current = studyWords[cardIndex % Math.max(studyWords.length, 1)];
   const currentTermLength = current?.term.trim().length ?? 0;
+  const cardDefinition = current
+    ? getCompleteFlashcardDefinition(current.definition, current.simpleDefinition)
+    : '';
+  const showsSimplifiedDefinition = Boolean(
+    current && cardDefinition !== current.definition.trim(),
+  );
 
   useEffect(() => {
-    setCardIndex(0);
+    const selectedIndex =
+      deckOrder === 'alphabetical' && initialWordId
+        ? studyWords.findIndex((word) => word.id === initialWordId)
+        : -1;
+
+    setCardIndex(Math.max(selectedIndex, 0));
     setShowAnswer(false);
     setCardStartedAt(Date.now());
-  }, [initialWordId, selectedCategory, studyWords.length, words.length]);
+  }, [
+    deckOrder,
+    initialWordId,
+    selectedCategory,
+    shuffleVersion,
+    studyWords.length,
+  ]);
+
+  function showAlphabeticalDeck() {
+    setDeckOrder('alphabetical');
+  }
+
+  function randomizeDeck() {
+    setDeckOrder('random');
+    setShuffleVersion((version) => version + 1);
+  }
 
   const categorySelector = (
     <ScrollView
@@ -257,6 +274,67 @@ export function CardsScreen({
         </Text>
       </View>
 
+      <View style={styles.flashcardOrderRow}>
+        <Text style={styles.flashcardOrderLabel}>Deck order</Text>
+        <View style={styles.flashcardOrderControl}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Sort flashcards alphabetically"
+            accessibilityState={{ selected: deckOrder === 'alphabetical' }}
+            onPress={showAlphabeticalDeck}
+            style={({ pressed }) => [
+              styles.flashcardOrderButton,
+              deckOrder === 'alphabetical' && styles.flashcardOrderButtonActive,
+              pressed && styles.pressed,
+            ]}
+          >
+            <Ionicons
+              name="text-outline"
+              size={14}
+              color={
+                deckOrder === 'alphabetical'
+                  ? COLORS.purpleDark
+                  : COLORS.muted
+              }
+            />
+            <Text
+              style={[
+                styles.flashcardOrderButtonText,
+                deckOrder === 'alphabetical' &&
+                  styles.flashcardOrderButtonTextActive,
+              ]}
+            >
+              A–Z
+            </Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Randomize flashcard order"
+            accessibilityState={{ selected: deckOrder === 'random' }}
+            onPress={randomizeDeck}
+            style={({ pressed }) => [
+              styles.flashcardOrderButton,
+              deckOrder === 'random' && styles.flashcardOrderButtonActive,
+              pressed && styles.pressed,
+            ]}
+          >
+            <Ionicons
+              name="shuffle"
+              size={14}
+              color={deckOrder === 'random' ? COLORS.purpleDark : COLORS.muted}
+            />
+            <Text
+              style={[
+                styles.flashcardOrderButtonText,
+                deckOrder === 'random' && styles.flashcardOrderButtonTextActive,
+              ]}
+            >
+              Shuffle
+            </Text>
+          </Pressable>
+        </View>
+      </View>
+
       <View style={styles.cardStudyToolbar}>
         <Pressable
           accessibilityRole="button"
@@ -289,15 +367,7 @@ export function CardsScreen({
                         width: `${cardProgress}%`,
                       },
                     ]}
-                  >
-                    <View
-                      style={[
-                        styles.progressShine,
-                        { opacity: getProgressShineOpacity(cardProgress) },
-                        cardProgress >= 100 && styles.progressShineComplete,
-                      ]}
-                    />
-                  </View>
+                  />
                 </View>
               </>
             );
@@ -384,9 +454,9 @@ export function CardsScreen({
           {showAnswer ? (
             <>
               <Text style={styles.flashcardDefinition}>
-                {current.simpleDefinition || current.definition}
+                {cardDefinition}
               </Text>
-              {current.simpleDefinition && (
+              {showsSimplifiedDefinition && (
                 <Text style={styles.fullDefinitionText}>
                   Full meaning: {current.definition}
                 </Text>
@@ -405,6 +475,25 @@ export function CardsScreen({
             <View style={styles.tapHint}>
               <Ionicons name="finger-print" size={23} color={COLORS.muted} />
               <Text style={styles.tapHintText}>Tap to reveal the meaning</Text>
+            </View>
+          )}
+          {!showAnswer && (
+            <View
+              accessible
+              accessibilityLabel={formatWordAddedDate(current.createdAt)}
+              style={[
+                styles.flashcardAddedMeta,
+                styles.flashcardFrontAddedMeta,
+              ]}
+            >
+              <Ionicons
+                name="calendar-outline"
+                size={13}
+                color={COLORS.muted}
+              />
+              <Text style={styles.flashcardAddedText}>
+                {formatWordAddedDate(current.createdAt)}
+              </Text>
             </View>
           )}
         </View>

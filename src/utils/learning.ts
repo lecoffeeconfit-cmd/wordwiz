@@ -86,8 +86,8 @@ export const WORD_MASTERY_CATEGORIES: WordMasteryCategory[] = [
   },
   {
     id: 'master',
-    label: 'Master words',
-    shortLabel: 'Master',
+    label: 'Proficient words',
+    shortLabel: 'Proficient',
     color: '#2AA987',
     pale: '#E8FBF4',
     icon: 'sparkles',
@@ -107,6 +107,14 @@ export function getWordMasteryCategory(score: number) {
   return (
     WORD_MASTERY_CATEGORIES.find((category) => category.id === categoryId) ??
     WORD_MASTERY_CATEGORIES[1]
+  );
+}
+
+export function sortWordsAlphabetically(words: Word[]) {
+  return [...words].sort((first, second) =>
+    first.term.localeCompare(second.term, undefined, {
+      sensitivity: 'base',
+    }),
   );
 }
 
@@ -310,6 +318,26 @@ export function addQuizAttempt(analytics: AnalyticsData, attempt: QuizAttempt) {
   };
 }
 
+/**
+ * The first completed quiz for a calendar day is the day's daily quiz. Any
+ * later attempts are optional practice rounds. This derives the label from
+ * the history so it works for attempts saved before quiz types were shown.
+ */
+export function getQuizAttemptKind(
+  attempt: QuizAttempt,
+  attempts: QuizAttempt[],
+): 'daily' | 'practice' {
+  const firstAttemptOfDay = attempts
+    .filter((candidate) => candidate.date === attempt.date)
+    .sort(
+      (first, second) =>
+        first.completedAt.localeCompare(second.completedAt) ||
+        first.id.localeCompare(second.id),
+    )[0];
+
+  return firstAttemptOfDay?.id === attempt.id ? 'daily' : 'practice';
+}
+
 export function getWordMastery(
   word: Word,
   analytics: AnalyticsData,
@@ -453,6 +481,29 @@ export function getWordReviewPriority(word: Word, analytics: AnalyticsData) {
   );
 }
 
+export function sortWordsForReview(words: Word[], analytics: AnalyticsData) {
+  return [...words].sort(
+    (first, second) =>
+      getQuizMissCount(second, analytics) - getQuizMissCount(first, analytics) ||
+      getForgotCardCount(second, analytics) - getForgotCardCount(first, analytics) ||
+      getWordReviewPriority(second, analytics) -
+        getWordReviewPriority(first, analytics) ||
+      second.createdAt.localeCompare(first.createdAt),
+  );
+}
+
+function getQuizMissCount(word: Word, analytics: AnalyticsData) {
+  return analytics.quizHistory
+    .flatMap((attempt) => attempt.answers)
+    .filter((answer) => answer.wordId === word.id && !answer.correct).length;
+}
+
+function getForgotCardCount(word: Word, analytics: AnalyticsData) {
+  return analytics.cardHistory.filter(
+    (event) => event.wordId === word.id && !event.remembered,
+  ).length;
+}
+
 export function formatStudyTime(seconds: number) {
   if (seconds < 60) return seconds === 0 ? '0m' : '<1m';
   const minutes = Math.round(seconds / 60);
@@ -584,6 +635,17 @@ export function buildAchievements({
   const perfectQuiz = analytics.quizHistory.some(
     (attempt) => attempt.total > 0 && attempt.score === attempt.total,
   );
+  const perfectQuizCount = analytics.quizHistory.filter(
+    (attempt) => attempt.total > 0 && attempt.score === attempt.total,
+  ).length;
+  const quizzesByDay = analytics.quizHistory.reduce<Record<string, number>>(
+    (counts, attempt) => ({
+      ...counts,
+      [attempt.date]: (counts[attempt.date] ?? 0) + 1,
+    }),
+    {},
+  );
+  const mostQuizzesInOneDay = Math.max(0, ...Object.values(quizzesByDay));
   const totalQuizQuestions = analytics.quizHistory.reduce(
     (total, attempt) => total + attempt.total,
     0,
@@ -593,6 +655,7 @@ export function buildAchievements({
   ).length;
   const topWordReviews = Math.max(0, ...words.map((word) => word.reviews));
   const totalReviews = totalCardReviews + totalQuizQuestions;
+  const nextReviewHorizon = getNextReviewHorizon(totalReviews);
 
   return [
     createAchievement({
@@ -685,7 +748,141 @@ export function buildAchievements({
       progress: rememberedCards,
       target: 10,
     }),
+    createAchievement({
+      id: 'quiz-day-3',
+      title: 'Triple quiz day',
+      description: 'Complete 3 practice quizzes in one day.',
+      icon: 'flash',
+      color: '#2879E8',
+      background: '#EAF2FF',
+      progress: mostQuizzesInOneDay,
+      target: 3,
+    }),
+    createAchievement({
+      id: 'quiz-day-5',
+      title: 'Quiz marathon',
+      description: 'Complete 5 practice quizzes in one day.',
+      icon: 'ribbon',
+      color: '#8E78FF',
+      background: '#F2EFFF',
+      progress: mostQuizzesInOneDay,
+      target: 5,
+    }),
+    createAchievement({
+      id: 'quiz-10',
+      title: '10 quizzes complete',
+      description: 'Your recall routine is taking shape.',
+      icon: 'trophy',
+      color: '#F2A65A',
+      background: '#FFF0DC',
+      progress: analytics.quizHistory.length,
+      target: 10,
+    }),
+    createAchievement({
+      id: 'perfect-5',
+      title: '5 perfect quizzes',
+      description: 'Accuracy and recall are working together.',
+      icon: 'sparkles',
+      color: '#FF7E9F',
+      background: '#FFEAF1',
+      progress: perfectQuizCount,
+      target: 5,
+    }),
+    createAchievement({
+      id: 'collector-25',
+      title: '25-word collection',
+      description: 'Your vocabulary shelf keeps growing.',
+      icon: 'library',
+      color: '#8E78FF',
+      background: '#F2EFFF',
+      progress: words.length,
+      target: 25,
+    }),
+    createAchievement({
+      id: 'strong-25',
+      title: '25 strong words',
+      description: 'A dependable vocabulary foundation.',
+      icon: 'school',
+      color: '#2AA987',
+      background: '#EFFFF8',
+      progress: strongWords,
+      target: 25,
+    }),
+    createAchievement({
+      id: 'streak-14',
+      title: '14-day rhythm',
+      description: 'Two full weeks of consistent practice.',
+      icon: 'flame',
+      color: '#F2A65A',
+      background: '#FFF0DC',
+      progress: streakStats.longest,
+      target: 14,
+    }),
+    createAchievement({
+      id: 'streak-30',
+      title: '30-day momentum',
+      description: 'A month-long vocabulary habit.',
+      icon: 'medal',
+      color: '#FF7E9F',
+      background: '#FFEAF1',
+      progress: streakStats.longest,
+      target: 30,
+    }),
+    createAchievement({
+      id: 'remembered-100',
+      title: '100 confident cards',
+      description: 'You have built serious recall strength.',
+      icon: 'checkmark-done-circle',
+      color: '#39C69A',
+      background: '#E8FBF4',
+      progress: rememberedCards,
+      target: 100,
+    }),
+    createAchievement({
+      id: 'review-100',
+      title: '100 reviews',
+      description: 'Consistent practice is becoming a habit.',
+      icon: 'refresh-circle',
+      color: '#39C69A',
+      background: '#E8FBF4',
+      progress: totalReviews,
+      target: 100,
+    }),
+    createAchievement({
+      id: 'review-250',
+      title: '250 reviews',
+      description: 'Repeated recall is building durable memory.',
+      icon: 'sync-circle',
+      color: '#2879E8',
+      background: '#EAF2FF',
+      progress: totalReviews,
+      target: 250,
+    }),
+    createAchievement({
+      id: 'review-500',
+      title: '500 reviews',
+      description: 'A major vocabulary practice milestone.',
+      icon: 'diamond',
+      color: '#8E78FF',
+      background: '#F2EFFF',
+      progress: totalReviews,
+      target: 500,
+    }),
+    createAchievement({
+      id: `review-horizon-${nextReviewHorizon}`,
+      title: `${nextReviewHorizon} review horizon`,
+      description: 'A harder practice milestone is always ahead.',
+      icon: 'rocket',
+      color: '#5B4DE4',
+      background: '#F2EFFF',
+      progress: totalReviews,
+      target: nextReviewHorizon,
+    }),
   ];
+}
+
+function getNextReviewHorizon(totalReviews: number) {
+  return Math.max(1000, (Math.floor(totalReviews / 500) + 1) * 500);
 }
 
 function createAchievement({

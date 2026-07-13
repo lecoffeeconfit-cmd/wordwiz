@@ -48,6 +48,13 @@ export type WordnikDefinition = {
   attributionText?: string;
 };
 
+export type DefinitionOption = {
+  text: string;
+  source: string;
+  partOfSpeech?: string;
+  recommended: boolean;
+};
+
 export type WordDetails = Pick<
   Word,
   | 'definition'
@@ -70,7 +77,9 @@ export type WordDetails = Pick<
   | 'wordnik_syllables'
   | 'wordnik_attribution'
   | 'wordnik_url'
->;
+> & {
+  definitionOptions?: DefinitionOption[];
+};
 
 export type DictionaryDefinition = {
   definition?: string;
@@ -147,6 +156,7 @@ export type ReminderSettings = {
   hour: number;
   minute: number;
   notificationId?: string;
+  notificationIds?: string[];
 };
 
 export type StreakStats = {

@@ -1,10 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useEffect, useMemo, useState } from 'react';
-import { FlatList, Pressable, ScrollView, Text, View } from 'react-native';
+import { useMemo, useState } from 'react';
+import { FlatList, Image, Pressable, ScrollView, Text, View } from 'react-native';
 import { COLORS } from '../constants/theme';
 import type { AnalyticsData, LegalPage, QuizAnswer, QuizProgress, QuizQuestion, ReminderSettings, SortMode, Word } from '../types';
 import { styles } from '../styles';
-import { buildAchievements, buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, getDayKey, getProgressColor, getProgressPaleColor, getProgressShineOpacity, getRecentDays, getStreakMessage, getStreakMilestone, getStreakWeek, getWordMastery, getWordReviewPriority, shuffle } from '../utils';
+import { buildAchievements, buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, getDayKey, getProgressColor, getProgressPaleColor, getProgressShineOpacity, getRecentDays, getStreakMessage, getStreakMilestone, getStreakWeek, getWordMastery, sortWordsForReview, shuffle } from '../utils';
 import { DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 
 export function getGreeting() {
@@ -40,6 +40,8 @@ export function HomeScreen({
   onQuiz: () => void;
   onStats: () => void;
 }) {
+  const [achievementCarouselWidth, setAchievementCarouselWidth] = useState(0);
+  const [showAllReviewWords, setShowAllReviewWords] = useState(false);
   const mastery = words.map((word) => getWordMastery(word, analytics));
   const overallMastery = words.length
     ? Math.round(mastery.reduce((total, score) => total + score, 0) / words.length)
@@ -69,20 +71,24 @@ export function HomeScreen({
   const streakStats = calculateStreakStats(analytics);
   const streakMilestone = getStreakMilestone(streakStats);
   const achievements = buildAchievements({ words, analytics, streakStats });
-  const achievementPreview = [
+  const achievementItems = [
     ...achievements.filter((achievement) => achievement.unlocked),
     ...achievements.filter((achievement) => !achievement.unlocked),
-  ].slice(0, 3);
+  ];
+  const achievementPages = useMemo(
+    () =>
+      Array.from(
+        { length: Math.ceil(achievementItems.length / 3) },
+        (_, index) => achievementItems.slice(index * 3, index * 3 + 3),
+      ),
+    [achievementItems],
+  );
   const todayQuizzes = getTodayQuizCount(analytics);
   const completedDailyQuizzes = Math.min(todayQuizzes, dailyQuizGoal);
-  const nextWords = [...words]
-    .sort(
-      (first, second) =>
-        getWordReviewPriority(second, analytics) -
-          getWordReviewPriority(first, analytics) ||
-        second.createdAt.localeCompare(first.createdAt),
-    )
-    .slice(0, 2);
+  const homeQuizActionLabel =
+    todayQuizzes > 0 ? 'Practice another quiz' : 'Start daily quiz';
+  const reviewWords = sortWordsForReview(words, analytics);
+  const nextWords = showAllReviewWords ? reviewWords : reviewWords.slice(0, 3);
 
   return (
     <View style={styles.homeScreenShell}>
@@ -97,7 +103,11 @@ export function HomeScreen({
         <View style={styles.heroCloudThree} />
         <View style={styles.homeTopRow}>
           <View style={styles.avatarBadge}>
-            <Text style={styles.avatarText}>W</Text>
+            <Image
+              accessibilityLabel="WordWiz logo"
+              source={require('../../assets/wordwiz-logo.png')}
+              style={styles.avatarLogo}
+            />
           </View>
           <View style={styles.homeTopActions}>
             <View style={styles.homeStatsPill}>
@@ -160,14 +170,17 @@ export function HomeScreen({
         </View>
         <View style={styles.homeDottedLine} />
         <Pressable
-          onPress={words.length > 0 ? onStudy : onAddWord}
+          onPress={words.length > 0 ? onQuiz : onAddWord}
           style={({ pressed }) => [
             styles.homePrimaryButton,
             pressed && styles.primaryButtonPressed,
           ]}
         >
+          {words.length > 0 && (
+            <Ionicons name="trophy-outline" size={19} color={COLORS.white} />
+          )}
           <Text style={styles.homePrimaryButtonText}>
-            {words.length > 0 ? 'Start review' : 'Add your first word'}
+            {words.length > 0 ? homeQuizActionLabel : 'Add your first word'}
           </Text>
         </Pressable>
       </View>
@@ -215,37 +228,83 @@ export function HomeScreen({
             {achievements.filter((achievement) => achievement.unlocked).length}/{achievements.length}
           </Text>
         </View>
-        <View style={styles.homeAchievementRow}>
-          {achievementPreview.map((achievement) => (
-            <View
-              key={achievement.id}
-              style={[
-                styles.homeAchievementChip,
-                {
-                  backgroundColor: achievement.unlocked
-                    ? achievement.background
-                    : getProgressPaleColor(
-                        (achievement.progress / achievement.target) * 100,
-                      ),
-                },
-              ]}
-            >
-              <Ionicons
-                name={achievement.icon}
-                size={17}
-                color={achievement.unlocked ? achievement.color : COLORS.muted}
-              />
-              <Text
-                numberOfLines={1}
+        <View
+          onLayout={(event) => {
+            setAchievementCarouselWidth(event.nativeEvent.layout.width);
+          }}
+          style={styles.homeAchievementCarousel}
+        >
+          <ScrollView
+            horizontal
+            pagingEnabled
+            nestedScrollEnabled
+            showsHorizontalScrollIndicator={false}
+            accessibilityLabel="Swipe left or right to view more achievements"
+            contentContainerStyle={styles.homeAchievementCarouselContent}
+          >
+            {achievementPages.map((page, pageIndex) => (
+              <View
+                key={`achievement-page-${pageIndex}`}
                 style={[
-                  styles.homeAchievementText,
-                  achievement.unlocked && { color: achievement.color },
+                  styles.homeAchievementRow,
+                  styles.homeAchievementPage,
+                  achievementCarouselWidth > 0 && {
+                    width: achievementCarouselWidth,
+                  },
                 ]}
               >
-                {achievement.title}
-              </Text>
-            </View>
-          ))}
+                {Array.from({ length: 3 }, (_, index) => {
+                  const achievement = page[index];
+                  if (!achievement) {
+                    return (
+                      <View
+                        key={`achievement-empty-${index}`}
+                        style={styles.homeAchievementChipPlaceholder}
+                      />
+                    );
+                  }
+
+                  return (
+                    <View
+                      key={achievement.id}
+                      style={[
+                        styles.homeAchievementChip,
+                        {
+                          backgroundColor: achievement.unlocked
+                            ? achievement.background
+                            : getProgressPaleColor(
+                                (achievement.progress / achievement.target) * 100,
+                              ),
+                        },
+                      ]}
+                    >
+                      <Ionicons
+                        name={achievement.icon}
+                        size={17}
+                        color={
+                          achievement.unlocked ? achievement.color : COLORS.muted
+                        }
+                      />
+                      <Text
+                        numberOfLines={1}
+                        style={[
+                          styles.homeAchievementText,
+                          achievement.unlocked && { color: achievement.color },
+                        ]}
+                      >
+                        {achievement.title}
+                      </Text>
+                      {!achievement.unlocked && (
+                        <Text style={styles.homeAchievementProgress}>
+                          {achievement.progress}/{achievement.target}
+                        </Text>
+                      )}
+                    </View>
+                  );
+                })}
+              </View>
+            ))}
+          </ScrollView>
         </View>
       </View>
 
@@ -285,7 +344,33 @@ export function HomeScreen({
 
       {nextWords.length > 0 && (
         <View style={styles.nextWordsCard}>
-          <Text style={styles.homeSectionTitle}>Words to review</Text>
+          <View style={styles.nextWordsHeader}>
+            <Text style={styles.homeSectionTitle}>Words to review</Text>
+            {reviewWords.length > 3 && (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={
+                  showAllReviewWords
+                    ? 'Show fewer words to review'
+                    : 'Show all words to review'
+                }
+                onPress={() => setShowAllReviewWords((shown) => !shown)}
+                style={({ pressed }) => [
+                  styles.nextWordsToggle,
+                  pressed && styles.pressed,
+                ]}
+              >
+                <Text style={styles.nextWordsToggleText}>
+                  {showAllReviewWords ? 'Show less' : 'View all'}
+                </Text>
+                <Ionicons
+                  name={showAllReviewWords ? 'chevron-up' : 'chevron-down'}
+                  size={14}
+                  color={COLORS.purpleDark}
+                />
+              </Pressable>
+            )}
+          </View>
           {nextWords.map((word) => (
             <Pressable
               key={word.id}

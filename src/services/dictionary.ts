@@ -1,4 +1,5 @@
 import type {
+  DefinitionOption,
   DictionaryEntry,
   DictionaryMeaning,
   WordDetails,
@@ -180,14 +181,38 @@ export async function lookupWordDetails(rawTerm: string): Promise<WordDetails> {
       ? wikipediaSummary.extract
       : null;
   const wordnikDefinition = getWordnikDefinition(wordnik, lookupTerm);
-  const definition = selectBestDefinitionForDisplay(
-    [
+  const dictionaryDefinitionCandidates = meanings.flatMap((meaning) =>
+    (meaning.definitions ?? []).map((item, index) => ({
+      text: item.definition,
+      source: 'dictionary' as const,
+      partOfSpeech: meaning.partOfSpeech,
+      index,
+    })),
+  );
+  const wikidataDefinitionCandidates = wikidataLexeme.definitions.map(
+    (text, index) => ({
+      text,
+      source: 'wikidata' as const,
+      partOfSpeech: wikidataLexeme.partOfSpeech,
+      index,
+    }),
+  );
+  const wordnikDefinitionCandidates = (wordnik?.wordnik_definitions ?? []).map(
+    (item, index) => ({
+      text: item.text,
+      source: 'wordnik' as const,
+      partOfSpeech: item.partOfSpeech,
+      index,
+    }),
+  );
+  const definitionCandidates: LookupDefinitionCandidate[] = [
       { text: fallback?.definition, source: 'fallback' },
       {
         text: firstDefinition?.definition,
         source: 'dictionary',
         partOfSpeech: firstMeaning?.partOfSpeech,
       },
+      ...dictionaryDefinitionCandidates,
       ...wiktionaryData.definitions.map((item, index) => ({
         text: item.text,
         source: 'wiktionary' as const,
@@ -196,12 +221,21 @@ export async function lookupWordDetails(rawTerm: string): Promise<WordDetails> {
       })),
       { text: datamuseDefinition, source: 'datamuse' },
       { text: wikidataDefinition, source: 'wikidata' },
-      { text: wordnikDefinition?.text, source: 'wordnik' },
+      ...wikidataDefinitionCandidates,
+      {
+        text: wordnikDefinition?.text,
+        source: 'wordnik',
+        partOfSpeech: wordnikDefinition?.partOfSpeech,
+      },
+      ...wordnikDefinitionCandidates,
       { text: wikipediaDefinition, source: 'wikipedia' },
       { text: wikipediaSummary?.extract, source: 'wikipedia' },
-    ],
+    ];
+  const definitionOptions = rankDefinitionCandidates(
+    definitionCandidates,
     lookupTerm,
   );
+  const definition = definitionOptions[0]?.text ?? null;
 
   if (!definition) {
     throw new Error('No dictionary entry found.');
@@ -285,6 +319,7 @@ export async function lookupWordDetails(rawTerm: string): Promise<WordDetails> {
 
   return {
     definition,
+    definitionOptions,
     simpleDefinition,
     example,
     partOfSpeech,
@@ -864,6 +899,13 @@ export function selectBestDefinitionForDisplay(
   candidates: LookupDefinitionCandidate[],
   lookupTerm: string,
 ) {
+  return rankDefinitionCandidates(candidates, lookupTerm)[0]?.text ?? null;
+}
+
+export function rankDefinitionCandidates(
+  candidates: LookupDefinitionCandidate[],
+  lookupTerm: string,
+): DefinitionOption[] {
   const scoredCandidates = candidates
     .map((candidate, index) => {
       const text = cleanLookupDefinitionForDisplay(
@@ -876,19 +918,57 @@ export function selectBestDefinitionForDisplay(
 
       return {
         text,
+        source: candidate.source,
+        partOfSpeech: candidate.partOfSpeech,
         index,
         score: scoreDefinitionCandidate(text, lookupTerm, candidate, index),
       };
     })
-    .filter((item): item is { text: string; index: number; score: number } =>
-      Boolean(item),
+    .filter(
+      (item): item is {
+        text: string;
+        source: DefinitionSource;
+        partOfSpeech: string | undefined;
+        index: number;
+        score: number;
+      } => Boolean(item),
     )
     .sort(
       (first, second) =>
         second.score - first.score || first.index - second.index,
     );
 
-  return scoredCandidates[0]?.text ?? null;
+  const uniqueCandidates = scoredCandidates.filter(
+    (candidate, index, allCandidates) =>
+      allCandidates.findIndex(
+        (item) => normalizeDefinitionText(item.text) === normalizeDefinitionText(candidate.text),
+      ) === index,
+  );
+
+  return uniqueCandidates.slice(0, 6).map((candidate, index) => ({
+    text: candidate.text,
+    source: getDefinitionSourceLabel(candidate.source),
+    partOfSpeech: candidate.partOfSpeech,
+    recommended: index === 0,
+  }));
+}
+
+function normalizeDefinitionText(text: string) {
+  return text.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function getDefinitionSourceLabel(source: DefinitionSource) {
+  const labels: Record<DefinitionSource, string> = {
+    fallback: 'WordWiz',
+    dictionary: 'Dictionary',
+    wiktionary: 'Wiktionary',
+    datamuse: 'Datamuse',
+    wikidata: 'Wikidata',
+    wordnik: 'Wordnik',
+    wikipedia: 'Wikipedia',
+  };
+
+  return labels[source];
 }
 
 function scoreDefinitionCandidate(
