@@ -3113,6 +3113,13 @@ export const styles = StyleSheet.create({
     gap: 10,
     backgroundColor: '#FAF8FF',
   },
+  expandedListHint: {
+    marginBottom: 10,
+    color: COLORS.muted,
+    fontSize: 10,
+    fontWeight: '700',
+    textAlign: 'right',
+  },
   masterySummaryCopy: {
     flex: 1,
     minWidth: 0,

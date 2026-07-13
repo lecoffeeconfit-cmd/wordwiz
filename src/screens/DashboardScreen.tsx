@@ -38,6 +38,9 @@ export function DashboardScreen({
   const [practiceEstimateExpanded, setPracticeEstimateExpanded] = useState(false);
   const [activityWindow, setActivityWindow] = useState<7 | 30>(7);
   const masterSparkleScale = useRef(new Animated.Value(1)).current;
+  const lastMasteryRowTapAt = useRef(0);
+  const lastAchievementTapAt = useRef(0);
+  const lastQuizTrendTapAt = useRef(0);
   const todayKey = getDayKey();
   const recentDays = getRecentDays(activityWindow);
   const totalQuizQuestions = analytics.quizHistory.reduce(
@@ -171,6 +174,45 @@ export function DashboardScreen({
       hour: nextTime.hour,
       minute: nextTime.minute,
     });
+  };
+
+  const collapseMasteryListOnDoubleTap = () => {
+    if (!masteryExpanded) return;
+
+    const tappedAt = Date.now();
+    if (tappedAt - lastMasteryRowTapAt.current < 340) {
+      lastMasteryRowTapAt.current = 0;
+      setMasteryExpanded(false);
+      return;
+    }
+
+    lastMasteryRowTapAt.current = tappedAt;
+  };
+
+  const collapseAchievementsOnDoubleTap = () => {
+    if (!achievementsExpanded) return;
+
+    const tappedAt = Date.now();
+    if (tappedAt - lastAchievementTapAt.current < 340) {
+      lastAchievementTapAt.current = 0;
+      setAchievementsExpanded(false);
+      return;
+    }
+
+    lastAchievementTapAt.current = tappedAt;
+  };
+
+  const collapseQuizTrendOnDoubleTap = () => {
+    if (!quizTrendExpanded) return;
+
+    const tappedAt = Date.now();
+    if (tappedAt - lastQuizTrendTapAt.current < 340) {
+      lastQuizTrendTapAt.current = 0;
+      setQuizTrendExpanded(false);
+      return;
+    }
+
+    lastQuizTrendTapAt.current = tappedAt;
   };
 
   useEffect(() => {
@@ -797,7 +839,11 @@ export function DashboardScreen({
         </Pressable>
 
         {achievementsExpanded ? (
-          <View style={styles.achievementGrid}>
+          <>
+            <Text style={styles.expandedListHint}>
+              Double-tap any achievement to show fewer
+            </Text>
+            <View style={styles.achievementGrid}>
             {achievements.map((achievement) => {
             const percent = Math.round(
               (achievement.progress / achievement.target) * 100,
@@ -807,8 +853,11 @@ export function DashboardScreen({
               : getProgressColor(percent);
 
             return (
-              <View
+              <Pressable
                 key={achievement.id}
+                accessibilityRole="button"
+                accessibilityHint="Double-tap twice quickly to collapse the achievement list"
+                onPress={collapseAchievementsOnDoubleTap}
                 style={[
                   styles.achievementCard,
                   {
@@ -863,10 +912,11 @@ export function DashboardScreen({
                     />
                   </View>
                 </View>
-              </View>
+              </Pressable>
             );
           })}
-          </View>
+            </View>
+          </>
         ) : null}
       </DashboardSection>
 
@@ -877,13 +927,26 @@ export function DashboardScreen({
           </Text>
         ) : (
           <>
+            {masteryExpanded ? (
+              <Text style={styles.expandedListHint}>
+                Double-tap any word to show fewer
+              </Text>
+            ) : null}
             {(masteryExpanded ? mastery : mastery.slice(0, 5)).map((item) => {
               const wordCategory = getWordMasteryCategory(item.score);
               const isMasterWord = item.score >= 100;
 
               return (
-                <View
+                <Pressable
                   key={item.word.id}
+                  accessibilityRole={masteryExpanded ? 'button' : undefined}
+                  accessibilityHint={
+                    masteryExpanded
+                      ? 'Double-tap twice quickly to collapse the word list'
+                      : undefined
+                  }
+                  disabled={!masteryExpanded}
+                  onPress={collapseMasteryListOnDoubleTap}
                   style={[
                     styles.masteryRow,
                     isMasterWord && styles.masteryRowComplete,
@@ -954,7 +1017,7 @@ export function DashboardScreen({
                       />
                     </View>
                   </View>
-                </View>
+                </Pressable>
               );
             })}
             <Pressable
@@ -999,6 +1062,11 @@ export function DashboardScreen({
           </Text>
         ) : (
           <>
+            {quizTrendExpanded ? (
+              <Text style={styles.expandedListHint}>
+                Double-tap any quiz to show recent quizzes
+              </Text>
+            ) : null}
             {quizTrendAttempts.map((attempt) => {
             const percent = attempt.total
               ? Math.round((attempt.score / attempt.total) * 100)
@@ -1014,8 +1082,16 @@ export function DashboardScreen({
               percent >= 80 ? 'Strong' : percent >= 50 ? 'Building' : 'Needs review';
             const tone = getQuizTrendTone(percent);
             return (
-              <View
+              <Pressable
                 key={attempt.id}
+                accessibilityRole={quizTrendExpanded ? 'button' : undefined}
+                accessibilityHint={
+                  quizTrendExpanded
+                    ? 'Double-tap twice quickly to show recent quizzes'
+                    : undefined
+                }
+                disabled={!quizTrendExpanded}
+                onPress={collapseQuizTrendOnDoubleTap}
                 style={[
                   styles.trendRow,
                   {
@@ -1085,7 +1161,7 @@ export function DashboardScreen({
                     {percent}%
                   </Text>
                 </View>
-              </View>
+              </Pressable>
             );
             })}
             {analytics.quizHistory.length > recentQuizzes.length ? (

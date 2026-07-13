@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { FlatList, Image, Pressable, ScrollView, Text, View } from 'react-native';
 import { COLORS } from '../constants/theme';
 import type { AnalyticsData, LegalPage, QuizAnswer, QuizProgress, QuizQuestion, ReminderSettings, SortMode, Word } from '../types';
@@ -42,6 +42,8 @@ export function HomeScreen({
 }) {
   const [achievementCarouselWidth, setAchievementCarouselWidth] = useState(0);
   const [showAllReviewWords, setShowAllReviewWords] = useState(false);
+  const lastReviewWordTapAt = useRef(0);
+  const reviewWordTapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mastery = words.map((word) => getWordMastery(word, analytics));
   const overallMastery = words.length
     ? Math.round(mastery.reduce((total, score) => total + score, 0) / words.length)
@@ -89,6 +91,40 @@ export function HomeScreen({
     todayQuizzes > 0 ? 'Practice another quiz' : 'Start daily quiz';
   const reviewWords = sortWordsForReview(words, analytics);
   const nextWords = showAllReviewWords ? reviewWords : reviewWords.slice(0, 3);
+
+  useEffect(
+    () => () => {
+      if (reviewWordTapTimer.current) {
+        clearTimeout(reviewWordTapTimer.current);
+      }
+    },
+    [],
+  );
+
+  function handleReviewWordPress(wordId: string) {
+    if (!showAllReviewWords) {
+      onReviewWord(wordId);
+      return;
+    }
+
+    const tappedAt = Date.now();
+    if (tappedAt - lastReviewWordTapAt.current < 340) {
+      if (reviewWordTapTimer.current) {
+        clearTimeout(reviewWordTapTimer.current);
+      }
+      reviewWordTapTimer.current = null;
+      lastReviewWordTapAt.current = 0;
+      setShowAllReviewWords(false);
+      return;
+    }
+
+    lastReviewWordTapAt.current = tappedAt;
+    reviewWordTapTimer.current = setTimeout(() => {
+      lastReviewWordTapAt.current = 0;
+      reviewWordTapTimer.current = null;
+      onReviewWord(wordId);
+    }, 340);
+  }
 
   return (
     <View style={styles.homeScreenShell}>
@@ -371,10 +407,15 @@ export function HomeScreen({
               </Pressable>
             )}
           </View>
+          {showAllReviewWords ? (
+            <Text style={styles.expandedListHint}>
+              Double-tap any word to show fewer
+            </Text>
+          ) : null}
           {nextWords.map((word) => (
             <Pressable
               key={word.id}
-              onPress={() => onReviewWord(word.id)}
+              onPress={() => handleReviewWordPress(word.id)}
               style={({ pressed }) => [
                 styles.nextWordRow,
                 pressed && styles.pressed,
