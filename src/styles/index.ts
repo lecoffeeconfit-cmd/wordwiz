@@ -558,19 +558,6 @@ export const styles = StyleSheet.create({
     borderRadius: 4,
     backgroundColor: COLORS.teal,
   },
-  progressShine: {
-    position: 'absolute',
-    top: 0,
-    right: 0,
-    bottom: 0,
-    width: '42%',
-    borderRadius: 999,
-    backgroundColor: 'rgba(255,255,255,0.86)',
-  },
-  progressShineComplete: {
-    width: '68%',
-    backgroundColor: 'rgba(255,255,255,0.96)',
-  },
   homeStartButton: {
     position: 'absolute',
     right: 17,
@@ -2000,6 +1987,33 @@ export const styles = StyleSheet.create({
     lineHeight: 19,
     fontWeight: '600',
   },
+  typedAnswerArea: {
+    gap: 10,
+  },
+  typedAnswerInput: {
+    minHeight: 56,
+    paddingHorizontal: 16,
+    borderWidth: 1.5,
+    borderColor: '#DCD5F2',
+    borderRadius: 16,
+    color: COLORS.ink,
+    fontSize: 16,
+    fontWeight: '800',
+    backgroundColor: COLORS.white,
+  },
+  typedAnswerButton: {
+    minHeight: 48,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.purple,
+  },
+  typedAnswerButtonText: {
+    color: COLORS.white,
+    fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 0.6,
+  },
   feedbackBox: {
     marginVertical: 15,
     padding: 14,
@@ -2990,16 +3004,6 @@ export const styles = StyleSheet.create({
   },
   distributionMasteredSegment: {
     backgroundColor: COLORS.greenDark,
-  },
-  distributionShine: {
-    position: 'absolute',
-    top: 0,
-    bottom: 0,
-    left: '18%',
-    width: 12,
-    opacity: 0.35,
-    backgroundColor: COLORS.white,
-    transform: [{ skewX: '-18deg' }],
   },
   distributionSparkle: {
     position: 'absolute',

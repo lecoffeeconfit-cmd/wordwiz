@@ -46,7 +46,6 @@ import {
   saveCloudReminderSettings,
   saveCloudWord,
   saveCloudWords,
-  saveCloudWordReviews,
   scheduleDailyReminder,
   setSentryUser,
   trackEvent,
@@ -69,7 +68,8 @@ import type {
 import type { Provider } from '@supabase/supabase-js';
 import {
   addQuizAttempt,
-  applyQuizReviews,
+  applyFlashcardReview,
+  applyQuizMastery,
   buildQuizCompletion,
   buildWordFromInput,
   calculateStreakStats,
@@ -877,7 +877,6 @@ export default function AppContent() {
     durationSeconds: number,
   ) {
     const studiedAt = new Date().toISOString();
-    const reviewedWord = words.find((word) => word.id === wordId);
     const event = {
       id: createUuid(),
       wordId,
@@ -886,12 +885,16 @@ export default function AppContent() {
       remembered,
       durationSeconds,
     };
-
-    setWords((currentWords) =>
-      currentWords.map((word) =>
-        word.id === wordId ? { ...word, reviews: word.reviews + 1 } : word,
-      ),
+    const updatedWords = applyFlashcardReview(
+      words,
+      wordId,
+      remembered,
+      analytics,
+      new Date(studiedAt),
     );
+    const updatedWord = updatedWords.find((word) => word.id === wordId);
+
+    setWords(updatedWords);
     setAnalytics((currentAnalytics) => ({
       ...currentAnalytics,
       cardHistory: [
@@ -908,12 +911,11 @@ export default function AppContent() {
           event,
           getScreenContext('cards', 'record_card_review'),
         ),
-        reviewedWord
-          ? saveCloudWordReviews(
+        updatedWord
+          ? saveCloudWord(
               currentUser.id,
-              reviewedWord.id,
-              reviewedWord.reviews + 1,
-              getScreenContext('cards', 'increment_word_review'),
+              updatedWord,
+              getScreenContext('cards', 'update_flashcard_schedule'),
             )
           : Promise.resolve(),
       ])
@@ -947,23 +949,23 @@ export default function AppContent() {
     setQuizProgress((currentProgress) =>
       currentProgress?.date === progress.date ? currentProgress : progress,
     );
-    setWords((currentWords) => applyQuizReviews(currentWords, answers));
+    const updatedWords = applyQuizMastery(words, answers, analytics);
+    setWords(updatedWords);
     setAnalytics((currentAnalytics) => addQuizAttempt(currentAnalytics, attempt));
     trackEvent('quiz_completed', { score, total, durationSeconds });
 
     if (currentUser && cloudHydratedUserId.current === currentUser.id) {
       const reviewUpdates = answers
-        .map((answer) => words.find((word) => word.id === answer.wordId))
+        .map((answer) => updatedWords.find((word) => word.id === answer.wordId))
         .filter(
           (word): word is Word =>
             word !== undefined && !isStarterWordId(word.id),
         )
         .map((word) =>
-          saveCloudWordReviews(
+          saveCloudWord(
             currentUser.id,
-            word.id,
-            word.reviews + 1,
-            getScreenContext('quiz', 'increment_quiz_word_review'),
+            word,
+            getScreenContext('quiz', 'update_quiz_mastery'),
           ),
         );
 

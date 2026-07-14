@@ -1,4 +1,4 @@
-import type { QuizAttempt, QuizQuestion, QuizQuestionMode, Word } from '../types';
+import type { QuizAttempt, QuizQuestion, QuizQuestionDifficulty, QuizQuestionMode, Word } from '../types';
 import { FALLBACK_DEFINITIONS } from '../constants/data';
 
 const MAX_QUIZ_QUESTIONS = 10;
@@ -16,11 +16,14 @@ export function shuffle<T>(items: T[]) {
 export function buildQuiz(
   words: Word[],
   recentAttempts: QuizAttempt[] = [],
+  masteryByWordId: Record<string, number> = {},
 ): QuizQuestion[] {
   const quizWords = pickQuizWords(words, recentAttempts);
 
   return quizWords.map((word, index) => {
-    const mode = getQuestionMode(index, words.length);
+    const mode = getQuestionModeForMastery(
+      masteryByWordId[word.id] ?? word.reviews * 12,
+    );
 
     if (mode === 'definition-to-word') {
       return buildDefinitionToWordQuestion(word, words, index);
@@ -28,6 +31,10 @@ export function buildQuiz(
 
     if (mode === 'true-false') {
       return buildTrueFalseQuestion(word, words, index);
+    }
+
+    if (mode === 'typed-word') {
+      return buildTypedWordQuestion(word);
     }
 
     return buildWordToDefinitionQuestion(word, words, index);
@@ -49,13 +56,27 @@ function pickQuizWords(words: Word[], recentAttempts: QuizAttempt[]) {
   return shuffle(priorityWords).slice(0, MAX_QUIZ_QUESTIONS);
 }
 
-function getQuestionMode(index: number, wordCount: number): QuizQuestionMode {
-  const modes: QuizQuestionMode[] =
-    wordCount >= 3
-      ? ['word-to-definition', 'definition-to-word', 'true-false']
-      : ['word-to-definition', 'true-false'];
+/**
+ * Move from recognition to recall as a word becomes more familiar. New words
+ * show the word first, building words check comprehension, and strong words
+ * ask the learner to recall the word from its meaning.
+ */
+export function getQuestionModeForMastery(
+  masteryScore: number,
+): QuizQuestionMode {
+  if (masteryScore >= 85) return 'typed-word';
+  if (masteryScore >= 70) return 'definition-to-word';
+  if (masteryScore >= 25) return 'true-false';
+  return 'word-to-definition';
+}
 
-  return modes[index % modes.length];
+export function getQuestionDifficulty(
+  mode: QuizQuestionMode,
+): QuizQuestionDifficulty {
+  if (mode === 'true-false') return 'recognition';
+  if (mode === 'word-to-definition') return 'multiple-choice';
+  if (mode === 'definition-to-word') return 'fill-in-options';
+  return 'typed-recall';
 }
 
 function buildWordToDefinitionQuestion(
@@ -73,6 +94,7 @@ function buildWordToDefinitionQuestion(
     answer,
     options: shuffle([answer, ...distractors]),
     mode: 'word-to-definition',
+    difficulty: getQuestionDifficulty('word-to-definition'),
     helperText: 'Choose the closest meaning.',
     feedback: `"${word.term}" means ${answer.toLowerCase()}`,
   };
@@ -92,6 +114,7 @@ function buildDefinitionToWordQuestion(
     answer: word.term,
     options: shuffle([word.term, ...distractors]),
     mode: 'definition-to-word',
+    difficulty: getQuestionDifficulty('definition-to-word'),
     helperText: 'Pick the word that matches the meaning.',
     feedback: `The word is "${word.term}".`,
   };
@@ -113,8 +136,23 @@ function buildTrueFalseQuestion(
     answer: shouldBeTrue ? 'True' : 'False',
     options: ['True', 'False'],
     mode: 'true-false',
+    difficulty: getQuestionDifficulty('true-false'),
     helperText: 'Decide if the meaning matches the word.',
     feedback: `"${word.term}" means ${getMeaning(word).toLowerCase()}`,
+  };
+}
+
+function buildTypedWordQuestion(word: Word): QuizQuestion {
+  return {
+    word,
+    prompt: 'TYPE THE WORD',
+    displayText: getMeaning(word),
+    answer: word.term,
+    options: [],
+    mode: 'typed-word',
+    difficulty: getQuestionDifficulty('typed-word'),
+    helperText: 'Type the word that matches this meaning.',
+    feedback: `The word is "${word.term}".`,
   };
 }
 

@@ -4,7 +4,7 @@ import { FlatList, Image, Pressable, ScrollView, Text, View } from 'react-native
 import { COLORS } from '../constants/theme';
 import type { AnalyticsData, LegalPage, QuizAnswer, QuizProgress, QuizQuestion, ReminderSettings, SortMode, Word } from '../types';
 import { styles } from '../styles';
-import { buildAchievements, buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, getDayKey, getProgressColor, getProgressPaleColor, getProgressShineOpacity, getRecentDays, getStreakMessage, getStreakMilestone, getStreakWeek, getWordMastery, sortWordsForReview, shuffle } from '../utils';
+import { buildAchievements, buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, getDayKey, getProgressColor, getProgressPaleColor, getRecentDays, getStreakMessage, getStreakMilestone, getStreakWeek, getWordMastery, sortWordsForReview, shuffle } from '../utils';
 import { DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 
 export function getGreeting() {
@@ -242,15 +242,7 @@ export function HomeScreen({
                 backgroundColor: getProgressColor(overallMastery),
               },
             ]}
-          >
-            <View
-              style={[
-                styles.progressShine,
-                { opacity: getProgressShineOpacity(overallMastery) },
-                overallMastery >= 100 && styles.progressShineComplete,
-              ]}
-            />
-          </View>
+          />
         </View>
         <Pressable onPress={onStats} style={styles.homeStartButton}>
           <Text style={styles.homeStartButtonText}>Stats</Text>

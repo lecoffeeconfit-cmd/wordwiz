@@ -1,10 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useEffect, useMemo, useState } from 'react';
-import { FlatList, Pressable, ScrollView, Text, View } from 'react-native';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { AppState, FlatList, Pressable, ScrollView, Text, View } from 'react-native';
 import { COLORS } from '../constants/theme';
 import type { AnalyticsData, LegalPage, QuizAnswer, QuizProgress, QuizQuestion, ReminderSettings, SortMode, Word } from '../types';
 import { styles } from '../styles';
-import { buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, formatWordAddedDate, getCompleteFlashcardDefinition, getDayKey, getRecentDays, getStreakMessage, getStreakWeek, getWordMastery, getWordMasteryCategoryId, shuffle, sortWordsAlphabetically, WORD_MASTERY_CATEGORIES, type WordMasteryCategoryId } from '../utils';
+import { buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, formatWordAddedDate, getCompleteFlashcardDefinition, getDayKey, getRecentDays, getStreakMessage, getStreakWeek, getWordMastery, getWordMasteryCategoryForWord, shuffle, sortWordsAlphabetically, WORD_MASTERY_CATEGORIES, type WordMasteryCategoryId } from '../utils';
 import { DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, SpeakButton, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 
 export function CardsScreen({
@@ -26,7 +26,8 @@ export function CardsScreen({
 }) {
   const [cardIndex, setCardIndex] = useState(0);
   const [showAnswer, setShowAnswer] = useState(false);
-  const [cardStartedAt, setCardStartedAt] = useState(Date.now());
+  const cardActiveSince = useRef(Date.now());
+  const cardActiveElapsedMs = useRef(0);
   const [deckOrder, setDeckOrder] = useState<'alphabetical' | 'random'>(
     'alphabetical',
   );
@@ -37,7 +38,7 @@ export function CardsScreen({
     () =>
       words.map((word) => ({
         word,
-        categoryId: getWordMasteryCategoryId(getWordMastery(word, analytics)),
+        categoryId: getWordMasteryCategoryForWord(word, analytics).id,
       })),
     [analytics, words],
   );
@@ -85,6 +86,39 @@ export function CardsScreen({
     current && cardDefinition !== current.definition.trim(),
   );
 
+  function resetCardTimer() {
+    cardActiveElapsedMs.current = 0;
+    cardActiveSince.current = Date.now();
+  }
+
+  function getActiveCardDurationSeconds() {
+    const activeSegment = cardActiveSince.current
+      ? Date.now() - cardActiveSince.current
+      : 0;
+    return Math.max(
+      1,
+      Math.min(120, Math.round((cardActiveElapsedMs.current + activeSegment) / 1000)),
+    );
+  }
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        if (!cardActiveSince.current) {
+          cardActiveSince.current = Date.now();
+        }
+        return;
+      }
+
+      if (cardActiveSince.current) {
+        cardActiveElapsedMs.current += Date.now() - cardActiveSince.current;
+        cardActiveSince.current = 0;
+      }
+    });
+
+    return () => subscription.remove();
+  }, []);
+
   useEffect(() => {
     const selectedIndex =
       deckOrder === 'alphabetical' && initialWordId
@@ -93,7 +127,7 @@ export function CardsScreen({
 
     setCardIndex(Math.max(selectedIndex, 0));
     setShowAnswer(false);
-    setCardStartedAt(Date.now());
+    resetCardTimer();
   }, [
     deckOrder,
     initialWordId,
@@ -167,14 +201,11 @@ export function CardsScreen({
 
   function nextCard(remembered: boolean) {
     if (!current) return;
-    const durationSeconds = Math.max(
-      1,
-      Math.min(120, Math.round((Date.now() - cardStartedAt) / 1000)),
-    );
+    const durationSeconds = getActiveCardDurationSeconds();
     onReview(current.id, remembered, durationSeconds);
     setShowAnswer(false);
     setCardIndex((index) => (index + 1) % studyWords.length);
-    setCardStartedAt(Date.now());
+    resetCardTimer();
   }
 
   function browseCard(direction: 'previous' | 'next') {
@@ -183,7 +214,7 @@ export function CardsScreen({
       const nextIndex = direction === 'next' ? index + 1 : index - 1;
       return (nextIndex + studyWords.length) % studyWords.length;
     });
-    setCardStartedAt(Date.now());
+    resetCardTimer();
   }
 
   if (words.length === 0) {
@@ -511,7 +542,7 @@ export function CardsScreen({
           >
             <Ionicons name="refresh" size={21} color={COLORS.red} />
             <Text style={[styles.answerButtonText, { color: COLORS.red }]}>
-              AGAIN
+              STILL LEARNING
             </Text>
           </Pressable>
           <Pressable
@@ -524,7 +555,7 @@ export function CardsScreen({
           >
             <Ionicons name="checkmark-circle" size={22} color={COLORS.white} />
             <Text style={[styles.answerButtonText, { color: COLORS.white }]}>
-              GOT IT
+              I KNEW IT
             </Text>
           </Pressable>
         </View>

@@ -15,9 +15,13 @@ create table if not exists public.words (
   common_words text[] not null default '{}',
   basic_info text,
   reviews integer not null default 0,
+  mastery_data jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table public.words
+  add column if not exists mastery_data jsonb not null default '{}'::jsonb;
 
 create table if not exists public.quiz_attempts (
   id uuid primary key default gen_random_uuid(),

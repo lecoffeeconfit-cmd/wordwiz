@@ -648,7 +648,18 @@ test('quiz builder creates answer options for up to ten words', () => {
     makeWord('5', 'Echo', 'Fifth'),
     makeWord('6', 'Foxtrot', 'Sixth'),
   ];
-  const questions = quiz.buildQuiz(words);
+  const questions = quiz.buildQuiz(
+    words,
+    [],
+    {
+      '1': 0,
+      '2': 0,
+      '3': 45,
+      '4': 45,
+      '5': 75,
+      '6': 75,
+    },
+  );
 
   assert.equal(questions.length, 6);
   assert.ok(
@@ -664,6 +675,194 @@ test('quiz builder creates answer options for up to ten words', () => {
     assert.ok(question.displayText);
     assert.ok(question.helperText);
   });
+});
+
+test('quiz questions become more demanding as word mastery grows', () => {
+  assert.equal(quiz.getQuestionModeForMastery(0), 'word-to-definition');
+  assert.equal(quiz.getQuestionModeForMastery(24), 'word-to-definition');
+  assert.equal(quiz.getQuestionModeForMastery(25), 'true-false');
+  assert.equal(quiz.getQuestionModeForMastery(69), 'true-false');
+  assert.equal(quiz.getQuestionModeForMastery(70), 'definition-to-word');
+  assert.equal(quiz.getQuestionModeForMastery(85), 'typed-word');
+});
+
+test('durable mastery needs repeated, delayed quiz evidence', () => {
+  const analytics = { cardHistory: [], quizHistory: [] };
+  let word = makeWord('mastery-1', 'Durable', 'Able to last.', 0);
+
+  word = learning.applyQuizMastery(
+    [word],
+    [{
+      wordId: word.id,
+      correct: true,
+      difficulty: 'typed-recall',
+      answeredAt: '2026-01-01T10:00:00.000Z',
+    }],
+    analytics,
+  )[0];
+  assert.equal(word.mastery.masteryPercent, 10);
+  assert.equal(learning.isWordMastered(word.mastery), false);
+
+  word = learning.applyQuizMastery(
+    [word],
+    [{ wordId: word.id, correct: true, difficulty: 'typed-recall', answeredAt: '2026-01-01T10:10:00.000Z' }],
+    analytics,
+  )[0];
+  word = learning.applyQuizMastery(
+    [word],
+    [{ wordId: word.id, correct: true, difficulty: 'typed-recall', answeredAt: '2026-01-01T10:20:00.000Z' }],
+    analytics,
+  )[0];
+  assert.equal(word.mastery.masteryPercent, 21);
+});
+
+test('delayed correct recall earns a retention bonus while mistakes reduce mastery', () => {
+  const analytics = { cardHistory: [], quizHistory: [] };
+  const word = {
+    ...makeWord('mastery-2', 'Retain', 'Keep something.', 0),
+    mastery: {
+      masteryPercent: 20,
+      totalCorrect: 1,
+      totalIncorrect: 0,
+      correctStreak: 1,
+      lastReviewedAt: '2026-01-01T10:00:00.000Z',
+      lastCorrectAt: '2026-01-01T10:00:00.000Z',
+      successfulReviewDays: ['2026-01-01'],
+      recentResults: [{ correct: true, difficulty: 'multiple-choice', answeredAt: '2026-01-01T10:00:00.000Z' }],
+    },
+  };
+  const retained = learning.applyQuizMastery(
+    [word],
+    [{ wordId: word.id, correct: true, difficulty: 'multiple-choice', answeredAt: '2026-01-04T10:00:00.000Z' }],
+    analytics,
+  )[0];
+  assert.equal(retained.mastery.masteryPercent, 30);
+
+  const missed = learning.applyQuizMastery(
+    [retained],
+    [{ wordId: word.id, correct: false, difficulty: 'typed-recall', answeredAt: '2026-01-04T11:00:00.000Z' }],
+    analytics,
+  )[0];
+  assert.equal(missed.mastery.masteryPercent, 18);
+  assert.equal(missed.mastery.correctStreak, 0);
+  assert.ok(missed.mastery.nextReviewAt.startsWith('2026-01-04T15:'));
+});
+
+test('mastery stays bounded and percentage alone cannot mark a word mastered', () => {
+  const incomplete = {
+    masteryPercent: 100,
+    totalCorrect: 1,
+    totalIncorrect: 0,
+    correctStreak: 1,
+    successfulReviewDays: ['2026-01-01'],
+    recentResults: [{ correct: true, difficulty: 'typed-recall', answeredAt: '2026-01-01T10:00:00.000Z' }],
+  };
+  assert.equal(learning.isWordMastered(incomplete), false);
+
+  const fullyProgressed = {
+    ...makeWord('proficient-display', 'Proficient', 'Highly capable.', 0),
+    mastery: incomplete,
+  };
+  assert.equal(
+    learning.getWordMasteryCategoryForWord(fullyProgressed, {
+      cardHistory: [],
+      quizHistory: [],
+    }).id,
+    'master',
+  );
+
+  const analytics = { cardHistory: [], quizHistory: [] };
+  const word = { ...makeWord('mastery-3', 'Bounded', 'Limited.', 0), mastery: incomplete };
+  const missed = learning.applyQuizMastery(
+    [word],
+    [{ wordId: word.id, correct: false, difficulty: 'typed-recall', answeredAt: '2026-01-01T11:00:00.000Z' }],
+    analytics,
+  )[0];
+  assert.equal(missed.mastery.masteryPercent, 88);
+
+  const zeroed = learning.applyQuizMastery(
+    [{ ...missed, mastery: { ...missed.mastery, masteryPercent: 2 } }],
+    [{ wordId: word.id, correct: false, difficulty: 'typed-recall', answeredAt: '2026-01-01T12:00:00.000Z' }],
+    analytics,
+  )[0];
+  assert.equal(zeroed.mastery.masteryPercent, 0);
+});
+
+test('mastery requires correct reviews on three separate days and flashcards do not raise it', () => {
+  const analytics = { cardHistory: [], quizHistory: [] };
+  const word = {
+    ...makeWord('mastery-4', 'Separate', 'Distinct.', 0),
+    mastery: {
+      masteryPercent: 85,
+      totalCorrect: 6,
+      totalIncorrect: 0,
+      correctStreak: 6,
+      successfulReviewDays: ['2026-01-01', '2026-01-02'],
+      highestQuestionDifficultyCompleted: 'typed-recall',
+      recentResults: [{ correct: true, difficulty: 'typed-recall', answeredAt: '2026-01-02T10:00:00.000Z' }],
+    },
+  };
+  assert.equal(learning.isWordMastered(word.mastery), false);
+  const studied = learning.applyFlashcardReview(
+    [word],
+    word.id,
+    true,
+    analytics,
+    new Date('2026-01-02T12:00:00.000Z'),
+  )[0];
+  assert.equal(studied.mastery.masteryPercent, 85);
+  assert.equal(learning.isWordMastered(studied.mastery), false);
+  const stillLearning = learning.applyFlashcardReview(
+    [word],
+    word.id,
+    false,
+    analytics,
+    new Date('2026-01-02T12:00:00.000Z'),
+  )[0];
+  assert.ok(stillLearning.mastery.nextReviewAt < studied.mastery.nextReviewAt);
+
+  const legacy = makeWord('legacy-mastery', 'Legacy', 'Existing progress.', 5);
+  const migrated = learning.getWordMasteryProgress(legacy, analytics);
+  assert.equal(migrated.masteryPercent, 60);
+  assert.equal(learning.isWordMastered(migrated), false);
+});
+
+test('mastery keeps only the ten most recent quiz results', () => {
+  const analytics = { cardHistory: [], quizHistory: [] };
+  let word = makeWord('recent-results', 'Recent', 'Latest.', 0);
+
+  for (let day = 1; day <= 11; day += 1) {
+    word = learning.applyQuizMastery(
+      [word],
+      [{
+        wordId: word.id,
+        correct: true,
+        difficulty: 'multiple-choice',
+        answeredAt: `2026-01-${String(day).padStart(2, '0')}T10:00:00.000Z`,
+      }],
+      analytics,
+    )[0];
+  }
+
+  assert.equal(word.mastery.recentResults.length, 10);
+  assert.equal(word.mastery.recentResults[0].answeredAt, '2026-01-02T10:00:00.000Z');
+});
+
+test('harder quiz evidence earns more mastery than recognition', () => {
+  const analytics = { cardHistory: [], quizHistory: [] };
+  const recognition = learning.applyQuizMastery(
+    [makeWord('easy-evidence', 'Easy', 'Simple.', 0)],
+    [{ wordId: 'easy-evidence', correct: true, difficulty: 'recognition', answeredAt: '2026-01-01T10:00:00.000Z' }],
+    analytics,
+  )[0];
+  const recall = learning.applyQuizMastery(
+    [makeWord('hard-evidence', 'Recall', 'Remember.', 0)],
+    [{ wordId: 'hard-evidence', correct: true, difficulty: 'typed-recall', answeredAt: '2026-01-01T10:00:00.000Z' }],
+    analytics,
+  )[0];
+
+  assert.equal(recognition.mastery.masteryPercent, 3);
+  assert.equal(recall.mastery.masteryPercent, 10);
 });
 
 test('quiz builder avoids recently quizzed words when enough alternatives exist', () => {
@@ -899,16 +1098,6 @@ test('progress colors move through stronger learning states', () => {
   assert.equal(learning.getProgressColor(40), '#8E78FF');
   assert.equal(learning.getProgressColor(80), '#39C69A');
   assert.equal(learning.getProgressColor(100), '#F4B400');
-});
-
-test('progress shine appears halfway and peaks at complete', () => {
-  assert.equal(learning.getProgressShineOpacity(49), 0);
-  assert.ok(learning.getProgressShineOpacity(50) > 0);
-  assert.ok(
-    learning.getProgressShineOpacity(80) >
-      learning.getProgressShineOpacity(50),
-  );
-  assert.equal(learning.getProgressShineOpacity(100), 0.58);
 });
 
 test('hero progress colors stay visible on the blue dashboard card', () => {

@@ -1,10 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useMemo, useState } from 'react';
-import { FlatList, Pressable, ScrollView, Text, View } from 'react-native';
+import { FlatList, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { COLORS } from '../constants/theme';
 import type { AnalyticsData, LegalPage, QuizAnswer, QuizProgress, QuizQuestion, ReminderSettings, SortMode, Word } from '../types';
 import { styles } from '../styles';
-import { buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, getDayKey, getRecentDays, getStreakMessage, getStreakWeek, getWordMastery, getWordMasteryCategoryId, shuffle, WORD_MASTERY_CATEGORIES, type WordMasteryCategoryId } from '../utils';
+import { buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, getDayKey, getRecentDays, getStreakMessage, getStreakWeek, getWordMastery, getWordMasteryCategoryForWord, shuffle, WORD_MASTERY_CATEGORIES, type WordMasteryCategoryId } from '../utils';
 import { DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 import { reportError, trackEvent } from '../services';
 
@@ -29,6 +29,7 @@ export function QuizScreen({
   const [quiz, setQuiz] = useState<QuizQuestion[]>([]);
   const [questionIndex, setQuestionIndex] = useState(0);
   const [selected, setSelected] = useState<string | null>(null);
+  const [typedResponse, setTypedResponse] = useState('');
   const [score, setScore] = useState(0);
   const [finishedScore, setFinishedScore] = useState<number | null>(null);
   const [answers, setAnswers] = useState<QuizAnswer[]>([]);
@@ -40,7 +41,7 @@ export function QuizScreen({
     () =>
       words.map((word) => ({
         word,
-        categoryId: getWordMasteryCategoryId(getWordMastery(word, analytics)),
+        categoryId: getWordMasteryCategoryForWord(word, analytics).id,
       })),
     [analytics, words],
   );
@@ -137,9 +138,21 @@ export function QuizScreen({
       return;
     }
 
-    setQuiz(buildQuiz(filteredQuizWords, analytics.quizHistory));
+    setQuiz(
+      buildQuiz(
+        filteredQuizWords,
+        analytics.quizHistory,
+        Object.fromEntries(
+          filteredQuizWords.map((word) => [
+            word.id,
+            getWordMastery(word, analytics),
+          ]),
+        ),
+      ),
+    );
     setQuestionIndex(0);
     setSelected(null);
+    setTypedResponse('');
     setScore(0);
     setFinishedScore(null);
     setAnswers([]);
@@ -155,12 +168,22 @@ export function QuizScreen({
     if (selected) return;
     const question = quiz[questionIndex];
     setSelected(option);
-    const correct = option === question.answer;
+    const correct = isQuizAnswerCorrect(question.answer, option, question.mode);
     if (correct) setScore((current) => current + 1);
     setAnswers((current) => [
       ...current,
-      { wordId: question.word.id, correct },
+      {
+        wordId: question.word.id,
+        correct,
+        difficulty: question.difficulty,
+        answeredAt: new Date().toISOString(),
+      },
     ]);
+  }
+
+  function submitTypedAnswer() {
+    if (!typedResponse.trim()) return;
+    chooseAnswer(typedResponse.trim());
   }
 
   async function nextQuestion() {
@@ -171,7 +194,9 @@ export function QuizScreen({
     const question = quiz[questionIndex];
     const currentAnswer = {
       wordId: question.word.id,
-      correct: selected === question.answer,
+      correct: isQuizAnswerCorrect(question.answer, selected, question.mode),
+      difficulty: question.difficulty,
+      answeredAt: new Date().toISOString(),
     };
     const completedAnswers = answers.some(
       (answer) => answer.wordId === currentAnswer.wordId,
@@ -194,6 +219,7 @@ export function QuizScreen({
     }
     setQuestionIndex((index) => index + 1);
     setSelected(null);
+    setTypedResponse('');
   }
 
   if (progress && quiz.length === 0) {
@@ -369,6 +395,9 @@ export function QuizScreen({
 
   const question = quiz[questionIndex];
   const questionsLeft = Math.max(0, quiz.length - questionIndex - 1);
+  const selectedIsCorrect = selected
+    ? isQuizAnswerCorrect(question.answer, selected, question.mode)
+    : false;
   return (
     <ScrollView
       style={styles.screen}
@@ -423,6 +452,35 @@ export function QuizScreen({
         </View>
       </View>
 
+      {question.mode === 'typed-word' ? (
+        <View style={styles.typedAnswerArea}>
+          <TextInput
+            autoCapitalize="none"
+            autoCorrect={false}
+            editable={!selected}
+            onChangeText={setTypedResponse}
+            onSubmitEditing={submitTypedAnswer}
+            placeholder="Type the word"
+            placeholderTextColor={COLORS.muted}
+            returnKeyType="done"
+            style={styles.typedAnswerInput}
+            value={typedResponse}
+          />
+          {!selected ? (
+            <Pressable
+              disabled={!typedResponse.trim()}
+              onPress={submitTypedAnswer}
+              style={({ pressed }) => [
+                styles.typedAnswerButton,
+                !typedResponse.trim() && styles.primaryButtonDisabled,
+                pressed && typedResponse.trim() && styles.pressed,
+              ]}
+            >
+              <Text style={styles.typedAnswerButtonText}>CHECK ANSWER</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      ) : (
       <View style={styles.optionsList}>
         {question.options.map((option, index) => {
           const isAnswer = option === question.answer;
@@ -464,33 +522,34 @@ export function QuizScreen({
           );
         })}
       </View>
+      )}
 
       {selected && (
         <View
           style={[
             styles.feedbackBox,
-            selected === question.answer
+            selectedIsCorrect
               ? styles.feedbackCorrect
               : styles.feedbackWrong,
           ]}
         >
           <Ionicons
             name={
-              selected === question.answer
+              selectedIsCorrect
                 ? 'checkmark-circle'
                 : 'heart-outline'
             }
             size={23}
             color={
-              selected === question.answer ? COLORS.greenDark : COLORS.red
+              selectedIsCorrect ? COLORS.greenDark : COLORS.red
             }
           />
           <View style={styles.feedbackCopy}>
             <Text style={styles.feedbackTitle}>
-              {selected === question.answer ? 'Nicely done!' : 'Keep learning!'}
+              {selectedIsCorrect ? 'Nicely done!' : 'Keep learning!'}
             </Text>
             <Text style={styles.feedbackText}>
-              {selected === question.answer
+              {selectedIsCorrect
                 ? 'You matched it perfectly.'
                 : question.feedback}
             </Text>
@@ -514,4 +573,14 @@ export function QuizScreen({
       </Pressable>
     </ScrollView>
   );
+}
+
+function isQuizAnswerCorrect(
+  answer: string,
+  response: string | null,
+  mode: QuizQuestion['mode'],
+) {
+  if (response === null) return false;
+  if (mode !== 'typed-word') return response === answer;
+  return response.trim().toLocaleLowerCase() === answer.trim().toLocaleLowerCase();
 }

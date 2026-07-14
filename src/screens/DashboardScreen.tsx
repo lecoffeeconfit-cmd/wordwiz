@@ -5,7 +5,7 @@ import { COLORS } from '../constants/theme';
 import type { AnalyticsData, LegalPage, QuizAnswer, QuizProgress, QuizQuestion, ReminderSettings, SortMode, Word } from '../types';
 import type { AuthUser } from '../types';
 import { styles } from '../styles';
-import { MASTERY_LEVELS, buildAchievements, buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, getDayKey, getHeroProgressColor, getMasteryLevel, getMasteryLevelProgress, getNextMasteryLevel, getProgressColor, getProgressPaleColor, getProgressShineOpacity, getQuizAttemptKind, getRecentDays, getStreakMessage, getStreakMilestone, getStreakWeek, getWordMastery, getWordMasteryCategory, shuffle } from '../utils';
+import { MASTERY_LEVELS, buildAchievements, buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, getDayKey, getHeroProgressColor, getMasteryLevel, getMasteryLevelProgress, getNextMasteryLevel, getProgressColor, getProgressPaleColor, getQuizAttemptKind, getRecentDays, getStreakMessage, getStreakMilestone, getStreakWeek, getWordMastery, getWordMasteryCategory, getWordMasteryCategoryForWord, shuffle } from '../utils';
 import { DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 import { LessonProgressRing } from '../components/dashboard/LessonProgressRing';
 
@@ -72,6 +72,7 @@ export function DashboardScreen({
     .map((word) => ({
       word,
       score: getWordMastery(word, analytics),
+      category: getWordMasteryCategoryForWord(word, analytics),
     }))
     .sort((first, second) => second.score - first.score);
   const overallMastery = words.length
@@ -85,13 +86,9 @@ export function DashboardScreen({
   const masteryRingSegments = buildMasteryRingSegments(
     words.length ? overallMastery : 0,
   );
-  const masteredWords = mastery.filter((item) => item.score >= 100).length;
-  const strongWords = mastery.filter(
-    (item) => item.score >= 80 && item.score < 100,
-  ).length;
-  const buildingWords = mastery.filter(
-    (item) => item.score >= 40 && item.score < 80,
-  ).length;
+  const masteredWords = mastery.filter((item) => item.category.id === 'master').length;
+  const strongWords = mastery.filter((item) => item.category.id === 'strong').length;
+  const buildingWords = mastery.filter((item) => item.category.id === 'building').length;
   const learningWords = Math.max(
     0,
     words.length - masteredWords - strongWords - buildingWords,
@@ -265,15 +262,7 @@ export function DashboardScreen({
                   backgroundColor: getHeroProgressColor(masteryLevelProgress),
                 },
               ]}
-            >
-              <View
-                style={[
-                  styles.progressShine,
-                  { opacity: getProgressShineOpacity(masteryLevelProgress) },
-                  masteryLevelProgress >= 100 && styles.progressShineComplete,
-                ]}
-              />
-            </View>
+            />
           </View>
           <Text style={styles.heroLevelNext}>
             {nextMasteryLevel
@@ -551,20 +540,6 @@ export function DashboardScreen({
                           ]}
                         />
                       ) : null}
-                      {isActive ? (
-                        <View
-                          style={[
-                            styles.progressShine,
-                            {
-                              opacity: getProgressShineOpacity(
-                                (day.activityScore / maxActivity) * 100,
-                              ),
-                            },
-                            day.activityScore === maxActivity &&
-                              styles.progressShineComplete,
-                          ]}
-                        />
-                      ) : null}
                     </View>
                   </View>
                   <Text
@@ -624,20 +599,6 @@ export function DashboardScreen({
                           style={[
                             styles.barQuizSegment,
                             { height: `${quizShare}%` },
-                          ]}
-                        />
-                      ) : null}
-                      {isActive ? (
-                        <View
-                          style={[
-                            styles.progressShine,
-                            {
-                              opacity: getProgressShineOpacity(
-                                (day.activityScore / maxActivity) * 100,
-                              ),
-                            },
-                            day.activityScore === maxActivity &&
-                              styles.progressShineComplete,
                           ]}
                         />
                       ) : null}
@@ -751,7 +712,6 @@ export function DashboardScreen({
                       },
                     ]}
                   >
-                    <View style={styles.distributionShine} />
                     <Ionicons
                       name="sparkles"
                       size={10}
@@ -901,16 +861,8 @@ export function DashboardScreen({
                         width: `${Math.max(percent, achievement.progress ? 8 : 0)}%`,
                         backgroundColor: fillColor,
                       },
-                    ]}
-                  >
-                    <View
-                      style={[
-                        styles.progressShine,
-                        { opacity: getProgressShineOpacity(percent) },
-                        achievement.unlocked && styles.progressShineComplete,
-                      ]}
-                    />
-                  </View>
+                  ]}
+                />
                 </View>
               </Pressable>
             );
@@ -933,8 +885,8 @@ export function DashboardScreen({
               </Text>
             ) : null}
             {(masteryExpanded ? mastery : mastery.slice(0, 5)).map((item) => {
-              const wordCategory = getWordMasteryCategory(item.score);
-              const isMasterWord = item.score >= 100;
+              const wordCategory = item.category;
+              const isMasterWord = wordCategory.id === 'master';
 
               return (
                 <Pressable
@@ -1007,15 +959,7 @@ export function DashboardScreen({
                           backgroundColor: wordCategory.color,
                         },
                       ]}
-                    >
-                      <View
-                        style={[
-                          styles.progressShine,
-                          { opacity: getProgressShineOpacity(item.score) },
-                          isMasterWord && styles.progressShineComplete,
-                        ]}
-                      />
-                    </View>
+                    />
                   </View>
                 </Pressable>
               );

@@ -15,6 +15,32 @@ export type StoredUser = AuthUser & {
   password?: string;
 };
 
+export type QuizQuestionDifficulty =
+  | 'recognition'
+  | 'multiple-choice'
+  | 'fill-in-options'
+  | 'typed-recall';
+
+export type MasteryResult = {
+  correct: boolean;
+  difficulty: QuizQuestionDifficulty;
+  answeredAt: string;
+};
+
+export type WordMasteryProgress = {
+  masteryPercent: number;
+  totalCorrect: number;
+  totalIncorrect: number;
+  correctStreak: number;
+  lastReviewedAt?: string;
+  lastCorrectAt?: string;
+  firstLearnedAt?: string;
+  successfulReviewDays: string[];
+  highestQuestionDifficultyCompleted?: QuizQuestionDifficulty;
+  recentResults: MasteryResult[];
+  nextReviewAt?: string;
+};
+
 export type Word = {
   id: string;
   term: string;
@@ -40,6 +66,7 @@ export type Word = {
   wordnik_url?: string;
   createdAt: string;
   reviews: number;
+  mastery?: WordMasteryProgress;
 };
 
 export type WordnikDefinition = {
@@ -112,6 +139,8 @@ export type QuizProgress = {
 export type QuizAnswer = {
   wordId: string;
   correct: boolean;
+  difficulty?: QuizQuestionDifficulty;
+  answeredAt?: string;
 };
 
 export type QuizAttempt = QuizProgress & {
@@ -124,7 +153,8 @@ export type QuizAttempt = QuizProgress & {
 export type QuizQuestionMode =
   | 'word-to-definition'
   | 'definition-to-word'
-  | 'true-false';
+  | 'true-false'
+  | 'typed-word';
 
 export type QuizQuestion = {
   word: Word;
@@ -133,6 +163,7 @@ export type QuizQuestion = {
   answer: string;
   options: string[];
   mode: QuizQuestionMode;
+  difficulty: QuizQuestionDifficulty;
   helperText: string;
   feedback: string;
 };

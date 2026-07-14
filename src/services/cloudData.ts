@@ -24,6 +24,7 @@ type WordRow = {
   common_words: string[] | null;
   basic_info: string | null;
   reviews: number;
+  mastery_data: unknown;
   created_at: string;
 };
 
@@ -76,8 +77,10 @@ const WORD_COLUMNS = [
   'common_words',
   'basic_info',
   'reviews',
+  'mastery_data',
   'created_at',
 ].join(',');
+const LEGACY_WORD_COLUMNS = WORD_COLUMNS.replace('mastery_data,', '');
 
 const QUIZ_ATTEMPT_COLUMNS = [
   'id',
@@ -109,7 +112,7 @@ export async function fetchUserLearningData(
   userId: string,
   context?: CloudRequestContext,
 ): Promise<UserLearningData> {
-  const [wordsResult, quizResult, reviewsResult, reminderResult] =
+  let [wordsResult, quizResult, reviewsResult, reminderResult] =
     await Promise.all([
       supabase
         .from('words')
@@ -135,6 +138,15 @@ export async function fetchUserLearningData(
         .eq('user_id', userId)
         .maybeSingle(),
     ]);
+
+  if (isMissingMasteryDataColumn(wordsResult.error)) {
+    wordsResult = await supabase
+      .from('words')
+      .select(LEGACY_WORD_COLUMNS)
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(MAX_CLOUD_WORDS);
+  }
 
   const firstError =
     getQueryError('words', wordsResult.error) ??
@@ -222,10 +234,18 @@ export async function saveCloudWord(
   context?: CloudRequestContext,
 ) {
   const payload = toWordPayload(userId, word);
-  const query = isUuid(word.id)
-    ? supabase.from('words').upsert({ ...payload, id: word.id })
-    : supabase.from('words').insert(payload);
-  const { error } = await query;
+  const hasCloudId = isUuid(word.id);
+  const cloudPayload = hasCloudId ? { ...payload, id: word.id } : payload;
+  let { error } = hasCloudId
+    ? await supabase.from('words').upsert(cloudPayload)
+    : await supabase.from('words').insert(cloudPayload);
+
+  if (isMissingMasteryDataColumn(error)) {
+    const legacyPayload = omitMasteryData(cloudPayload);
+    ({ error } = hasCloudId
+      ? await supabase.from('words').upsert(legacyPayload)
+      : await supabase.from('words').insert(legacyPayload));
+  }
 
   if (error) {
     throw getQueryError('words', error);
@@ -249,7 +269,13 @@ export async function saveCloudWords(
     ...toWordPayload(userId, word),
     ...(isUuid(word.id) ? { id: word.id } : {}),
   }));
-  const { error } = await supabase.from('words').upsert(payloads);
+  let { error } = await supabase.from('words').upsert(payloads);
+
+  if (isMissingMasteryDataColumn(error)) {
+    ({ error } = await supabase
+      .from('words')
+      .upsert(payloads.map(omitMasteryData)));
+  }
 
   if (error) {
     throw getQueryError('words', error);
@@ -463,6 +489,7 @@ function mapWordRow(row: WordRow): Word {
     basicInfo: row.basic_info ?? undefined,
     createdAt: row.created_at,
     reviews: row.reviews,
+    mastery: parseMasteryProgress(row.mastery_data),
   };
 }
 
@@ -512,9 +539,32 @@ function toWordPayload(userId: string, word: Word) {
     common_words: word.commonWords ?? [],
     basic_info: word.basicInfo ?? null,
     reviews: word.reviews,
+    mastery_data: word.mastery ?? {},
     created_at: word.createdAt,
     updated_at: new Date().toISOString(),
   };
+}
+
+function omitMasteryData<T extends { mastery_data?: unknown }>(payload: T) {
+  const { mastery_data: _masteryData, ...legacyPayload } = payload;
+  return legacyPayload;
+}
+
+function isMissingMasteryDataColumn(error: { message?: string } | null) {
+  return Boolean(error?.message?.toLowerCase().includes('mastery_data'));
+}
+
+function parseMasteryProgress(value: unknown): Word['mastery'] {
+  if (
+    !value ||
+    typeof value !== 'object' ||
+    Array.isArray(value) ||
+    Object.keys(value).length === 0
+  ) {
+    return undefined;
+  }
+
+  return value as Word['mastery'];
 }
 
 function parseQuizAnswers(value: unknown): QuizAnswer[] {
@@ -523,7 +573,7 @@ function parseQuizAnswers(value: unknown): QuizAnswer[] {
   }
 
   return value
-    .map((answer) => {
+    .map((answer): QuizAnswer | null => {
       if (
         typeof answer === 'object' &&
         answer !== null &&
@@ -532,9 +582,24 @@ function parseQuizAnswers(value: unknown): QuizAnswer[] {
         typeof answer.wordId === 'string' &&
         typeof answer.correct === 'boolean'
       ) {
+        const difficulty =
+          'difficulty' in answer &&
+          (answer.difficulty === 'recognition' ||
+            answer.difficulty === 'multiple-choice' ||
+            answer.difficulty === 'fill-in-options' ||
+            answer.difficulty === 'typed-recall')
+            ? answer.difficulty
+            : undefined;
+        const answeredAt =
+          'answeredAt' in answer && typeof answer.answeredAt === 'string'
+            ? answer.answeredAt
+            : undefined;
+
         return {
           wordId: answer.wordId,
           correct: answer.correct,
+          difficulty,
+          answeredAt,
         };
       }
 
