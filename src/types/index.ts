@@ -27,6 +27,8 @@ export type MasteryResult = {
   answeredAt: string;
 };
 
+export type ReviewRating = 'hard' | 'correct' | 'easy';
+
 export type WordMasteryProgress = {
   masteryPercent: number;
   totalCorrect: number;
@@ -39,6 +41,13 @@ export type WordMasteryProgress = {
   highestQuestionDifficultyCompleted?: QuizQuestionDifficulty;
   recentResults: MasteryResult[];
   nextReviewAt?: string;
+  reviewStage?: number;
+  successfulReviewCount?: number;
+  lapseCount?: number;
+  lastReviewResult?: 'wrong' | ReviewRating;
+  masteredAt?: string;
+  lastSuccessfulReviewAt?: string;
+  legacyMastered?: boolean;
 };
 
 export type Word = {
@@ -67,6 +76,8 @@ export type Word = {
   createdAt: string;
   reviews: number;
   mastery?: WordMasteryProgress;
+  isFlagged?: boolean;
+  flaggedAt?: string;
 };
 
 export type WordnikDefinition = {
@@ -141,6 +152,7 @@ export type QuizAnswer = {
   correct: boolean;
   difficulty?: QuizQuestionDifficulty;
   answeredAt?: string;
+  reviewRating?: ReviewRating;
 };
 
 export type QuizAttempt = QuizProgress & {

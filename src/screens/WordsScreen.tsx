@@ -23,6 +23,9 @@ export function WordsScreen({
   onAdd,
   onRemove,
   onStudy,
+  onStudyFlaggedCards,
+  onStudyFlaggedQuiz,
+  onToggleFlag,
   onSelectWord,
 }: {
   words: Word[];
@@ -31,19 +34,24 @@ export function WordsScreen({
   onAdd: () => void;
   onRemove: (word: Word) => void;
   onStudy: () => void;
+  onStudyFlaggedCards: () => void;
+  onStudyFlaggedQuiz: () => void;
+  onToggleFlag: (wordId: string) => void;
   onSelectWord: (word: Word) => void;
 }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearchFocused, setIsSearchFocused] = useState(false);
+  const [showFlaggedOnly, setShowFlaggedOnly] = useState(false);
   const listRef = useRef<FlatList<Word>>(null);
   const searchBoxY = useRef(0);
   const normalizedSearchQuery = searchQuery.trim().toLowerCase();
   const filteredWords = useMemo(() => {
-    if (!normalizedSearchQuery) {
-      return words;
-    }
+    const searchableWords = showFlaggedOnly
+      ? words.filter((word) => word.isFlagged)
+      : words;
+    if (!normalizedSearchQuery) return searchableWords;
 
-    return words.filter((word) =>
+    return searchableWords.filter((word) =>
       [
         word.term,
         word.definition,
@@ -59,7 +67,11 @@ export function WordsScreen({
         .toLowerCase()
         .includes(normalizedSearchQuery),
     );
-  }, [normalizedSearchQuery, words]);
+  }, [normalizedSearchQuery, showFlaggedOnly, words]);
+  const flaggedCount = useMemo(
+    () => words.filter((word) => word.isFlagged).length,
+    [words],
+  );
   const isSampleCollection =
     words.length > 0 &&
     words.every((word) =>
@@ -124,6 +136,52 @@ export function WordsScreen({
               )}
             </View>
 
+            <View style={styles.flaggedWordsCard}>
+              <View style={styles.flaggedWordsIcon}>
+                <Ionicons name="bookmark" size={20} color={COLORS.purpleDark} />
+              </View>
+              <View style={styles.flaggedWordsCopy}>
+                <Text style={styles.flaggedWordsTitle}>Flagged Words</Text>
+                <Text style={styles.flaggedWordsText}>
+                  {flaggedCount
+                    ? `${flaggedCount} saved for extra practice`
+                    : 'Flag words while studying to review them here.'}
+                </Text>
+              </View>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={showFlaggedOnly ? 'Show all words' : 'View flagged words'}
+                accessibilityState={{ selected: showFlaggedOnly }}
+                onPress={() => setShowFlaggedOnly((shown) => !shown)}
+                style={styles.flaggedWordsViewButton}
+              >
+                <Text style={styles.flaggedWordsViewButtonText}>
+                  {showFlaggedOnly ? 'ALL' : 'VIEW'}
+                </Text>
+              </Pressable>
+            </View>
+
+            {showFlaggedOnly && flaggedCount > 0 ? (
+              <View style={styles.flaggedWordsStudyRow}>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={onStudyFlaggedCards}
+                  style={styles.flaggedWordsStudyButton}
+                >
+                  <Ionicons name="albums-outline" size={15} color={COLORS.purpleDark} />
+                  <Text style={styles.flaggedWordsStudyButtonText}>CARDS</Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={onStudyFlaggedQuiz}
+                  style={styles.flaggedWordsStudyButton}
+                >
+                  <Ionicons name="help-circle-outline" size={15} color={COLORS.purpleDark} />
+                  <Text style={styles.flaggedWordsStudyButtonText}>QUIZ</Text>
+                </Pressable>
+              </View>
+            ) : null}
+
             <Pressable onPress={onAdd} style={styles.addButton}>
               <View style={styles.addIcon}>
                 <Ionicons name="add" size={25} color={COLORS.white} />
@@ -160,7 +218,9 @@ export function WordsScreen({
             ) : null}
 
             <View style={styles.listToolbar}>
-              <Text style={styles.sectionTitle}>YOUR WORDS</Text>
+              <Text style={styles.sectionTitle}>
+                {showFlaggedOnly ? 'FLAGGED WORDS' : 'YOUR WORDS'}
+              </Text>
               <View style={styles.segmentedControl}>
                 <SortButton
                   active={sortMode === 'alphabetical'}
@@ -222,12 +282,18 @@ export function WordsScreen({
               />
             </View>
             <Text style={styles.emptyTitle}>
-              {normalizedSearchQuery ? 'No words found' : 'Start your collection'}
+              {normalizedSearchQuery
+                ? 'No words found'
+                : showFlaggedOnly
+                  ? 'No flagged words yet'
+                  : 'Start your collection'}
             </Text>
             <Text style={styles.emptyText}>
               {normalizedSearchQuery
                 ? 'Try a different word, meaning, or synonym.'
-                : 'Add a word you heard, read, or wondered about.'}
+                : showFlaggedOnly
+                  ? 'Flag words while studying to review them here.'
+                  : 'Add a word you heard, read, or wondered about.'}
             </Text>
           </View>
         }
@@ -237,6 +303,7 @@ export function WordsScreen({
             index={index}
             onPress={onSelectWord}
             onRemove={onRemove}
+            onToggleFlag={onToggleFlag}
           />
         )}
       />

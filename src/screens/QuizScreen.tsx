@@ -2,22 +2,39 @@ import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useMemo, useState } from 'react';
 import { FlatList, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { COLORS } from '../constants/theme';
-import type { AnalyticsData, LegalPage, QuizAnswer, QuizProgress, QuizQuestion, ReminderSettings, SortMode, Word } from '../types';
+import type { AnalyticsData, LegalPage, QuizAnswer, QuizProgress, QuizQuestion, ReminderSettings, ReviewRating, SortMode, Word } from '../types';
 import { styles } from '../styles';
-import { buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, getDayKey, getRecentDays, getStreakMessage, getStreakWeek, getWordMastery, getWordMasteryCategoryForWord, shuffle, WORD_MASTERY_CATEGORIES, type WordMasteryCategoryId } from '../utils';
+import { buildCategoryPracticeQuiz, buildQuiz, calculateStreakStats, evaluateQuizAnswer, formatReminderTime, formatStudyTime, getCategoryPracticeQuizTarget, getDayKey, getRecentDays, getStreakMessage, getStreakWeek, getTypedRecallHint, getWordMastery, getWordMasteryCategoryForWord, shuffle, WORD_MASTERY_CATEGORIES, type WordMasteryCategoryId } from '../utils';
 import { DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 import { reportError, trackEvent } from '../services';
+
+const REVEALED_TYPED_ANSWER = '__wordwiz-revealed-answer__';
+type QuizStudyGroupId = WordMasteryCategoryId | 'flagged';
+
+const FLAGGED_STUDY_GROUP = {
+  id: 'flagged' as const,
+  label: 'Flagged Words',
+  shortLabel: 'Flagged',
+  icon: 'bookmark' as const,
+  color: COLORS.purpleDark,
+  pale: COLORS.purplePale,
+};
 
 export function QuizScreen({
   words,
   analytics,
   progress,
+  priorityWordIds = [],
+  initialStudyGroup,
   onComplete,
   onReviewCards,
+  onToggleFlag,
 }: {
   words: Word[];
   analytics: AnalyticsData;
   progress: QuizProgress | null;
+  priorityWordIds?: string[];
+  initialStudyGroup?: 'flagged';
   onComplete: (
     score: number,
     total: number,
@@ -25,18 +42,21 @@ export function QuizScreen({
     answers: QuizAnswer[],
   ) => Promise<void>;
   onReviewCards: () => void;
+  onToggleFlag: (wordId: string) => void;
 }) {
   const [quiz, setQuiz] = useState<QuizQuestion[]>([]);
   const [questionIndex, setQuestionIndex] = useState(0);
   const [selected, setSelected] = useState<string | null>(null);
   const [typedResponse, setTypedResponse] = useState('');
+  const [hintStep, setHintStep] = useState(0);
+  const [reviewRating, setReviewRating] = useState<ReviewRating>('correct');
   const [score, setScore] = useState(0);
   const [finishedScore, setFinishedScore] = useState<number | null>(null);
   const [answers, setAnswers] = useState<QuizAnswer[]>([]);
   const [quizStartedAt, setQuizStartedAt] = useState(Date.now());
   const [isPracticeRound, setIsPracticeRound] = useState(false);
   const [selectedCategory, setSelectedCategory] =
-    useState<WordMasteryCategoryId>('all');
+    useState<QuizStudyGroupId>(initialStudyGroup ?? 'all');
   const wordMastery = useMemo(
     () =>
       words.map((word) => ({
@@ -60,20 +80,36 @@ export function QuizScreen({
       ),
     [wordMastery, words.length],
   );
+  const flaggedCount = useMemo(
+    () => words.filter((word) => word.isFlagged).length,
+    [words],
+  );
   const filteredQuizWords = useMemo(
     () =>
       selectedCategory === 'all'
         ? words
+        : selectedCategory === 'flagged'
+          ? words.filter((word) => word.isFlagged)
         : wordMastery
             .filter((item) => item.categoryId === selectedCategory)
             .map((item) => item.word),
     [selectedCategory, wordMastery, words],
   );
   const selectedCategoryDetails =
-    WORD_MASTERY_CATEGORIES.find(
+    [...WORD_MASTERY_CATEGORIES, FLAGGED_STUDY_GROUP].find(
       (category) => category.id === selectedCategory,
     ) ?? WORD_MASTERY_CATEGORIES[0];
+  const categoryQuizQuestionCount =
+    selectedCategory === 'all'
+      ? Math.min(filteredQuizWords.length, 10)
+      : getCategoryPracticeQuizTarget(filteredQuizWords.length);
   const canChangeCategory = quiz.length === 0 || finishedScore !== null;
+
+  useEffect(() => {
+    if (initialStudyGroup === 'flagged' && canChangeCategory) {
+      setSelectedCategory('flagged');
+    }
+  }, [canChangeCategory, initialStudyGroup]);
 
   const categorySelector = (
     <ScrollView
@@ -82,9 +118,12 @@ export function QuizScreen({
       contentContainerStyle={styles.practiceCategoryList}
       style={styles.practiceCategoryScroller}
     >
-      {WORD_MASTERY_CATEGORIES.map((category) => {
+      {[...WORD_MASTERY_CATEGORIES, FLAGGED_STUDY_GROUP].map((category) => {
         const isActive = selectedCategory === category.id;
-        const count = categoryCounts[category.id] ?? 0;
+        const count =
+          category.id === 'flagged'
+            ? flaggedCount
+            : categoryCounts[category.id] ?? 0;
 
         return (
           <Pressable
@@ -138,21 +177,33 @@ export function QuizScreen({
       return;
     }
 
-    setQuiz(
-      buildQuiz(
-        filteredQuizWords,
-        analytics.quizHistory,
-        Object.fromEntries(
-          filteredQuizWords.map((word) => [
-            word.id,
-            getWordMastery(word, analytics),
-          ]),
-        ),
-      ),
+    const masteryByWordId = Object.fromEntries(
+      filteredQuizWords.map((word) => [
+        word.id,
+        getWordMastery(word, analytics),
+      ]),
     );
+    const nextQuiz =
+      selectedCategory === 'all'
+        ? buildQuiz(
+            filteredQuizWords,
+            analytics.quizHistory,
+            masteryByWordId,
+            priorityWordIds,
+          )
+        : buildCategoryPracticeQuiz(
+            filteredQuizWords,
+            analytics.quizHistory,
+            masteryByWordId,
+            priorityWordIds,
+          );
+
+    setQuiz(nextQuiz);
     setQuestionIndex(0);
     setSelected(null);
     setTypedResponse('');
+    setHintStep(0);
+    setReviewRating('correct');
     setScore(0);
     setFinishedScore(null);
     setAnswers([]);
@@ -160,7 +211,7 @@ export function QuizScreen({
     setIsPracticeRound(Boolean(progress));
     trackEvent('quiz_started', {
       category: selectedCategory,
-      questions: Math.min(filteredQuizWords.length, 10),
+      questions: nextQuiz.length,
     });
   }
 
@@ -168,7 +219,11 @@ export function QuizScreen({
     if (selected) return;
     const question = quiz[questionIndex];
     setSelected(option);
-    const correct = isQuizAnswerCorrect(question.answer, option, question.mode);
+    const correct = evaluateQuizAnswer(
+      question.answer,
+      option,
+      question.mode,
+    ).correct;
     if (correct) setScore((current) => current + 1);
     setAnswers((current) => [
       ...current,
@@ -177,6 +232,7 @@ export function QuizScreen({
         correct,
         difficulty: question.difficulty,
         answeredAt: new Date().toISOString(),
+        reviewRating: correct ? 'correct' : undefined,
       },
     ]);
   }
@@ -186,22 +242,39 @@ export function QuizScreen({
     chooseAnswer(typedResponse.trim());
   }
 
+  function revealTypedAnswer() {
+    if (selected) return;
+    const question = quiz[questionIndex];
+    setTypedResponse(question.answer);
+    chooseAnswer(REVEALED_TYPED_ANSWER);
+  }
+
   async function nextQuestion() {
     if (!selected) {
       return;
     }
 
     const question = quiz[questionIndex];
+    const evaluation = evaluateQuizAnswer(
+      question.answer,
+      selected,
+      question.mode,
+    );
     const currentAnswer = {
       wordId: question.word.id,
-      correct: isQuizAnswerCorrect(question.answer, selected, question.mode),
+      correct: evaluation.correct,
       difficulty: question.difficulty,
       answeredAt: new Date().toISOString(),
+      reviewRating: evaluation.correct ? reviewRating : undefined,
     };
     const completedAnswers = answers.some(
       (answer) => answer.wordId === currentAnswer.wordId,
     )
-      ? answers
+      ? answers.map((answer) =>
+          answer.wordId === currentAnswer.wordId && answer.correct
+            ? { ...answer, reviewRating }
+            : answer,
+        )
       : [...answers, currentAnswer];
     const finalScore = completedAnswers.filter((answer) => answer.correct).length;
     if (questionIndex === quiz.length - 1) {
@@ -220,6 +293,8 @@ export function QuizScreen({
     setQuestionIndex((index) => index + 1);
     setSelected(null);
     setTypedResponse('');
+    setHintStep(0);
+    setReviewRating('correct');
   }
 
   if (progress && quiz.length === 0) {
@@ -231,17 +306,6 @@ export function QuizScreen({
           subtitle="A little review each day makes words stick."
         />
         <QuizComplete score={progress.score} total={progress.total} />
-        <Pressable
-          onPress={onReviewCards}
-          style={({ pressed }) => [
-            styles.quizFlashcardButton,
-            pressed && styles.pressed,
-          ]}
-        >
-          <Ionicons name="albums-outline" size={19} color={COLORS.greenDark} />
-          <Text style={styles.quizFlashcardButtonText}>REVIEW FLASHCARDS</Text>
-          <Ionicons name="arrow-forward" size={17} color={COLORS.greenDark} />
-        </Pressable>
         {categorySelector}
         <Pressable
           disabled={filteredQuizWords.length === 0}
@@ -256,6 +320,18 @@ export function QuizScreen({
           <Text style={styles.quizPracticeButtonText}>
             PRACTICE ANOTHER QUIZ
           </Text>
+        </Pressable>
+        <Pressable
+          onPress={onReviewCards}
+          style={({ pressed }) => [
+            styles.quizFlashcardButton,
+            styles.quizFlashcardButtonPaired,
+            pressed && styles.pressed,
+          ]}
+        >
+          <Ionicons name="albums-outline" size={19} color={COLORS.greenDark} />
+          <Text style={styles.quizFlashcardButtonText}>REVIEW FLASHCARDS</Text>
+          <Ionicons name="arrow-forward" size={17} color={COLORS.greenDark} />
         </Pressable>
       </ScrollView>
     );
@@ -295,17 +371,6 @@ export function QuizScreen({
             ? 'Practice did not replace today’s daily score. It still counted as real review.'
             : 'Practice again anytime to keep learning.'}
         </Text>
-        <Pressable
-          onPress={onReviewCards}
-          style={({ pressed }) => [
-            styles.quizFlashcardButton,
-            pressed && styles.pressed,
-          ]}
-        >
-          <Ionicons name="albums-outline" size={19} color={COLORS.greenDark} />
-          <Text style={styles.quizFlashcardButtonText}>REVIEW FLASHCARDS</Text>
-          <Ionicons name="arrow-forward" size={17} color={COLORS.greenDark} />
-        </Pressable>
         {categorySelector}
         <Pressable
           disabled={filteredQuizWords.length === 0}
@@ -320,6 +385,18 @@ export function QuizScreen({
           <Text style={styles.quizPracticeButtonText}>
             PRACTICE ANOTHER QUIZ
           </Text>
+        </Pressable>
+        <Pressable
+          onPress={onReviewCards}
+          style={({ pressed }) => [
+            styles.quizFlashcardButton,
+            styles.quizFlashcardButtonPaired,
+            pressed && styles.pressed,
+          ]}
+        >
+          <Ionicons name="albums-outline" size={19} color={COLORS.greenDark} />
+          <Text style={styles.quizFlashcardButtonText}>REVIEW FLASHCARDS</Text>
+          <Ionicons name="arrow-forward" size={17} color={COLORS.greenDark} />
         </Pressable>
       </ScrollView>
     );
@@ -352,7 +429,7 @@ export function QuizScreen({
             <QuizFact icon="time-outline" text="About 1 minute" />
             <QuizFact
               icon="help-circle-outline"
-              text={`${Math.min(filteredQuizWords.length, 10)} questions`}
+              text={`${categoryQuizQuestionCount} questions`}
             />
           </View>
           {categorySelector}
@@ -395,9 +472,18 @@ export function QuizScreen({
 
   const question = quiz[questionIndex];
   const questionsLeft = Math.max(0, quiz.length - questionIndex - 1);
-  const selectedIsCorrect = selected
-    ? isQuizAnswerCorrect(question.answer, selected, question.mode)
-    : false;
+  const isQuestionStatement = question.mode !== 'word-to-definition';
+  const selectedEvaluation = evaluateQuizAnswer(
+    question.answer,
+    selected,
+    question.mode,
+  );
+  const selectedIsCorrect = selectedEvaluation.correct;
+  const selectedHasSpellingNote = selectedEvaluation.hasSpellingNote;
+  const typedHint =
+    question.mode === 'typed-word'
+      ? getTypedRecallHint(question.word, hintStep)
+      : null;
   return (
     <ScrollView
       style={styles.screen}
@@ -425,12 +511,54 @@ export function QuizScreen({
           minimumFontScale={0.62}
           style={[
             styles.questionWord,
-            question.mode !== 'word-to-definition' && styles.questionStatement,
+            isQuestionStatement && styles.questionStatement,
+            isQuestionStatement &&
+              question.displayText.length > 120 &&
+              styles.questionStatementLong,
+            isQuestionStatement &&
+              question.displayText.length > 190 &&
+              styles.questionStatementExtraLong,
+            !isQuestionStatement &&
+              question.displayText.length > 16 &&
+              styles.questionWordLong,
+            !isQuestionStatement &&
+              question.displayText.length > 26 &&
+              styles.questionWordExtraLong,
           ]}
         >
           {question.displayText}
         </Text>
       </View>
+
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={
+          question.word.isFlagged
+            ? 'Remove word from flagged words'
+            : 'Flag word'
+        }
+        accessibilityState={{ selected: question.word.isFlagged }}
+        onPress={() => onToggleFlag(question.word.id)}
+        style={({ pressed }) => [
+          styles.quizFlagButton,
+          question.word.isFlagged && styles.quizFlagButtonActive,
+          pressed && styles.pressed,
+        ]}
+      >
+        <Ionicons
+          name={question.word.isFlagged ? 'bookmark' : 'bookmark-outline'}
+          size={16}
+          color={question.word.isFlagged ? COLORS.purpleDark : COLORS.muted}
+        />
+        <Text
+          style={[
+            styles.quizFlagButtonText,
+            question.word.isFlagged && styles.quizFlagButtonTextActive,
+          ]}
+        >
+          {question.word.isFlagged ? 'FLAGGED WORD' : 'FLAG WORD'}
+        </Text>
+      </Pressable>
 
       <View style={styles.quizFocusCard}>
         <View style={styles.quizFocusItem}>
@@ -467,17 +595,55 @@ export function QuizScreen({
             value={typedResponse}
           />
           {!selected ? (
-            <Pressable
-              disabled={!typedResponse.trim()}
-              onPress={submitTypedAnswer}
-              style={({ pressed }) => [
-                styles.typedAnswerButton,
-                !typedResponse.trim() && styles.primaryButtonDisabled,
-                pressed && typedResponse.trim() && styles.pressed,
-              ]}
-            >
-              <Text style={styles.typedAnswerButtonText}>CHECK ANSWER</Text>
-            </Pressable>
+            <>
+              {typedHint ? (
+                <View style={styles.typedHintCard}>
+                  <Ionicons name="bulb" size={16} color={COLORS.orange} />
+                  <Text style={styles.typedHintText}>{typedHint}</Text>
+                </View>
+              ) : null}
+              <View style={styles.typedActionRow}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={hintStep >= 3 ? 'Show answer' : 'Show hint'}
+                  onPress={() => {
+                    if (hintStep >= 3) {
+                      revealTypedAnswer();
+                      return;
+                    }
+                    setHintStep((current) => current + 1);
+                  }}
+                  style={({ pressed }) => [
+                    styles.typedHintButton,
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <Ionicons
+                    name={hintStep >= 3 ? 'eye-outline' : 'bulb-outline'}
+                    size={17}
+                    color={COLORS.purpleDark}
+                  />
+                  <Text style={styles.typedHintButtonText}>
+                    {hintStep >= 3
+                      ? 'SHOW ANSWER'
+                      : hintStep
+                        ? 'NEXT HINT'
+                        : 'HINT'}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  disabled={!typedResponse.trim()}
+                  onPress={submitTypedAnswer}
+                  style={({ pressed }) => [
+                    styles.typedAnswerButton,
+                    !typedResponse.trim() && styles.primaryButtonDisabled,
+                    pressed && typedResponse.trim() && styles.pressed,
+                  ]}
+                >
+                  <Text style={styles.typedAnswerButtonText}>CHECK ANSWER</Text>
+                </Pressable>
+              </View>
+            </>
           ) : null}
         </View>
       ) : (
@@ -536,51 +702,96 @@ export function QuizScreen({
           <Ionicons
             name={
               selectedIsCorrect
-                ? 'checkmark-circle'
+                ? selectedHasSpellingNote
+                  ? 'flag'
+                  : 'checkmark-circle'
                 : 'heart-outline'
             }
             size={23}
             color={
-              selectedIsCorrect ? COLORS.greenDark : COLORS.red
+              selectedIsCorrect
+                ? selectedHasSpellingNote
+                  ? COLORS.orange
+                  : COLORS.greenDark
+                : COLORS.red
             }
           />
           <View style={styles.feedbackCopy}>
             <Text style={styles.feedbackTitle}>
-              {selectedIsCorrect ? 'Nicely done!' : 'Keep learning!'}
+              {selectedIsCorrect
+                ? selectedHasSpellingNote
+                  ? 'Almost perfect!'
+                  : 'Nicely done!'
+                : 'Keep learning!'}
             </Text>
             <Text style={styles.feedbackText}>
               {selectedIsCorrect
-                ? 'You matched it perfectly.'
+                ? selectedHasSpellingNote
+                  ? 'You recalled the word — here is its spelling to remember.'
+                  : 'You matched it perfectly.'
                 : question.feedback}
             </Text>
+            {selectedHasSpellingNote ? (
+              <View style={styles.spellingNote}>
+                <Ionicons name="flag" size={13} color={COLORS.orange} />
+                <Text style={styles.spellingNoteText}>
+                  Correct spelling: {question.answer}
+                </Text>
+              </View>
+            ) : null}
+            {selectedIsCorrect ? (
+              <View style={styles.reviewRatingArea}>
+                <Text style={styles.reviewRatingLabel}>How did that feel?</Text>
+                <Text style={styles.reviewRatingHint}>
+                  Your choice helps choose the best time to review this word again.
+                </Text>
+                <View style={styles.reviewRatingRow}>
+                  {([
+                    ['hard', 'Hard'],
+                    ['correct', 'Got it'],
+                    ['easy', 'Easy'],
+                  ] as const).map(([rating, label]) => (
+                    <Pressable
+                      key={rating}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: reviewRating === rating }}
+                      onPress={() => setReviewRating(rating)}
+                      style={[
+                        styles.reviewRatingButton,
+                        reviewRating === rating && styles.reviewRatingButtonActive,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.reviewRatingButtonText,
+                          reviewRating === rating && styles.reviewRatingButtonTextActive,
+                        ]}
+                      >
+                        {label}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+              </View>
+            ) : null}
           </View>
         </View>
       )}
 
-      <Pressable
-        disabled={!selected}
-        onPress={nextQuestion}
-        style={({ pressed }) => [
-          styles.primaryButton,
-          !selected && styles.primaryButtonDisabled,
-          pressed && selected && styles.primaryButtonPressed,
-        ]}
-      >
-        <Text style={styles.primaryButtonText}>
-          {questionIndex === quiz.length - 1 ? 'SEE RESULTS' : 'CONTINUE'}
-        </Text>
-        <Ionicons name="arrow-forward" size={21} color={COLORS.white} />
-      </Pressable>
+      {selected ? (
+        <Pressable
+          onPress={nextQuestion}
+          style={({ pressed }) => [
+            styles.primaryButton,
+            pressed && styles.primaryButtonPressed,
+          ]}
+        >
+          <Text style={styles.primaryButtonText}>
+            {questionIndex === quiz.length - 1 ? 'SEE RESULTS' : 'CONTINUE'}
+          </Text>
+          <Ionicons name="arrow-forward" size={21} color={COLORS.white} />
+        </Pressable>
+      ) : null}
     </ScrollView>
   );
-}
-
-function isQuizAnswerCorrect(
-  answer: string,
-  response: string | null,
-  mode: QuizQuestion['mode'],
-) {
-  if (response === null) return false;
-  if (mode !== 'typed-word') return response === answer;
-  return response.trim().toLocaleLowerCase() === answer.trim().toLocaleLowerCase();
 }

@@ -5,6 +5,7 @@ import type {
   QuizAttempt,
   QuizQuestionDifficulty,
   QuizProgress,
+  ReviewRating,
   StreakStats,
   Word,
   WordDetails,
@@ -190,7 +191,7 @@ export function buildWordFromInput({
     wordnik_url: details.wordnik_url,
     createdAt: existingWord?.createdAt ?? createdAt,
     reviews: existingWord?.reviews ?? 0,
-    mastery: existingWord ? existingWord.mastery : createWordMasteryProgress(),
+    mastery: existingWord ? existingWord.mastery : createWordMasteryProgress(createdAt),
   };
 }
 
@@ -254,6 +255,8 @@ function chooseMoreCompleteWord(first: Word, second: Word) {
       ...second,
       reviews: Math.max(first.reviews, second.reviews),
       mastery: second.mastery ?? first.mastery,
+      isFlagged: Boolean(first.isFlagged || second.isFlagged),
+      flaggedAt: first.flaggedAt ?? second.flaggedAt,
       createdAt: first.createdAt < second.createdAt ? first.createdAt : second.createdAt,
     };
   }
@@ -262,6 +265,8 @@ function chooseMoreCompleteWord(first: Word, second: Word) {
     ...first,
     reviews: Math.max(first.reviews, second.reviews),
     mastery: first.mastery ?? second.mastery,
+    isFlagged: Boolean(first.isFlagged || second.isFlagged),
+    flaggedAt: first.flaggedAt ?? second.flaggedAt,
     createdAt: first.createdAt < second.createdAt ? first.createdAt : second.createdAt,
   };
 }
@@ -350,7 +355,17 @@ export function getQuizAttemptKind(
   return firstAttemptOfDay?.id === attempt.id ? 'daily' : 'practice';
 }
 
-export function createWordMasteryProgress(): WordMasteryProgress {
+const REVIEW_STAGE_INTERVAL_MINUTES = [0, 15, 24 * 60, 3 * 24 * 60, 7 * 24 * 60, 14 * 24 * 60, 30 * 24 * 60, 75 * 24 * 60];
+
+export type DueReviewWord = {
+  word: Word;
+  progress: WordMasteryProgress;
+  dueAt: string;
+  overdueMs: number;
+  timingLabel: string;
+};
+
+export function createWordMasteryProgress(initialReviewAt = new Date().toISOString()): WordMasteryProgress {
   return {
     masteryPercent: 0,
     totalCorrect: 0,
@@ -358,6 +373,10 @@ export function createWordMasteryProgress(): WordMasteryProgress {
     correctStreak: 0,
     successfulReviewDays: [],
     recentResults: [],
+    reviewStage: 0,
+    successfulReviewCount: 0,
+    lapseCount: 0,
+    nextReviewAt: toSafeDate(initialReviewAt).toISOString(),
   };
 }
 
@@ -373,6 +392,9 @@ export function getWordMasteryProgress(
 }
 
 export function isWordMastered(progress: WordMasteryProgress) {
+  if (progress.legacyMastered || progress.masteredAt) {
+    return true;
+  }
   const recentResults = progress.recentResults.slice(-10);
   const recentIncorrect = recentResults.filter((result) => !result.correct).length;
 
@@ -380,6 +402,8 @@ export function isWordMastered(progress: WordMasteryProgress) {
     progress.masteryPercent >= 85 &&
     progress.totalCorrect >= 6 &&
     progress.successfulReviewDays.length >= 3 &&
+    (progress.successfulReviewCount ?? 0) >= 6 &&
+    (progress.reviewStage ?? 0) >= 6 &&
     getDifficultyRank(progress.highestQuestionDifficultyCompleted) >= 3 &&
     recentResults.at(-1)?.correct === true &&
     recentIncorrect <= 2
@@ -422,16 +446,12 @@ export function applyFlashcardReview(
     if (word.id !== wordId) return word;
 
     const current = getWordMasteryProgress(word, analytics);
-    const nextReviewAt = new Date(reviewedAt);
-    nextReviewAt.setHours(nextReviewAt.getHours() + (remembered ? 24 : 4));
-
     return {
       ...word,
       reviews: word.reviews + 1,
       mastery: {
         ...current,
         lastReviewedAt: reviewedAt.toISOString(),
-        nextReviewAt: nextReviewAt.toISOString(),
       },
     };
   });
@@ -442,6 +462,51 @@ export function getWordMastery(
   analytics: AnalyticsData,
 ) {
   return getWordMasteryProgress(word, analytics).masteryPercent;
+}
+
+export function getDueReviewWords(
+  words: Word[],
+  analytics: AnalyticsData,
+  now = new Date(),
+): DueReviewWord[] {
+  const safeNow = toSafeDate(now.toISOString());
+
+  return words
+    .map((word) => {
+      const progress = getWordMasteryProgress(word, analytics);
+      const dueAt = getScheduledReviewAt(word, progress, safeNow);
+      const overdueMs = safeNow.getTime() - new Date(dueAt).getTime();
+
+      return {
+        word,
+        progress,
+        dueAt,
+        overdueMs,
+        timingLabel: formatDueReviewTiming(dueAt, safeNow),
+      };
+    })
+    .filter((item) => item.overdueMs >= 0)
+    .sort((first, second) =>
+      second.overdueMs - first.overdueMs ||
+      first.progress.masteryPercent - second.progress.masteryPercent ||
+      getReviewSortTime(first.progress) - getReviewSortTime(second.progress),
+    );
+}
+
+export function formatDueReviewTiming(dueAt: string, now = new Date()) {
+  const due = new Date(dueAt);
+  const safeNow = toSafeDate(now.toISOString());
+  if (Number.isNaN(due.getTime()) || due.getTime() > safeNow.getTime()) {
+    return 'Due soon';
+  }
+
+  const overdueDays = Math.floor(
+    (startOfLocalDay(safeNow).getTime() - startOfLocalDay(due).getTime()) /
+      86_400_000,
+  );
+  if (overdueDays <= 0) return 'Due now';
+  if (overdueDays === 1) return '1 day overdue';
+  return `${overdueDays} days overdue`;
 }
 
 function buildLegacyMasteryProgress(
@@ -500,10 +565,32 @@ function buildLegacyMasteryProgress(
       ? 'multiple-choice'
       : undefined,
     recentResults,
+    reviewStage: word.reviews * 12 + cardScore + quizScore >= 100 ? 6 : 0,
+    successfulReviewCount: quizAnswers.filter(({ answer }) => answer.correct).length,
+    lapseCount: quizAnswers.filter(({ answer }) => !answer.correct).length,
+    lastReviewResult: recentResults.at(-1)?.correct ? 'correct' : undefined,
+    masteredAt:
+      word.reviews * 12 + cardScore + quizScore >= 100
+        ? lastCorrect?.answeredAt ?? word.createdAt
+        : undefined,
+    lastSuccessfulReviewAt: lastCorrect?.answeredAt,
+    legacyMastered: word.reviews * 12 + cardScore + quizScore >= 100,
+    nextReviewAt:
+      word.reviews * 12 + cardScore + quizScore >= 100
+        ? addMinutes(new Date(), REVIEW_STAGE_INTERVAL_MINUTES[7]).toISOString()
+        : undefined,
   };
 }
 
 function normalizeMasteryProgress(progress: WordMasteryProgress): WordMasteryProgress {
+  const hasReviewStage = Number.isFinite(progress.reviewStage);
+  const legacyMastered = Boolean(progress.legacyMastered) ||
+    (!hasReviewStage && progress.masteryPercent >= 100);
+  const nextReviewAt = toValidIso(progress.nextReviewAt) ??
+    (legacyMastered
+      ? addMinutes(new Date(), REVIEW_STAGE_INTERVAL_MINUTES[7]).toISOString()
+      : undefined);
+
   return {
     ...createWordMasteryProgress(),
     ...progress,
@@ -513,6 +600,16 @@ function normalizeMasteryProgress(progress: WordMasteryProgress): WordMasteryPro
     correctStreak: Math.max(0, progress.correctStreak ?? 0),
     successfulReviewDays: Array.from(new Set(progress.successfulReviewDays ?? [])),
     recentResults: (progress.recentResults ?? []).slice(-10),
+    reviewStage: Math.max(0, Math.min(7, Math.round(progress.reviewStage ?? 0))),
+    successfulReviewCount: Math.max(0, progress.successfulReviewCount ?? progress.totalCorrect ?? 0),
+    lapseCount: Math.max(0, progress.lapseCount ?? progress.totalIncorrect ?? 0),
+    lastReviewedAt: toValidIso(progress.lastReviewedAt),
+    lastCorrectAt: toValidIso(progress.lastCorrectAt),
+    firstLearnedAt: toValidIso(progress.firstLearnedAt),
+    masteredAt: toValidIso(progress.masteredAt),
+    lastSuccessfulReviewAt: toValidIso(progress.lastSuccessfulReviewAt),
+    nextReviewAt,
+    legacyMastered,
   };
 }
 
@@ -523,6 +620,7 @@ function updateMasteryFromQuizAnswer(
 ): WordMasteryProgress {
   const current = normalizeMasteryProgress(progress);
   const difficulty = answer.difficulty ?? 'multiple-choice';
+  const reviewRating: ReviewRating = answer.reviewRating ?? 'correct';
   const reviewedAtIso = reviewedAt.toISOString();
   const sameSession = isWithinHours(current.lastReviewedAt, reviewedAt, 4);
   const correctInSession = current.recentResults.filter(
@@ -532,8 +630,13 @@ function updateMasteryFromQuizAnswer(
   const retentionBonus = answer.correct && !sameSession
     ? getRetentionBonus(current.lastCorrectAt, reviewedAt)
     : 0;
+  const baseCorrectChange = getCorrectMasteryChange(difficulty);
   const baseChange = answer.correct
-    ? getCorrectMasteryChange(difficulty)
+    ? reviewRating === 'hard'
+      ? Math.max(1, Math.round(baseCorrectChange * 0.6))
+      : reviewRating === 'easy'
+        ? baseCorrectChange + 2
+        : baseCorrectChange
     : -getIncorrectMasteryChange(difficulty);
   const earnedChange =
     answer.correct && sameSession && correctInSession >= 2
@@ -549,8 +652,16 @@ function updateMasteryFromQuizAnswer(
   const nextMasteryPercent = clampMasteryPercent(
     current.masteryPercent + earnedChange,
   );
+  const scheduledReviewWasDue = isScheduledReviewDue(current, reviewedAt);
+  const schedule = getNextReviewSchedule(
+    current,
+    answer.correct,
+    reviewRating,
+    reviewedAt,
+    scheduledReviewWasDue,
+  );
 
-  return {
+  const nextProgress: WordMasteryProgress = {
     ...current,
     masteryPercent: nextMasteryPercent,
     totalCorrect: current.totalCorrect + (answer.correct ? 1 : 0),
@@ -563,6 +674,13 @@ function updateMasteryFromQuizAnswer(
         ? reviewedAtIso
         : current.firstLearnedAt,
     successfulReviewDays,
+    successfulReviewCount:
+      (current.successfulReviewCount ?? 0) + (answer.correct ? 1 : 0),
+    lapseCount: (current.lapseCount ?? 0) + (answer.correct ? 0 : 1),
+    lastReviewResult: answer.correct ? reviewRating : 'wrong',
+    lastSuccessfulReviewAt: answer.correct
+      ? reviewedAtIso
+      : current.lastSuccessfulReviewAt,
     highestQuestionDifficultyCompleted:
       answer.correct &&
       getDifficultyRank(difficulty) >
@@ -570,7 +688,15 @@ function updateMasteryFromQuizAnswer(
         ? difficulty
         : current.highestQuestionDifficultyCompleted,
     recentResults,
-    nextReviewAt: getNextReviewAt(nextMasteryPercent, answer.correct, reviewedAt, retentionBonus),
+    reviewStage: schedule.reviewStage,
+    nextReviewAt: schedule.nextReviewAt,
+  };
+
+  return {
+    ...nextProgress,
+    masteredAt:
+      nextProgress.masteredAt ??
+      (isWordMastered(nextProgress) ? reviewedAtIso : undefined),
   };
 }
 
@@ -601,21 +727,84 @@ function getRetentionBonus(lastCorrectAt: string | undefined, reviewedAt: Date) 
   return 0;
 }
 
-function getNextReviewAt(
-  masteryPercent: number,
+function getNextReviewSchedule(
+  progress: WordMasteryProgress,
   correct: boolean,
+  rating: ReviewRating,
   reviewedAt: Date,
-  retentionBonus: number,
+  reviewWasDue: boolean,
 ) {
-  const nextReviewAt = new Date(reviewedAt);
   if (!correct) {
-    nextReviewAt.setHours(nextReviewAt.getHours() + 4);
-    return nextReviewAt.toISOString();
+    return {
+      // The short relearning check is followed by the one-day stage after a
+      // successful retry, regardless of how far the word had progressed.
+      reviewStage: 1,
+      nextReviewAt: addMinutes(reviewedAt, 10).toISOString(),
+    };
   }
 
-  const baseDays = masteryPercent < 30 ? 1 : masteryPercent < 60 ? 2 : masteryPercent < 80 ? 4 : 7;
-  nextReviewAt.setDate(nextReviewAt.getDate() + baseDays + (retentionBonus >= 5 ? 1 : 0));
-  return nextReviewAt.toISOString();
+  if (rating === 'hard') {
+    return {
+      reviewStage: Math.max(1, progress.reviewStage ?? 0),
+      nextReviewAt: addMinutes(reviewedAt, REVIEW_STAGE_INTERVAL_MINUTES[2]).toISOString(),
+    };
+  }
+
+  if (!reviewWasDue && progress.nextReviewAt) {
+    return {
+      reviewStage: progress.reviewStage ?? 0,
+      nextReviewAt: progress.nextReviewAt,
+    };
+  }
+
+  const currentStage = progress.reviewStage ?? 0;
+  const canTakeEasyStep = rating === 'easy' && currentStage > 0 && currentStage < 4;
+  const reviewStage = Math.min(7, currentStage + (canTakeEasyStep ? 2 : 1));
+
+  return {
+    reviewStage,
+    nextReviewAt: addMinutes(
+      reviewedAt,
+      REVIEW_STAGE_INTERVAL_MINUTES[reviewStage],
+    ).toISOString(),
+  };
+}
+
+function getScheduledReviewAt(
+  word: Word,
+  progress: WordMasteryProgress,
+  now: Date,
+) {
+  const scheduledAt = toValidIso(progress.nextReviewAt);
+  if (scheduledAt) return scheduledAt;
+  if (progress.legacyMastered || progress.masteredAt) {
+    return addMinutes(now, REVIEW_STAGE_INTERVAL_MINUTES[7]).toISOString();
+  }
+  return toSafeDate(word.createdAt).toISOString();
+}
+
+function getReviewSortTime(progress: WordMasteryProgress) {
+  const timestamp = new Date(
+    progress.lastSuccessfulReviewAt ?? progress.lastReviewedAt ?? 0,
+  ).getTime();
+  return Number.isNaN(timestamp) ? 0 : timestamp;
+}
+
+function isScheduledReviewDue(progress: WordMasteryProgress, now: Date) {
+  const nextReviewAt = toValidIso(progress.nextReviewAt);
+  return !nextReviewAt || new Date(nextReviewAt).getTime() <= now.getTime();
+}
+
+function addMinutes(date: Date, minutes: number) {
+  const next = new Date(date);
+  next.setMinutes(next.getMinutes() + minutes);
+  return next;
+}
+
+function startOfLocalDay(date: Date) {
+  const start = new Date(date);
+  start.setHours(0, 0, 0, 0);
+  return start;
 }
 
 function isWithinHours(value: string | undefined, now: Date, hours: number) {
@@ -638,6 +827,12 @@ function clampMasteryPercent(value: number) {
 function toSafeDate(value: string | undefined) {
   const date = value ? new Date(value) : new Date();
   return Number.isNaN(date.getTime()) ? new Date() : date;
+}
+
+function toValidIso(value: string | undefined) {
+  if (!value) return undefined;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
 }
 
 export const MASTERY_LEVELS = [

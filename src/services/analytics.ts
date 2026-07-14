@@ -3,6 +3,7 @@ export type AnalyticsEventName =
   | 'onboarding_completed'
   | 'word_saved'
   | 'word_deleted'
+  | 'word_flag_toggled'
   | 'card_review_recorded'
   | 'quiz_started'
   | 'quiz_completed'

@@ -17,74 +17,97 @@ export function WordRow({
   word,
   onPress,
   onRemove,
+  onToggleFlag,
 }: {
   word: Word;
   index: number;
   onPress?: (word: Word) => void;
   onRemove: (word: Word) => void;
+  onToggleFlag: (wordId: string) => void;
 }) {
   const letterColor = getLetterColor(word.term);
   const hasLongTerm = word.term.trim().length > 8;
 
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={`Study ${word.term} flashcard`}
-      accessibilityHint="Opens this word in flashcards"
-      onPress={() => onPress?.(word)}
-      onLongPress={() => onRemove(word)}
-      style={({ pressed }) => [
-        styles.wordRow,
-        pressed && styles.pressed,
-      ]}
-    >
-      <View style={[styles.letterBadge, { backgroundColor: `${letterColor}18` }]}>
-        <Text style={[styles.letterText, { color: letterColor }]}>
-          {word.term.charAt(0).toUpperCase()}
-        </Text>
-      </View>
-      <View style={styles.wordRowCopy}>
-        <View
-          style={[
-            styles.wordTitleRow,
-            hasLongTerm && styles.wordTitleRowWrapped,
-          ]}
-        >
-          <Text
-            minimumFontScale={0.82}
-            style={[styles.wordTerm, hasLongTerm && styles.wordTermLong]}
+    <View style={styles.wordRow}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`Study ${word.term} flashcard`}
+        accessibilityHint="Opens this word in flashcards"
+        onPress={() => onPress?.(word)}
+        onLongPress={() => onRemove(word)}
+        style={({ pressed }) => [
+          styles.wordRowMain,
+          pressed && styles.pressed,
+        ]}
+      >
+        <View style={[styles.letterBadge, { backgroundColor: `${letterColor}18` }]}>
+          <Text style={[styles.letterText, { color: letterColor }]}>
+            {word.term.charAt(0).toUpperCase()}
+          </Text>
+        </View>
+        <View style={styles.wordRowCopy}>
+          <View
+            style={[
+              styles.wordTitleRow,
+              hasLongTerm && styles.wordTitleRowWrapped,
+            ]}
           >
-            {word.term}
+            <Text
+              minimumFontScale={0.82}
+              style={[styles.wordTerm, hasLongTerm && styles.wordTermLong]}
+            >
+              {word.term}
+            </Text>
+            {word.partOfSpeech && (
+              <Text style={styles.partOfSpeechPill}>{word.partOfSpeech}</Text>
+            )}
+            <SpeakButton term={word.term} />
+          </View>
+          <Text numberOfLines={2} style={styles.wordDefinition}>
+            {word.simpleDefinition || word.definition}
           </Text>
-          {word.partOfSpeech && (
-            <Text style={styles.partOfSpeechPill}>{word.partOfSpeech}</Text>
+          {word.commonWords && word.commonWords.length > 0 && (
+            <Text numberOfLines={1} style={styles.commonWordsLine}>
+              Synonyms: {word.commonWords.slice(0, 3).join(', ')}
+            </Text>
           )}
-          <SpeakButton term={word.term} />
+          {word.pronunciation && (
+            <Text numberOfLines={1} style={styles.wordMeta}>
+              {word.pronunciation}
+            </Text>
+          )}
+          <View style={styles.wordAddedMeta}>
+            <Ionicons name="calendar-outline" size={11} color={COLORS.muted} />
+            <Text style={styles.wordAddedText}>
+              {formatWordAddedDate(word.createdAt)}
+            </Text>
+          </View>
         </View>
-        <Text numberOfLines={2} style={styles.wordDefinition}>
-          {word.simpleDefinition || word.definition}
-        </Text>
-        {word.commonWords && word.commonWords.length > 0 && (
-          <Text numberOfLines={1} style={styles.commonWordsLine}>
-            Synonyms: {word.commonWords.slice(0, 3).join(', ')}
-          </Text>
-        )}
-        {word.pronunciation && (
-          <Text numberOfLines={1} style={styles.wordMeta}>
-            {word.pronunciation}
-          </Text>
-        )}
-        <View style={styles.wordAddedMeta}>
-          <Ionicons name="calendar-outline" size={11} color={COLORS.muted} />
-          <Text style={styles.wordAddedText}>
-            {formatWordAddedDate(word.createdAt)}
-          </Text>
+        <View style={styles.reviewCount}>
+          <Ionicons name="refresh" size={13} color={COLORS.muted} />
+          <Text style={styles.reviewText}>{word.reviews}</Text>
         </View>
-      </View>
-      <View style={styles.reviewCount}>
-        <Ionicons name="refresh" size={13} color={COLORS.muted} />
-        <Text style={styles.reviewText}>{word.reviews}</Text>
-      </View>
-    </Pressable>
+      </Pressable>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={
+          word.isFlagged ? 'Remove word from flagged words' : 'Flag word'
+        }
+        accessibilityState={{ selected: word.isFlagged }}
+        onPress={() => onToggleFlag(word.id)}
+        style={({ pressed }) => [
+          styles.wordFlagButton,
+          word.isFlagged && styles.wordFlagButtonActive,
+          pressed && styles.pressed,
+        ]}
+      >
+        <Ionicons
+          name={word.isFlagged ? 'bookmark' : 'bookmark-outline'}
+          size={17}
+          color={word.isFlagged ? COLORS.purpleDark : COLORS.muted}
+        />
+      </Pressable>
+    </View>
   );
 }

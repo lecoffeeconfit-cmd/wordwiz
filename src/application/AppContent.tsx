@@ -74,6 +74,7 @@ import {
   buildWordFromInput,
   calculateStreakStats,
   getDayKey,
+  getDueReviewWords,
   getNextMasteryLevel,
   getWordMastery,
   mergeWordLists,
@@ -96,6 +97,13 @@ export default function AppContent() {
   const [words, setWords] = useState<Word[]>([]);
   const [sortMode, setSortMode] = useState<SortMode>('alphabetical');
   const [initialCardWordId, setInitialCardWordId] = useState<string | null>(null);
+  const [initialCardStudyGroup, setInitialCardStudyGroup] = useState<
+    'flagged' | undefined
+  >();
+  const [initialQuizStudyGroup, setInitialQuizStudyGroup] = useState<
+    'flagged' | undefined
+  >();
+  const [quizPriorityWordIds, setQuizPriorityWordIds] = useState<string[]>([]);
   const [quizProgress, setQuizProgress] = useState<QuizProgress | null>(null);
   const [analytics, setAnalytics] = useState<AnalyticsData>(EMPTY_ANALYTICS);
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
@@ -465,9 +473,56 @@ export default function AppContent() {
     }
   }
 
-  function openCards(wordId?: string) {
+  function openCards(wordId?: string, studyGroup?: 'flagged') {
     setInitialCardWordId(wordId ?? null);
+    setInitialCardStudyGroup(studyGroup);
     setActiveTab('cards');
+  }
+
+  function openFlaggedQuiz() {
+    setInitialQuizStudyGroup('flagged');
+    setActiveTab('quiz');
+  }
+
+  function toggleWordFlag(wordId: string) {
+    const previousWord = words.find((word) => word.id === wordId);
+    if (!previousWord) return;
+
+    const nextWord: Word = {
+      ...previousWord,
+      isFlagged: !previousWord.isFlagged,
+      flaggedAt: previousWord.isFlagged ? undefined : new Date().toISOString(),
+    };
+    setWords((currentWords) =>
+      currentWords.map((word) => (word.id === wordId ? nextWord : word)),
+    );
+    trackEvent('word_flag_toggled', { flagged: nextWord.isFlagged });
+
+    if (currentUser && cloudHydratedUserId.current === currentUser.id) {
+      saveCloudWord(
+        currentUser.id,
+        nextWord,
+        getScreenContext(activeTab, 'toggle_word_flag'),
+      )
+        .then(() => {
+          markCloudCacheFresh(currentUser.id);
+        })
+        .catch((error) => {
+          console.error('WordWiz cloud word flag save failed:', error);
+          reportError(error, { area: 'save_word_flag' });
+          trackEvent('cloud_sync_failed', { operation: 'save_word_flag' });
+          setWords((currentWords) =>
+            currentWords.map((word) =>
+              word.id === wordId &&
+              word.isFlagged === nextWord.isFlagged &&
+              word.flaggedAt === nextWord.flaggedAt
+                ? previousWord
+                : word,
+            ),
+          );
+          showCloudSaveWarning();
+        });
+    }
   }
 
   function openAddWord() {
@@ -951,6 +1006,7 @@ export default function AppContent() {
     );
     const updatedWords = applyQuizMastery(words, answers, analytics);
     setWords(updatedWords);
+    setQuizPriorityWordIds([]);
     setAnalytics((currentAnalytics) => addQuizAttempt(currentAnalytics, attempt));
     trackEvent('quiz_completed', { score, total, durationSeconds });
 
@@ -960,14 +1016,10 @@ export default function AppContent() {
         .filter(
           (word): word is Word =>
             word !== undefined && !isStarterWordId(word.id),
-        )
-        .map((word) =>
-          saveCloudWord(
-            currentUser.id,
-            word,
-            getScreenContext('quiz', 'update_quiz_mastery'),
-          ),
         );
+      const uniqueReviewUpdates = Array.from(
+        new Map(reviewUpdates.map((word) => [word.id, word])).values(),
+      );
 
       Promise.all([
         saveCloudQuizAttempt(
@@ -975,7 +1027,11 @@ export default function AppContent() {
           attempt,
           getScreenContext('quiz', 'complete_quiz'),
         ),
-        ...reviewUpdates,
+        saveCloudWords(
+          currentUser.id,
+          uniqueReviewUpdates,
+          getScreenContext('quiz', 'update_quiz_mastery'),
+        ),
       ])
         .then(() => {
           markCloudCacheFresh(currentUser.id);
@@ -987,6 +1043,14 @@ export default function AppContent() {
           showCloudSaveWarning();
         });
     }
+  }
+
+  function openDueReview() {
+    setInitialQuizStudyGroup(undefined);
+    setQuizPriorityWordIds(
+      getDueReviewWords(words, analytics).map((item) => item.word.id),
+    );
+    setActiveTab('quiz');
   }
 
   async function updateReminder(nextSettings: ReminderSettings) {
@@ -1093,7 +1157,10 @@ export default function AppContent() {
           onAddWord={openAddWord}
           onStudy={() => openCards()}
           onReviewWord={(wordId) => openCards(wordId)}
-          onQuiz={() => setActiveTab('quiz')}
+          onQuiz={() => {
+            setInitialQuizStudyGroup(undefined);
+            setActiveTab('quiz');
+          }}
           onStats={() => setActiveTab('dashboard')}
         />
       );
@@ -1108,6 +1175,9 @@ export default function AppContent() {
           onAdd={openAddWord}
           onRemove={removeWord}
           onStudy={() => openCards()}
+          onStudyFlaggedCards={() => openCards(undefined, 'flagged')}
+          onStudyFlaggedQuiz={openFlaggedQuiz}
+          onToggleFlag={toggleWordFlag}
           onSelectWord={(word) => openCards(word.id)}
         />
       );
@@ -1119,8 +1189,10 @@ export default function AppContent() {
           words={sortedWords}
           analytics={analytics}
           initialWordId={initialCardWordId}
+          initialStudyGroup={initialCardStudyGroup}
           onEditWord={openEditWord}
           onReview={recordCardReview}
+          onToggleFlag={toggleWordFlag}
         />
       );
     }
@@ -1131,8 +1203,11 @@ export default function AppContent() {
           words={words}
           analytics={analytics}
           progress={todayQuizProgress}
+          priorityWordIds={quizPriorityWordIds}
+          initialStudyGroup={initialQuizStudyGroup}
           onComplete={completeQuiz}
           onReviewCards={() => openCards()}
+          onToggleFlag={toggleWordFlag}
         />
       );
     }
@@ -1144,6 +1219,9 @@ export default function AppContent() {
         currentUser={currentUser}
         reminderSettings={reminderSettings}
         dailyQuizGoal={dailyQuizGoal}
+        onReviewDue={openDueReview}
+        onStudyFlaggedCards={() => openCards(undefined, 'flagged')}
+        onStudyFlaggedQuiz={openFlaggedQuiz}
         onUpdateReminder={updateReminder}
         onUpdateDailyQuizGoal={(goal) => setDailyQuizGoal(clampDailyQuizGoal(goal))}
         onOpenLegal={openLegalPage}
@@ -1233,6 +1311,13 @@ export default function AppContent() {
                 onChange={(tab) => {
                   if (tab !== 'cards') {
                     setInitialCardWordId(null);
+                    setInitialCardStudyGroup(undefined);
+                  }
+                  if (tab !== 'quiz') {
+                    setInitialQuizStudyGroup(undefined);
+                  }
+                  if (tab === 'quiz') {
+                    setInitialQuizStudyGroup(undefined);
                   }
                   setActiveTab(tab);
                 }}
@@ -1427,9 +1512,7 @@ function buildCurrentReminderContext(
   return {
     currentStreak: calculateStreakStats(analytics).current,
     hasPracticedToday: hasCardPracticeToday || quizzesToday > 0,
-    dueReviewCount: userWords.filter(
-      (word) => word.reviews > 0 && getWordMastery(word, analytics) < 80,
-    ).length,
+    dueReviewCount: getDueReviewWords(userWords, analytics).length,
     quizzesToday,
     dailyQuizGoal,
     unreviewedNewWordCount: userWords.filter((word) => word.reviews === 0)

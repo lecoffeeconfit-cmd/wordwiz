@@ -25,6 +25,8 @@ type WordRow = {
   basic_info: string | null;
   reviews: number;
   mastery_data: unknown;
+  is_flagged?: boolean | null;
+  flagged_at?: string | null;
   created_at: string;
 };
 
@@ -78,9 +80,10 @@ const WORD_COLUMNS = [
   'basic_info',
   'reviews',
   'mastery_data',
+  'is_flagged',
+  'flagged_at',
   'created_at',
 ].join(',');
-const LEGACY_WORD_COLUMNS = WORD_COLUMNS.replace('mastery_data,', '');
 
 const QUIZ_ATTEMPT_COLUMNS = [
   'id',
@@ -112,6 +115,7 @@ export async function fetchUserLearningData(
   userId: string,
   context?: CloudRequestContext,
 ): Promise<UserLearningData> {
+  let wordColumns = WORD_COLUMNS;
   let [wordsResult, quizResult, reviewsResult, reminderResult] =
     await Promise.all([
       supabase
@@ -139,10 +143,21 @@ export async function fetchUserLearningData(
         .maybeSingle(),
     ]);
 
-  if (isMissingMasteryDataColumn(wordsResult.error)) {
+  if (isMissingFlagColumns(wordsResult.error)) {
+    wordColumns = omitFlagColumns(wordColumns);
     wordsResult = await supabase
       .from('words')
-      .select(LEGACY_WORD_COLUMNS)
+      .select(wordColumns)
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(MAX_CLOUD_WORDS);
+  }
+
+  if (isMissingMasteryDataColumn(wordsResult.error)) {
+    wordColumns = wordColumns.replace('mastery_data,', '');
+    wordsResult = await supabase
+      .from('words')
+      .select(wordColumns)
       .eq('user_id', userId)
       .order('created_at', { ascending: false })
       .limit(MAX_CLOUD_WORDS);
@@ -240,11 +255,19 @@ export async function saveCloudWord(
     ? await supabase.from('words').upsert(cloudPayload)
     : await supabase.from('words').insert(cloudPayload);
 
-  if (isMissingMasteryDataColumn(error)) {
-    const legacyPayload = omitMasteryData(cloudPayload);
+  let fallbackPayload: Record<string, unknown> = cloudPayload;
+  if (isMissingFlagColumns(error)) {
+    fallbackPayload = omitFlagFields(fallbackPayload);
     ({ error } = hasCloudId
-      ? await supabase.from('words').upsert(legacyPayload)
-      : await supabase.from('words').insert(legacyPayload));
+      ? await supabase.from('words').upsert(fallbackPayload)
+      : await supabase.from('words').insert(fallbackPayload));
+  }
+
+  if (isMissingMasteryDataColumn(error)) {
+    fallbackPayload = omitMasteryData(fallbackPayload);
+    ({ error } = hasCloudId
+      ? await supabase.from('words').upsert(fallbackPayload)
+      : await supabase.from('words').insert(fallbackPayload));
   }
 
   if (error) {
@@ -271,10 +294,15 @@ export async function saveCloudWords(
   }));
   let { error } = await supabase.from('words').upsert(payloads);
 
+  let fallbackPayloads: Record<string, unknown>[] = payloads;
+  if (isMissingFlagColumns(error)) {
+    fallbackPayloads = fallbackPayloads.map(omitFlagFields);
+    ({ error } = await supabase.from('words').upsert(fallbackPayloads));
+  }
+
   if (isMissingMasteryDataColumn(error)) {
-    ({ error } = await supabase
-      .from('words')
-      .upsert(payloads.map(omitMasteryData)));
+    fallbackPayloads = fallbackPayloads.map(omitMasteryData);
+    ({ error } = await supabase.from('words').upsert(fallbackPayloads));
   }
 
   if (error) {
@@ -490,6 +518,8 @@ function mapWordRow(row: WordRow): Word {
     createdAt: row.created_at,
     reviews: row.reviews,
     mastery: parseMasteryProgress(row.mastery_data),
+    isFlagged: row.is_flagged === true,
+    flaggedAt: row.flagged_at ?? undefined,
   };
 }
 
@@ -540,6 +570,8 @@ function toWordPayload(userId: string, word: Word) {
     basic_info: word.basicInfo ?? null,
     reviews: word.reviews,
     mastery_data: word.mastery ?? {},
+    is_flagged: word.isFlagged === true,
+    flagged_at: word.isFlagged ? word.flaggedAt ?? null : null,
     created_at: word.createdAt,
     updated_at: new Date().toISOString(),
   };
@@ -550,8 +582,25 @@ function omitMasteryData<T extends { mastery_data?: unknown }>(payload: T) {
   return legacyPayload;
 }
 
+function omitFlagColumns(columns: string) {
+  return columns.replace('is_flagged,', '').replace('flagged_at,', '');
+}
+
+function omitFlagFields<
+  T extends { is_flagged?: unknown; flagged_at?: unknown },
+>(payload: T) {
+  const { is_flagged: _isFlagged, flagged_at: _flaggedAt, ...legacyPayload } =
+    payload;
+  return legacyPayload;
+}
+
 function isMissingMasteryDataColumn(error: { message?: string } | null) {
   return Boolean(error?.message?.toLowerCase().includes('mastery_data'));
+}
+
+function isMissingFlagColumns(error: { message?: string } | null) {
+  const message = error?.message?.toLowerCase() ?? '';
+  return message.includes('is_flagged') || message.includes('flagged_at');
 }
 
 function parseMasteryProgress(value: unknown): Word['mastery'] {
@@ -594,12 +643,20 @@ function parseQuizAnswers(value: unknown): QuizAnswer[] {
           'answeredAt' in answer && typeof answer.answeredAt === 'string'
             ? answer.answeredAt
             : undefined;
+        const reviewRating =
+          'reviewRating' in answer &&
+          (answer.reviewRating === 'hard' ||
+            answer.reviewRating === 'correct' ||
+            answer.reviewRating === 'easy')
+            ? answer.reviewRating
+            : undefined;
 
         return {
           wordId: answer.wordId,
           correct: answer.correct,
           difficulty,
           answeredAt,
+          reviewRating,
         };
       }
 

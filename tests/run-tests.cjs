@@ -667,9 +667,15 @@ test('quiz builder creates answer options for up to ten words', () => {
   );
   assert.ok(questions.some((question) => question.mode === 'true-false'));
   questions.forEach((question) => {
-    assert.ok(question.options.includes(question.answer));
+    if (question.mode === 'typed-word') {
+      assert.equal(question.options.length, 0);
+    } else {
+      assert.ok(question.options.includes(question.answer));
+    }
     assert.equal(new Set(question.options).size, question.options.length);
-    assert.ok(question.options.length >= 2);
+    assert.ok(
+      question.mode === 'typed-word' || question.options.length >= 2,
+    );
     assert.ok(question.options.length <= 4);
     assert.ok(question.prompt);
     assert.ok(question.displayText);
@@ -684,6 +690,78 @@ test('quiz questions become more demanding as word mastery grows', () => {
   assert.equal(quiz.getQuestionModeForMastery(69), 'true-false');
   assert.equal(quiz.getQuestionModeForMastery(70), 'definition-to-word');
   assert.equal(quiz.getQuestionModeForMastery(85), 'typed-word');
+});
+
+test('strong-word quizzes rotate formats and cap typed recall', () => {
+  const words = Array.from({ length: 10 }, (_, index) =>
+    makeWord(`strong-${index}`, `Strong${index}`, `Definition ${index}`, 0),
+  );
+  const questions = quiz.buildQuiz(
+    words,
+    [],
+    Object.fromEntries(words.map((word) => [word.id, 92])),
+    words.map((word) => word.id),
+  );
+  const modes = questions.map((question) => question.mode);
+  const typedCount = modes.filter((mode) => mode === 'typed-word').length;
+
+  assert.ok(typedCount >= 3);
+  assert.ok(typedCount <= 4);
+  modes.forEach((mode, index) => {
+    assert.notDeepEqual(modes.slice(index, index + 3), [mode, mode, mode]);
+  });
+});
+
+test('typed recall hints progress without exposing the full answer', () => {
+  const word = {
+    ...makeWord('hint-word', 'Compensatory', 'Making up for a loss.', 0),
+    partOfSpeech: 'adjective',
+    example: 'The payment was compensatory.',
+  };
+  const firstHint = quiz.getTypedRecallHint(word, 1);
+  const secondHint = quiz.getTypedRecallHint(word, 2);
+  const thirdHint = quiz.getTypedRecallHint(word, 3);
+
+  assert.equal(firstHint, 'It starts with “C”.');
+  assert.match(secondHint, /12 letters/);
+  assert.ok(!secondHint.includes('Compensatory'));
+  assert.equal(thirdHint, 'Part of speech: adjective.');
+  assert.equal(
+    quiz.evaluateQuizAnswer('Compensatory', '__wordwiz-revealed-answer__', 'typed-word').correct,
+    false,
+  );
+});
+
+test('typed recall accepts close spellings but flags the correction', () => {
+  assert.deepEqual(
+    quiz.evaluateQuizAnswer('Compensatory', 'Compensitory', 'typed-word'),
+    { correct: true, hasSpellingNote: true },
+  );
+  assert.deepEqual(
+    quiz.evaluateQuizAnswer('Compensatory', 'compensatory', 'typed-word'),
+    { correct: true, hasSpellingNote: false },
+  );
+  assert.deepEqual(
+    quiz.evaluateQuizAnswer('Compensatory', 'Compensation', 'typed-word'),
+    { correct: false, hasSpellingNote: false },
+  );
+  assert.deepEqual(
+    quiz.evaluateQuizAnswer('Compensatory', 'Compensitory', 'definition-to-word'),
+    { correct: false, hasSpellingNote: false },
+  );
+});
+
+test('quiz prompts use a complete definition when a saved summary is cut off', () => {
+  const definition =
+    'A combination of events that come together by chance to make a surprisingly good or wonderful outcome.';
+  const word = {
+    ...makeWord('complete-prompt', 'Serendipity', definition, 0),
+    simpleDefinition:
+      'A combination of events that come together by chance to make a surprisingly good or wonde',
+  };
+  const [question] = quiz.buildQuiz([word], [], { [word.id]: 85 });
+  assert.equal(question.mode, 'typed-word');
+  assert.equal(question.displayText, definition);
 });
 
 test('durable mastery needs repeated, delayed quiz evidence', () => {
@@ -745,7 +823,7 @@ test('delayed correct recall earns a retention bonus while mistakes reduce maste
   )[0];
   assert.equal(missed.mastery.masteryPercent, 18);
   assert.equal(missed.mastery.correctStreak, 0);
-  assert.ok(missed.mastery.nextReviewAt.startsWith('2026-01-04T15:'));
+  assert.ok(missed.mastery.nextReviewAt.startsWith('2026-01-04T11:10:'));
 });
 
 test('mastery stays bounded and percentage alone cannot mark a word mastered', () => {
@@ -800,6 +878,7 @@ test('mastery requires correct reviews on three separate days and flashcards do 
       successfulReviewDays: ['2026-01-01', '2026-01-02'],
       highestQuestionDifficultyCompleted: 'typed-recall',
       recentResults: [{ correct: true, difficulty: 'typed-recall', answeredAt: '2026-01-02T10:00:00.000Z' }],
+      nextReviewAt: '2026-01-03T10:00:00.000Z',
     },
   };
   assert.equal(learning.isWordMastered(word.mastery), false);
@@ -819,12 +898,243 @@ test('mastery requires correct reviews on three separate days and flashcards do 
     analytics,
     new Date('2026-01-02T12:00:00.000Z'),
   )[0];
-  assert.ok(stillLearning.mastery.nextReviewAt < studied.mastery.nextReviewAt);
+  assert.equal(studied.mastery.nextReviewAt, word.mastery.nextReviewAt);
+  assert.equal(stillLearning.mastery.nextReviewAt, word.mastery.nextReviewAt);
 
   const legacy = makeWord('legacy-mastery', 'Legacy', 'Existing progress.', 5);
   const migrated = learning.getWordMasteryProgress(legacy, analytics);
   assert.equal(migrated.masteryPercent, 60);
   assert.equal(learning.isWordMastered(migrated), false);
+});
+
+test('spaced review stages follow safe defaults and adapt to hard and easy recalls', () => {
+  const analytics = { cardHistory: [], quizHistory: [] };
+  let word = makeWord('staged-review', 'Staged', 'Arranged in steps.', 0);
+
+  word = learning.applyQuizMastery(
+    [word],
+    [{ wordId: word.id, correct: true, difficulty: 'multiple-choice', answeredAt: '2026-01-01T09:00:00.000Z' }],
+    analytics,
+  )[0];
+  assert.equal(word.mastery.reviewStage, 1);
+  assert.equal(word.mastery.nextReviewAt, '2026-01-01T09:15:00.000Z');
+
+  word = learning.applyQuizMastery(
+    [word],
+    [{ wordId: word.id, correct: true, difficulty: 'multiple-choice', answeredAt: '2026-01-01T09:15:00.000Z' }],
+    analytics,
+  )[0];
+  assert.equal(word.mastery.reviewStage, 2);
+  assert.equal(word.mastery.nextReviewAt, '2026-01-02T09:15:00.000Z');
+
+  word = learning.applyQuizMastery(
+    [word],
+    [{ wordId: word.id, correct: true, difficulty: 'multiple-choice', reviewRating: 'hard', answeredAt: '2026-01-02T09:15:00.000Z' }],
+    analytics,
+  )[0];
+  assert.equal(word.mastery.reviewStage, 2);
+  assert.equal(word.mastery.nextReviewAt, '2026-01-03T09:15:00.000Z');
+
+  word = learning.applyQuizMastery(
+    [word],
+    [{ wordId: word.id, correct: true, difficulty: 'multiple-choice', reviewRating: 'easy', answeredAt: '2026-01-03T09:15:00.000Z' }],
+    analytics,
+  )[0];
+  assert.equal(word.mastery.reviewStage, 4);
+  assert.equal(word.mastery.nextReviewAt, '2026-01-10T09:15:00.000Z');
+});
+
+test('new mastery requires the fourteen-day interval and preserves mastery after a lapse', () => {
+  const analytics = { cardHistory: [], quizHistory: [] };
+  const word = {
+    ...makeWord('interval-mastery', 'Interval', 'A space between things.', 0),
+    mastery: {
+      masteryPercent: 80,
+      totalCorrect: 5,
+      totalIncorrect: 0,
+      correctStreak: 5,
+      successfulReviewCount: 5,
+      reviewStage: 5,
+      successfulReviewDays: ['2025-12-01', '2025-12-02', '2025-12-05', '2025-12-12', '2025-12-26'],
+      highestQuestionDifficultyCompleted: 'typed-recall',
+      recentResults: [{ correct: true, difficulty: 'typed-recall', answeredAt: '2025-12-26T09:00:00.000Z' }],
+      nextReviewAt: '2026-01-09T09:00:00.000Z',
+    },
+  };
+  const mastered = learning.applyQuizMastery(
+    [word],
+    [{ wordId: word.id, correct: true, difficulty: 'typed-recall', answeredAt: '2026-01-09T09:00:00.000Z' }],
+    analytics,
+  )[0];
+  assert.equal(mastered.mastery.reviewStage, 6);
+  assert.equal(learning.isWordMastered(mastered.mastery), true);
+  assert.equal(mastered.mastery.masteredAt, '2026-01-09T09:00:00.000Z');
+
+  const lapsed = learning.applyQuizMastery(
+    [mastered],
+    [{ wordId: word.id, correct: false, difficulty: 'typed-recall', answeredAt: '2026-02-08T09:00:00.000Z' }],
+    analytics,
+  )[0];
+  assert.equal(lapsed.mastery.reviewStage, 1);
+  assert.equal(lapsed.mastery.nextReviewAt, '2026-02-08T09:10:00.000Z');
+  assert.equal(lapsed.mastery.masteredAt, '2026-01-09T09:00:00.000Z');
+
+  const relearned = learning.applyQuizMastery(
+    [lapsed],
+    [{ wordId: word.id, correct: true, difficulty: 'typed-recall', answeredAt: '2026-02-08T09:10:00.000Z' }],
+    analytics,
+  )[0];
+  assert.equal(relearned.mastery.reviewStage, 2);
+  assert.equal(relearned.mastery.nextReviewAt, '2026-02-09T09:10:00.000Z');
+});
+
+test('due reviews sort locally by overdue time and safely handle malformed schedules', () => {
+  const analytics = { cardHistory: [], quizHistory: [] };
+  const words = [
+    {
+      ...makeWord('due-oldest', 'Oldest', 'Existing the longest.', 0),
+      createdAt: '2026-01-01T09:00:00.000Z',
+      mastery: { ...learning.createWordMasteryProgress('2026-01-01T09:00:00.000Z'), masteryPercent: 40, nextReviewAt: '2026-01-08T09:00:00.000Z' },
+    },
+    {
+      ...makeWord('due-weaker', 'Weaker', 'Less strong.', 0),
+      createdAt: '2026-01-01T09:00:00.000Z',
+      mastery: { ...learning.createWordMasteryProgress('2026-01-01T09:00:00.000Z'), masteryPercent: 10, nextReviewAt: '2026-01-09T09:00:00.000Z' },
+    },
+    {
+      ...makeWord('malformed-due', 'Malformed', 'Not correctly formed.', 0),
+      createdAt: '2026-01-02T09:00:00.000Z',
+      mastery: { ...learning.createWordMasteryProgress('2026-01-02T09:00:00.000Z'), nextReviewAt: 'not-a-date' },
+    },
+  ];
+  const due = learning.getDueReviewWords(
+    words,
+    analytics,
+    new Date('2026-01-10T09:00:00.000Z'),
+  );
+  assert.deepEqual(
+    due.map((item) => item.word.id),
+    ['malformed-due', 'due-oldest', 'due-weaker'],
+  );
+  assert.equal(due[0].timingLabel, '8 days overdue');
+  assert.equal(due[1].timingLabel, '2 days overdue');
+});
+
+test('quiz builder prioritizes due word ids and still fills a normal quiz without duplicates', () => {
+  const words = [
+    makeWord('one', 'One', 'First.', 0),
+    makeWord('two', 'Two', 'Second.', 0),
+    makeWord('three', 'Three', 'Third.', 0),
+    makeWord('four', 'Four', 'Fourth.', 0),
+  ];
+  const questions = quiz.buildQuiz(words, [], {}, ['three', 'one']);
+  assert.deepEqual(
+    questions.slice(0, 2).map((question) => question.word.id),
+    ['three', 'one'],
+  );
+  assert.equal(new Set(questions.map((question) => question.word.id)).size, questions.length);
+});
+
+test('category practice expands small groups with distinct formats without extra mastery updates', () => {
+  const oneWord = [makeWord('solo', 'Solo', 'Existing alone.', 0)];
+  const twoWords = [
+    makeWord('one', 'One', 'First.', 0),
+    makeWord('two', 'Two', 'Second.', 0),
+  ];
+  const threeWords = [
+    ...twoWords,
+    makeWord('three', 'Three', 'Third.', 0),
+  ];
+  const fourWords = [
+    ...threeWords,
+    makeWord('four', 'Four', 'Fourth.', 0),
+  ];
+  const quizSets = [
+    [oneWord, 3],
+    [twoWords, 4],
+    [threeWords, 6],
+  ];
+
+  quizSets.forEach(([words, expectedLength]) => {
+    const questions = quiz.buildCategoryPracticeQuiz(words, [], {});
+    assert.equal(questions.length, expectedLength);
+    assert.equal(
+      new Set(
+        questions.map(
+          (question) =>
+            `${question.prompt}\u0000${question.displayText}\u0000${question.answer}`,
+        ),
+      ).size,
+      questions.length,
+    );
+    assert.equal(
+      new Set(questions.map((question) => `${question.word.id}\u0000${question.mode}`)).size,
+      questions.length,
+    );
+    assert.ok(
+      questions.filter((question) => question.mode === 'typed-word').length <=
+        Math.max(1, Math.round(questions.length * 0.35)),
+    );
+    questions.forEach((question) => {
+      assert.ok(
+        questions.filter((item) => item.word.id === question.word.id).length <= 3,
+      );
+    });
+  });
+
+  const normalFourWordQuiz = quiz.buildQuiz(fourWords, [], {});
+  const categoryFourWordQuiz = quiz.buildCategoryPracticeQuiz(fourWords, [], {});
+  assert.equal(categoryFourWordQuiz.length, normalFourWordQuiz.length);
+
+  const oneWordQuestions = quiz.buildCategoryPracticeQuiz(oneWord, [], {});
+  const updatedWord = learning.applyQuizMastery(
+    oneWord,
+    oneWordQuestions.map((question) => ({
+      wordId: question.word.id,
+      correct: true,
+      difficulty: question.difficulty,
+      answeredAt: '2026-01-01T10:00:00.000Z',
+    })),
+    { cardHistory: [], quizHistory: [] },
+  )[0];
+  assert.equal(updatedWord.reviews, oneWord[0].reviews + 1);
+  assert.equal(updatedWord.mastery.totalCorrect, 1);
+});
+
+test('flagged words remain ordinary words for mastery and small-group practice', () => {
+  const flaggedWord = {
+    ...makeWord('flagged', 'Flagged', 'Marked for extra study.', 0),
+    isFlagged: true,
+    flaggedAt: '2026-01-01T09:00:00.000Z',
+  };
+  const questions = quiz.buildCategoryPracticeQuiz([flaggedWord], [], {});
+  assert.equal(questions.length, 3);
+
+  const updatedWord = learning.applyQuizMastery(
+    [flaggedWord],
+    [{
+      wordId: flaggedWord.id,
+      correct: true,
+      difficulty: 'multiple-choice',
+      answeredAt: '2026-01-01T10:00:00.000Z',
+    }],
+    { cardHistory: [], quizHistory: [] },
+  )[0];
+  assert.equal(updatedWord.isFlagged, true);
+  assert.equal(updatedWord.flaggedAt, flaggedWord.flaggedAt);
+  assert.equal(updatedWord.reviews, flaggedWord.reviews + 1);
+});
+
+test('word merging keeps local flagged metadata when legacy cloud words omit it', () => {
+  const cloudWord = makeWord('merge-flag', 'Merge Flag', 'A cloud word.', 0);
+  const localWord = {
+    ...cloudWord,
+    isFlagged: true,
+    flaggedAt: '2026-01-02T09:00:00.000Z',
+  };
+  const [mergedWord] = learning.mergeWordLists([cloudWord], [localWord]);
+  assert.equal(mergedWord.isFlagged, true);
+  assert.equal(mergedWord.flaggedAt, localWord.flaggedAt);
 });
 
 test('mastery keeps only the ten most recent quiz results', () => {

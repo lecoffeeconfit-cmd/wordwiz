@@ -5,7 +5,7 @@ import { COLORS } from '../constants/theme';
 import type { AnalyticsData, LegalPage, QuizAnswer, QuizProgress, QuizQuestion, ReminderSettings, SortMode, Word } from '../types';
 import type { AuthUser } from '../types';
 import { styles } from '../styles';
-import { MASTERY_LEVELS, buildAchievements, buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, getDayKey, getHeroProgressColor, getMasteryLevel, getMasteryLevelProgress, getNextMasteryLevel, getProgressColor, getProgressPaleColor, getQuizAttemptKind, getRecentDays, getStreakMessage, getStreakMilestone, getStreakWeek, getWordMastery, getWordMasteryCategory, getWordMasteryCategoryForWord, shuffle } from '../utils';
+import { MASTERY_LEVELS, buildAchievements, buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, getDayKey, getDueReviewWords, getHeroProgressColor, getMasteryLevel, getMasteryLevelProgress, getNextMasteryLevel, getProgressColor, getProgressPaleColor, getQuizAttemptKind, getRecentDays, getStreakMessage, getStreakMilestone, getStreakWeek, getWordMastery, getWordMasteryCategory, getWordMasteryCategoryForWord, shuffle } from '../utils';
 import { DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 import { LessonProgressRing } from '../components/dashboard/LessonProgressRing';
 
@@ -15,6 +15,9 @@ export function DashboardScreen({
   currentUser,
   reminderSettings,
   dailyQuizGoal,
+  onReviewDue,
+  onStudyFlaggedCards,
+  onStudyFlaggedQuiz,
   onUpdateReminder,
   onUpdateDailyQuizGoal,
   onOpenLegal,
@@ -26,6 +29,9 @@ export function DashboardScreen({
   currentUser: AuthUser | null;
   reminderSettings: ReminderSettings;
   dailyQuizGoal: number;
+  onReviewDue: () => void;
+  onStudyFlaggedCards: () => void;
+  onStudyFlaggedQuiz: () => void;
   onUpdateReminder: (settings: ReminderSettings) => void;
   onUpdateDailyQuizGoal: (goal: number) => void;
   onOpenLegal: (page: LegalPage) => void;
@@ -36,6 +42,7 @@ export function DashboardScreen({
   const [masteryExpanded, setMasteryExpanded] = useState(false);
   const [quizTrendExpanded, setQuizTrendExpanded] = useState(false);
   const [practiceEstimateExpanded, setPracticeEstimateExpanded] = useState(false);
+  const [dueReviewsExpanded, setDueReviewsExpanded] = useState(false);
   const [activityWindow, setActivityWindow] = useState<7 | 30>(7);
   const masterSparkleScale = useRef(new Animated.Value(1)).current;
   const lastMasteryRowTapAt = useRef(0);
@@ -75,6 +82,11 @@ export function DashboardScreen({
       category: getWordMasteryCategoryForWord(word, analytics),
     }))
     .sort((first, second) => second.score - first.score);
+  const dueReviews = getDueReviewWords(words, analytics);
+  const flaggedCount = words.filter((word) => word.isFlagged).length;
+  const dueReviewPreview = dueReviewsExpanded
+    ? dueReviews
+    : dueReviews.slice(0, 3);
   const overallMastery = words.length
     ? Math.round(
         mastery.reduce((total, item) => total + item.score, 0) / words.length,
@@ -458,6 +470,63 @@ export function DashboardScreen({
         </View>
       </View>
 
+      <View style={styles.dailyGoalCard}>
+        <View style={styles.dailyGoalHeader}>
+          <View style={styles.dailyGoalIcon}>
+            <Ionicons name="trophy-outline" size={23} color={COLORS.teal} />
+          </View>
+          <View style={styles.dailyGoalCopy}>
+            <Text style={styles.dailyGoalLabel}>DAILY PRACTICE</Text>
+            <Text style={styles.dailyGoalTitle}>Quiz goal</Text>
+          </View>
+          <View style={styles.dailyGoalBadge}>
+            <Text style={styles.dailyGoalBadgeText}>
+              {dailyQuizGoal} {dailyQuizGoal === 1 ? 'quiz' : 'quizzes'}
+            </Text>
+          </View>
+        </View>
+        <Text style={styles.dailyGoalText}>
+          Choose how many quizzes you want to complete each day. Every finished
+          quiz counts, even when it has fewer than ten questions.
+        </Text>
+        <View style={styles.dailyGoalStepper}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Decrease daily quiz goal"
+            accessibilityState={{ disabled: dailyQuizGoal <= 1 }}
+            disabled={dailyQuizGoal <= 1}
+            onPress={() => onUpdateDailyQuizGoal(dailyQuizGoal - 1)}
+            style={({ pressed }) => [
+              styles.dailyGoalStepButton,
+              dailyQuizGoal <= 1 && styles.dailyGoalStepButtonDisabled,
+              pressed && dailyQuizGoal > 1 && styles.pressed,
+            ]}
+          >
+            <Ionicons name="remove" size={21} color={COLORS.teal} />
+          </Pressable>
+          <View style={styles.dailyGoalValue}>
+            <Text style={styles.dailyGoalNumber}>{dailyQuizGoal}</Text>
+            <Text style={styles.dailyGoalUnit}>
+              {dailyQuizGoal === 1 ? 'QUIZ PER DAY' : 'QUIZZES PER DAY'}
+            </Text>
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Increase daily quiz goal"
+            accessibilityState={{ disabled: dailyQuizGoal >= 5 }}
+            disabled={dailyQuizGoal >= 5}
+            onPress={() => onUpdateDailyQuizGoal(dailyQuizGoal + 1)}
+            style={({ pressed }) => [
+              styles.dailyGoalStepButton,
+              dailyQuizGoal >= 5 && styles.dailyGoalStepButtonDisabled,
+              pressed && dailyQuizGoal < 5 && styles.pressed,
+            ]}
+          >
+            <Ionicons name="add" size={21} color={COLORS.teal} />
+          </Pressable>
+        </View>
+      </View>
+
       <DashboardSection
         title={`LAST ${activityWindow} DAYS`}
         badge={`${weeklyActivityTotal} activities`}
@@ -743,6 +812,143 @@ export function DashboardScreen({
           </View>
         </View>
       </View>
+
+      <DashboardSection
+        title="DUE FOR REVIEW"
+        badge={dueReviews.length ? `${dueReviews.length} due` : 'All caught up'}
+      >
+        {dueReviews.length === 0 ? (
+          <View style={styles.dueReviewEmpty}>
+            <Ionicons name="checkmark-circle" size={22} color={COLORS.greenDark} />
+            <View style={styles.dueReviewEmptyCopy}>
+              <Text style={styles.dueReviewEmptyTitle}>You’re caught up</Text>
+              <Text style={styles.dueReviewEmptyText}>
+                Your next review will appear here.
+              </Text>
+            </View>
+          </View>
+        ) : (
+          <>
+            <Text style={styles.dueReviewIntro}>
+              Research-backed, time-based retention learning schedules proven for stronger word retention.
+            </Text>
+            {dueReviewPreview.map((item) => {
+              const category = getWordMasteryCategoryForWord(
+                item.word,
+                analytics,
+              );
+              const lastReviewedLabel = formatLastReviewed(
+                item.progress.lastReviewedAt,
+              );
+
+              return (
+                <View key={item.word.id} style={styles.dueReviewRow}>
+                  <View
+                    style={[
+                      styles.dueReviewIcon,
+                      { backgroundColor: category.pale },
+                    ]}
+                  >
+                    <Ionicons name="time-outline" size={16} color={category.color} />
+                  </View>
+                  <View style={styles.dueReviewCopy}>
+                    <Text numberOfLines={1} style={styles.dueReviewWord}>
+                      {item.word.term}
+                    </Text>
+                    <Text style={[styles.dueReviewStatus, { color: category.color }]}>
+                      {category.shortLabel} · {lastReviewedLabel}
+                    </Text>
+                  </View>
+                  <Text style={styles.dueReviewTiming}>{item.timingLabel}</Text>
+                </View>
+              );
+            })}
+            <View style={styles.dueReviewActions}>
+              {dueReviews.length > 3 ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityState={{ expanded: dueReviewsExpanded }}
+                  onPress={() => setDueReviewsExpanded((expanded) => !expanded)}
+                  style={({ pressed }) => [
+                    styles.dueReviewViewAll,
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <Text style={styles.dueReviewViewAllText}>
+                    {dueReviewsExpanded ? 'Show fewer' : 'View all'}
+                  </Text>
+                  <Ionicons
+                    name={dueReviewsExpanded ? 'chevron-up' : 'chevron-down'}
+                    size={16}
+                    color={COLORS.purpleDark}
+                  />
+                </Pressable>
+              ) : null}
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Review due words now"
+                onPress={onReviewDue}
+                style={({ pressed }) => [
+                  styles.dueReviewButton,
+                  pressed && styles.primaryButtonPressed,
+                ]}
+              >
+                <Ionicons name="play" size={14} color={COLORS.white} />
+                <Text style={styles.dueReviewButtonText}>REVIEW NOW</Text>
+              </Pressable>
+            </View>
+          </>
+        )}
+      </DashboardSection>
+
+      <DashboardSection
+        title="FLAGGED WORDS"
+        badge={flaggedCount ? `${flaggedCount} saved` : 'None yet'}
+      >
+        <View style={styles.flaggedDashboardRow}>
+          <View style={styles.flaggedDashboardIcon}>
+            <Ionicons name="bookmark" size={20} color={COLORS.purpleDark} />
+          </View>
+          <View style={styles.flaggedDashboardCopy}>
+            <Text style={styles.flaggedDashboardTitle}>
+              {flaggedCount ? 'Extra practice, your way' : 'Save tricky words'}
+            </Text>
+            <Text style={styles.flaggedDashboardText}>
+              {flaggedCount
+                ? 'Study only the words you marked for another look.'
+                : 'Flag a flashcard or quiz word to collect it here.'}
+            </Text>
+          </View>
+        </View>
+        <View style={styles.flaggedDashboardActions}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Study flagged words with flashcards"
+            disabled={flaggedCount === 0}
+            onPress={onStudyFlaggedCards}
+            style={[
+              styles.flaggedDashboardButton,
+              flaggedCount === 0 && styles.practiceButtonDisabled,
+            ]}
+          >
+            <Ionicons name="albums-outline" size={15} color={COLORS.purpleDark} />
+            <Text style={styles.flaggedDashboardButtonText}>CARDS</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Practice a quiz with flagged words"
+            disabled={flaggedCount === 0}
+            onPress={onStudyFlaggedQuiz}
+            style={[
+              styles.flaggedDashboardButton,
+              flaggedCount === 0 && styles.practiceButtonDisabled,
+            ]}
+          >
+            <Ionicons name="help-circle-outline" size={15} color={COLORS.purpleDark} />
+            <Text style={styles.flaggedDashboardButtonText}>QUIZ</Text>
+          </Pressable>
+        </View>
+      </DashboardSection>
 
       <DashboardSection
         title="ACHIEVEMENTS"
@@ -1194,63 +1400,6 @@ export function DashboardScreen({
         ) : null}
       </Pressable>
 
-      <View style={styles.dailyGoalCard}>
-        <View style={styles.dailyGoalHeader}>
-          <View style={styles.dailyGoalIcon}>
-            <Ionicons name="trophy-outline" size={23} color={COLORS.teal} />
-          </View>
-          <View style={styles.dailyGoalCopy}>
-            <Text style={styles.dailyGoalLabel}>DAILY PRACTICE</Text>
-            <Text style={styles.dailyGoalTitle}>Quiz goal</Text>
-          </View>
-          <View style={styles.dailyGoalBadge}>
-            <Text style={styles.dailyGoalBadgeText}>
-              {dailyQuizGoal} {dailyQuizGoal === 1 ? 'quiz' : 'quizzes'}
-            </Text>
-          </View>
-        </View>
-        <Text style={styles.dailyGoalText}>
-          Choose how many quizzes you want to complete each day. Every finished
-          quiz counts, even when it has fewer than ten questions.
-        </Text>
-        <View style={styles.dailyGoalStepper}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Decrease daily quiz goal"
-            accessibilityState={{ disabled: dailyQuizGoal <= 1 }}
-            disabled={dailyQuizGoal <= 1}
-            onPress={() => onUpdateDailyQuizGoal(dailyQuizGoal - 1)}
-            style={({ pressed }) => [
-              styles.dailyGoalStepButton,
-              dailyQuizGoal <= 1 && styles.dailyGoalStepButtonDisabled,
-              pressed && dailyQuizGoal > 1 && styles.pressed,
-            ]}
-          >
-            <Ionicons name="remove" size={21} color={COLORS.teal} />
-          </Pressable>
-          <View style={styles.dailyGoalValue}>
-            <Text style={styles.dailyGoalNumber}>{dailyQuizGoal}</Text>
-            <Text style={styles.dailyGoalUnit}>
-              {dailyQuizGoal === 1 ? 'QUIZ PER DAY' : 'QUIZZES PER DAY'}
-            </Text>
-          </View>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Increase daily quiz goal"
-            accessibilityState={{ disabled: dailyQuizGoal >= 5 }}
-            disabled={dailyQuizGoal >= 5}
-            onPress={() => onUpdateDailyQuizGoal(dailyQuizGoal + 1)}
-            style={({ pressed }) => [
-              styles.dailyGoalStepButton,
-              dailyQuizGoal >= 5 && styles.dailyGoalStepButtonDisabled,
-              pressed && dailyQuizGoal < 5 && styles.pressed,
-            ]}
-          >
-            <Ionicons name="add" size={21} color={COLORS.teal} />
-          </Pressable>
-        </View>
-      </View>
-
       <View style={styles.accountCard}>
         <View style={styles.accountAvatar}>
           <Text style={styles.accountAvatarText}>
@@ -1515,4 +1664,15 @@ function formatReminderHour(hour: number) {
 
 function formatReminderMinute(minute: number) {
   return minute.toString().padStart(2, '0');
+}
+
+function formatLastReviewed(value: string | undefined) {
+  if (!value) return 'New word';
+  const reviewedAt = new Date(value);
+  if (Number.isNaN(reviewedAt.getTime())) return 'New word';
+
+  return `Reviewed ${reviewedAt.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+  })}`;
 }

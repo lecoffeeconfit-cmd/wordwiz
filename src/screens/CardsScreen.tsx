@@ -7,22 +7,37 @@ import { styles } from '../styles';
 import { buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, formatWordAddedDate, getCompleteFlashcardDefinition, getDayKey, getRecentDays, getStreakMessage, getStreakWeek, getWordMastery, getWordMasteryCategoryForWord, shuffle, sortWordsAlphabetically, WORD_MASTERY_CATEGORIES, type WordMasteryCategoryId } from '../utils';
 import { DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, SpeakButton, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 
+type CardsStudyGroupId = WordMasteryCategoryId | 'flagged';
+
+const FLAGGED_STUDY_GROUP = {
+  id: 'flagged' as const,
+  label: 'Flagged Words',
+  shortLabel: 'Flagged',
+  icon: 'bookmark' as const,
+  color: COLORS.purpleDark,
+  pale: COLORS.purplePale,
+};
+
 export function CardsScreen({
   words,
   analytics,
   initialWordId,
+  initialStudyGroup,
   onEditWord,
   onReview,
+  onToggleFlag,
 }: {
   words: Word[];
   analytics: AnalyticsData;
   initialWordId?: string | null;
+  initialStudyGroup?: 'flagged';
   onEditWord?: (word: Word) => void;
   onReview: (
     wordId: string,
     remembered: boolean,
     durationSeconds: number,
   ) => void;
+  onToggleFlag: (wordId: string) => void;
 }) {
   const [cardIndex, setCardIndex] = useState(0);
   const [showAnswer, setShowAnswer] = useState(false);
@@ -33,7 +48,12 @@ export function CardsScreen({
   );
   const [shuffleVersion, setShuffleVersion] = useState(0);
   const [selectedCategory, setSelectedCategory] =
-    useState<WordMasteryCategoryId>('all');
+    useState<CardsStudyGroupId>(initialStudyGroup ?? 'all');
+  const [flaggedSessionIds, setFlaggedSessionIds] = useState<string[] | null>(
+    initialStudyGroup === 'flagged'
+      ? words.filter((word) => word.isFlagged).map((word) => word.id)
+      : null,
+  );
   const wordMastery = useMemo(
     () =>
       words.map((word) => ({
@@ -57,19 +77,28 @@ export function CardsScreen({
       ),
     [wordMastery, words.length],
   );
+  const flaggedCount = useMemo(
+    () => words.filter((word) => word.isFlagged).length,
+    [words],
+  );
   const filteredWords = useMemo(
     () =>
       selectedCategory === 'all'
         ? words
+        : selectedCategory === 'flagged'
+          ? words.filter((word) =>
+              (flaggedSessionIds ?? words.filter((item) => item.isFlagged).map((item) => item.id)).includes(word.id),
+            )
         : wordMastery
             .filter((item) => item.categoryId === selectedCategory)
             .map((item) => item.word),
-    [selectedCategory, wordMastery, words],
+    [flaggedSessionIds, selectedCategory, wordMastery, words],
   );
+  const studyGroups = [...WORD_MASTERY_CATEGORIES, FLAGGED_STUDY_GROUP];
   const selectedCategoryDetails =
-    WORD_MASTERY_CATEGORIES.find(
+    studyGroups.find(
       (category) => category.id === selectedCategory,
-    ) ?? WORD_MASTERY_CATEGORIES[0];
+    ) ?? studyGroups[0];
   const alphabeticalWords = useMemo(
     () => sortWordsAlphabetically(filteredWords),
     [filteredWords],
@@ -100,6 +129,13 @@ export function CardsScreen({
       Math.min(120, Math.round((cardActiveElapsedMs.current + activeSegment) / 1000)),
     );
   }
+
+  useEffect(() => {
+    if (initialStudyGroup === 'flagged') {
+      setSelectedCategory('flagged');
+      setFlaggedSessionIds(words.filter((word) => word.isFlagged).map((word) => word.id));
+    }
+  }, [initialStudyGroup]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextState) => {
@@ -152,9 +188,12 @@ export function CardsScreen({
       contentContainerStyle={styles.practiceCategoryList}
       style={styles.practiceCategoryScroller}
     >
-      {WORD_MASTERY_CATEGORIES.map((category) => {
+      {studyGroups.map((category) => {
         const isActive = selectedCategory === category.id;
-        const count = categoryCounts[category.id] ?? 0;
+        const count =
+          category.id === 'flagged'
+            ? flaggedCount
+            : categoryCounts[category.id] ?? 0;
 
         return (
           <Pressable
@@ -162,7 +201,14 @@ export function CardsScreen({
             accessibilityRole="button"
             accessibilityLabel={`Study ${category.label.toLowerCase()}`}
             accessibilityState={{ selected: isActive }}
-            onPress={() => setSelectedCategory(category.id)}
+            onPress={() => {
+              setSelectedCategory(category.id);
+              setFlaggedSessionIds(
+                category.id === 'flagged'
+                  ? words.filter((word) => word.isFlagged).map((word) => word.id)
+                  : null,
+              );
+            }}
             style={[
               styles.practiceCategoryChip,
               isActive && styles.practiceCategoryChipActive,
@@ -265,7 +311,11 @@ export function CardsScreen({
         </View>
         <EmptyPractice
           icon="albums-outline"
-          label="Pick another group or keep reviewing to move words here."
+          label={
+            selectedCategory === 'flagged'
+              ? 'Flag words while studying to review them here.'
+              : 'Pick another group or keep reviewing to move words here.'
+          }
         />
       </ScrollView>
     );
@@ -418,6 +468,7 @@ export function CardsScreen({
         </Pressable>
       </View>
 
+      <View style={styles.flashcardShell}>
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={showAnswer ? 'Definition shown' : 'Reveal definition'}
@@ -529,6 +580,28 @@ export function CardsScreen({
           )}
         </View>
       </Pressable>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={
+          current.isFlagged
+            ? 'Remove word from flagged words'
+            : 'Flag word'
+        }
+        accessibilityState={{ selected: current.isFlagged }}
+        onPress={() => onToggleFlag(current.id)}
+        style={({ pressed }) => [
+          styles.flashcardBookmarkButton,
+          current.isFlagged && styles.flashcardBookmarkButtonActive,
+          pressed && styles.pressed,
+        ]}
+      >
+        <Ionicons
+          name={current.isFlagged ? 'bookmark' : 'bookmark-outline'}
+          size={19}
+          color={current.isFlagged ? COLORS.purpleDark : COLORS.muted}
+        />
+      </Pressable>
+      </View>
 
       {showAnswer ? (
         <View style={styles.cardActions}>

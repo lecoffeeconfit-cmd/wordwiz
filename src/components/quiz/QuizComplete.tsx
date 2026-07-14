@@ -15,6 +15,8 @@ export function QuizComplete({
 }) {
   const percentage = total ? Math.round((score / total) * 100) : 0;
   const isPractice = mode === 'practice';
+  const isPerfect = percentage === 100;
+  const isStrongScore = percentage >= 80;
   const [now, setNow] = useState(() => Date.now());
   const refreshParts = useMemo(() => getDailyRefreshParts(now), [now]);
 
@@ -35,7 +37,7 @@ export function QuizComplete({
       <View style={styles.completeHeaderRow}>
         <View style={[styles.completeBadge, !isPractice && styles.completeBadgeDaily]}>
           <Ionicons
-            name={isPractice ? 'sparkles' : 'checkmark'}
+            name={isPerfect ? 'trophy' : isPractice ? 'sparkles' : 'checkmark'}
             size={34}
             color={COLORS.white}
           />
@@ -45,11 +47,21 @@ export function QuizComplete({
             {isPractice ? 'PRACTICE ROUND' : 'DAILY QUIZ'}
           </Text>
           <Text style={styles.completeTitle}>
-            {isPractice ? 'Practice complete' : 'Daily goal complete'}
+            {isPerfect
+              ? 'Perfect recall!'
+              : isPractice
+                ? 'Practice complete'
+                : 'Daily goal complete'}
           </Text>
         </View>
       </View>
-      <View style={[styles.completeScoreCard, !isPractice && styles.completeScoreCardDaily]}>
+      <View
+        style={[
+          styles.completeScoreCard,
+          !isPractice && styles.completeScoreCardDaily,
+          isStrongScore && styles.completeScoreCardStrong,
+        ]}
+      >
         <View style={styles.completeScoreMain}>
           <Text style={styles.completeScoreLabel}>YOUR SCORE</Text>
           <Text
@@ -63,11 +75,33 @@ export function QuizComplete({
           <Text style={styles.completeScoreMeta}>
             CORRECT · {percentage}% ACCURACY
           </Text>
+          {isStrongScore ? (
+            <View
+              style={[
+                styles.completeRewardPill,
+                isPerfect && styles.completeRewardPillPerfect,
+              ]}
+            >
+              <Ionicons
+                name={isPerfect ? 'trophy' : 'sparkles'}
+                size={14}
+                color={isPerfect ? '#C68B00' : COLORS.greenDark}
+              />
+              <Text
+                style={[
+                  styles.completeRewardPillText,
+                  isPerfect && styles.completeRewardPillTextPerfect,
+                ]}
+              >
+                {isPerfect ? 'PERFECT RECALL' : 'STRONG RECALL'}
+              </Text>
+            </View>
+          ) : null}
         </View>
       </View>
       <Text style={styles.completeText}>
         {percentage === 100
-          ? 'A perfect round. Those words are looking familiar!'
+          ? 'Every answer landed. Those words are really starting to stick.'
           : percentage >= 60
             ? 'Great practice. Every review makes your memory stronger.'
             : 'Good start. The flashcards are ready for another look.'}
@@ -89,7 +123,7 @@ export function QuizComplete({
           <Text style={styles.quizCreditNoteText}>
             {isPractice
               ? 'Practice does not replace today’s daily score, but it still helps your stats and word mastery.'
-              : 'Daily streak credit saved. Extra practice still helps your stats and word mastery.'}
+              : 'Daily streak saved. Extra practice still strengthens your word memory.'}
           </Text>
         </View>
         <View style={styles.completeNoticeDivider} />

@@ -16,12 +16,18 @@ create table if not exists public.words (
   basic_info text,
   reviews integer not null default 0,
   mastery_data jsonb not null default '{}'::jsonb,
+  is_flagged boolean not null default false,
+  flagged_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 
 alter table public.words
   add column if not exists mastery_data jsonb not null default '{}'::jsonb;
+
+alter table public.words
+  add column if not exists is_flagged boolean not null default false,
+  add column if not exists flagged_at timestamptz;
 
 create table if not exists public.quiz_attempts (
   id uuid primary key default gen_random_uuid(),
