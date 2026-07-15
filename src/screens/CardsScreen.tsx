@@ -4,10 +4,10 @@ import { AppState, FlatList, Pressable, ScrollView, Text, View } from 'react-nat
 import { COLORS } from '../constants/theme';
 import type { AnalyticsData, LegalPage, QuizAnswer, QuizProgress, QuizQuestion, ReminderSettings, SortMode, Word } from '../types';
 import { styles } from '../styles';
-import { buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, formatWordAddedDate, getCompleteFlashcardDefinition, getDayKey, getRecentDays, getStreakMessage, getStreakWeek, getWordMastery, getWordMasteryCategoryForWord, shuffle, sortWordsAlphabetically, WORD_MASTERY_CATEGORIES, type WordMasteryCategoryId } from '../utils';
+import { buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, formatWordAddedDate, formatWordFlaggedDate, getCompleteFlashcardDefinition, getDayKey, getNewStudyWords, getRecentDays, getStreakMessage, getStreakWeek, getWordMastery, getWordMasteryCategoryForWord, NEW_STUDY_GROUP, shuffle, sortWordsAlphabetically, WORD_MASTERY_CATEGORIES, type WordMasteryCategoryId } from '../utils';
 import { DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, SpeakButton, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 
-type CardsStudyGroupId = WordMasteryCategoryId | 'flagged';
+type CardsStudyGroupId = WordMasteryCategoryId | 'new' | 'flagged';
 
 const FLAGGED_STUDY_GROUP = {
   id: 'flagged' as const,
@@ -81,10 +81,16 @@ export function CardsScreen({
     () => words.filter((word) => word.isFlagged).length,
     [words],
   );
+  const newWords = useMemo(
+    () => getNewStudyWords(words, analytics),
+    [analytics, words],
+  );
   const filteredWords = useMemo(
     () =>
       selectedCategory === 'all'
         ? words
+        : selectedCategory === 'new'
+          ? newWords
         : selectedCategory === 'flagged'
           ? words.filter((word) =>
               (flaggedSessionIds ?? words.filter((item) => item.isFlagged).map((item) => item.id)).includes(word.id),
@@ -92,9 +98,14 @@ export function CardsScreen({
         : wordMastery
             .filter((item) => item.categoryId === selectedCategory)
             .map((item) => item.word),
-    [flaggedSessionIds, selectedCategory, wordMastery, words],
+    [flaggedSessionIds, newWords, selectedCategory, wordMastery, words],
   );
-  const studyGroups = [...WORD_MASTERY_CATEGORIES, FLAGGED_STUDY_GROUP];
+  const studyGroups = [
+    WORD_MASTERY_CATEGORIES[0],
+    NEW_STUDY_GROUP,
+    ...WORD_MASTERY_CATEGORIES.slice(1),
+    FLAGGED_STUDY_GROUP,
+  ];
   const selectedCategoryDetails =
     studyGroups.find(
       (category) => category.id === selectedCategory,
@@ -191,7 +202,9 @@ export function CardsScreen({
       {studyGroups.map((category) => {
         const isActive = selectedCategory === category.id;
         const count =
-          category.id === 'flagged'
+          category.id === 'new'
+            ? newWords.length
+            : category.id === 'flagged'
             ? flaggedCount
             : categoryCounts[category.id] ?? 0;
 
@@ -312,9 +325,11 @@ export function CardsScreen({
         <EmptyPractice
           icon="albums-outline"
           label={
-            selectedCategory === 'flagged'
-              ? 'Flag words while studying to review them here.'
-              : 'Pick another group or keep reviewing to move words here.'
+            selectedCategory === 'new'
+              ? 'Words you add will stay here until you study them once.'
+              : selectedCategory === 'flagged'
+                ? 'Flag words while studying to review them here.'
+                : 'Pick another group or keep reviewing to move words here.'
           }
         />
       </ScrollView>
@@ -560,22 +575,33 @@ export function CardsScreen({
             </View>
           )}
           {!showAnswer && (
-            <View
-              accessible
-              accessibilityLabel={formatWordAddedDate(current.createdAt)}
-              style={[
-                styles.flashcardAddedMeta,
-                styles.flashcardFrontAddedMeta,
-              ]}
-            >
-              <Ionicons
-                name="calendar-outline"
-                size={13}
-                color={COLORS.muted}
-              />
-              <Text style={styles.flashcardAddedText}>
-                {formatWordAddedDate(current.createdAt)}
-              </Text>
+            <View style={styles.flashcardFrontMetaRow}>
+              <View
+                accessible
+                accessibilityLabel={formatWordAddedDate(current.createdAt)}
+                style={styles.flashcardAddedMeta}
+              >
+                <Ionicons
+                  name="calendar-outline"
+                  size={13}
+                  color={COLORS.muted}
+                />
+                <Text style={styles.flashcardAddedText}>
+                  {formatWordAddedDate(current.createdAt)}
+                </Text>
+              </View>
+              {current.isFlagged ? (
+                <View
+                  accessible
+                  accessibilityLabel={formatWordFlaggedDate(current.flaggedAt)}
+                  style={[styles.flashcardAddedMeta, styles.flashcardFlaggedMeta]}
+                >
+                  <Ionicons name="bookmark" size={12} color={COLORS.purpleDark} />
+                  <Text style={[styles.flashcardAddedText, styles.flashcardFlaggedText]}>
+                    {formatWordFlaggedDate(current.flaggedAt)}
+                  </Text>
+                </View>
+              ) : null}
             </View>
           )}
         </View>

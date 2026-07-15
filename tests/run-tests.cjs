@@ -248,6 +248,14 @@ test('word added timestamps use concise, human-friendly dates', () => {
     dateUtils.formatWordAddedDate('2025-05-04T08:00:00.000Z', now),
     'Added May 4, 2025',
   );
+  assert.equal(
+    dateUtils.formatWordFlaggedDate('2026-07-13T08:00:00.000Z', now),
+    'Flagged today',
+  );
+  assert.equal(
+    dateUtils.formatWordFlaggedDate('2026-05-04T08:00:00.000Z', now),
+    'Flagged May 4',
+  );
 });
 
 test('word saving preserves optional Wordnik enrichment metadata locally', () => {
@@ -369,10 +377,43 @@ test('definition options preserve ranked sources and remove duplicates', () => {
   );
 
   assert.equal(options.length, 2);
-  assert.equal(options[0].source, 'Dictionary');
+  assert.equal(options[0].source, 'Dictionary API');
   assert.equal(options[0].recommended, true);
   assert.equal(options[1].source, 'Wordnik');
   assert.equal(options[1].recommended, false);
+});
+
+test('definition options prioritize distinct sources before extra senses', () => {
+  const options = dictionary.rankDefinitionCandidates(
+    [
+      {
+        source: 'dictionary',
+        text: 'A small brightly colored songbird found in forests.',
+      },
+      {
+        source: 'dictionary',
+        text: 'A bird with a short beak and a cheerful call.',
+      },
+      {
+        source: 'dictionary',
+        text: 'A woodland bird known for colorful feathers.',
+      },
+      {
+        source: 'wiktionary',
+        text: 'A perching bird often recognized by its melodic song.',
+      },
+      {
+        source: 'wordnik',
+        text: 'Any of several small passerine birds with a musical voice.',
+      },
+    ],
+    'warbler',
+  );
+
+  assert.deepEqual(
+    options.slice(0, 3).map((option) => option.source),
+    ['Dictionary API', 'Wiktionary', 'Wordnik'],
+  );
 });
 
 test('dictionary selection rejects placeholder definitions', () => {
@@ -683,6 +724,62 @@ test('quiz builder creates answer options for up to ten words', () => {
   });
 });
 
+test('contextual quiz formats use saved examples and meaningful synonym choices', () => {
+  const words = [
+    {
+      ...makeWord('serendipity', 'Serendipity', 'A fortunate discovery by chance.'),
+      partOfSpeech: 'noun',
+      example: 'Finding the quiet cafe after getting lost was pure serendipity.',
+      synonyms: ['chance discovery', 'happy accident'],
+    },
+    {
+      ...makeWord('compensation', 'Compensation', 'Payment for work or loss.'),
+      partOfSpeech: 'noun',
+      example: 'The company offered compensation for the damaged equipment.',
+      synonyms: ['payment', 'reimbursement'],
+    },
+    {
+      ...makeWord('resilience', 'Resilience', 'The ability to recover after difficulty.'),
+      partOfSpeech: 'noun',
+      example: 'Her resilience helped her return to training after the injury.',
+      synonyms: ['strength', 'adaptability'],
+    },
+    {
+      ...makeWord('curiosity', 'Curiosity', 'A desire to learn or know more.'),
+      partOfSpeech: 'noun',
+      example: 'His curiosity led him to ask thoughtful questions about the stars.',
+      synonyms: ['inquisitiveness', 'interest'],
+    },
+  ];
+  const questions = quiz.buildQuiz(
+    words,
+    [],
+    Object.fromEntries(words.map((word) => [word.id, 70])),
+    words.map((word) => word.id),
+  );
+  const sentenceQuestion = questions.find(
+    (question) => question.mode === 'sentence-usage',
+  );
+  const synonymQuestion = questions.find(
+    (question) => question.mode === 'closest-synonym',
+  );
+
+  assert.ok(sentenceQuestion);
+  assert.ok(synonymQuestion);
+  assert.match(sentenceQuestion.displayText, /uses “.+” correctly/);
+  assert.equal(sentenceQuestion.options.length, 4);
+  assert.equal(new Set(sentenceQuestion.options).size, 4);
+  assert.ok(
+    sentenceQuestion.options.every((option) =>
+      option.toLocaleLowerCase().includes(sentenceQuestion.word.term.toLocaleLowerCase()),
+    ),
+  );
+  assert.ok(sentenceQuestion.options.includes(sentenceQuestion.answer));
+  assert.equal(synonymQuestion.options.length, 4);
+  assert.ok(synonymQuestion.options.includes(synonymQuestion.answer));
+  assert.equal(synonymQuestion.difficulty, 'multiple-choice');
+});
+
 test('quiz questions become more demanding as word mastery grows', () => {
   assert.equal(quiz.getQuestionModeForMastery(0), 'word-to-definition');
   assert.equal(quiz.getQuestionModeForMastery(24), 'word-to-definition');
@@ -847,6 +944,22 @@ test('mastery stays bounded and percentage alone cannot mark a word mastered', (
       quizHistory: [],
     }).id,
     'master',
+  );
+
+  const nearlyProficient = {
+    ...makeWord('nearly-proficient', 'Nearly Proficient', 'Almost complete.', 0),
+    mastery: {
+      ...incomplete,
+      masteryPercent: 88,
+      masteredAt: '2026-01-04T10:00:00.000Z',
+    },
+  };
+  assert.equal(
+    learning.getWordMasteryCategoryForWord(nearlyProficient, {
+      cardHistory: [],
+      quizHistory: [],
+    }).id,
+    'strong',
   );
 
   const analytics = { cardHistory: [], quizHistory: [] };
@@ -1123,6 +1236,54 @@ test('flagged words remain ordinary words for mastery and small-group practice',
   assert.equal(updatedWord.isFlagged, true);
   assert.equal(updatedWord.flaggedAt, flaggedWord.flaggedAt);
   assert.equal(updatedWord.reviews, flaggedWord.reviews + 1);
+});
+
+test('new study words remain in the new group until their first recorded review', () => {
+  const newWord = makeWord('new-study-word', 'Fresh', 'Recently added.', 0);
+  const starterWord = makeWord('starter-4', 'Starter', 'Included by default.', 0);
+  const analytics = { cardHistory: [], quizHistory: [] };
+
+  assert.equal(learning.NEW_STUDY_GROUP.label, 'New words');
+  assert.equal(learning.isNewStudyWord(newWord, analytics), true);
+  assert.equal(learning.isNewStudyWord(starterWord, analytics), false);
+  assert.deepEqual(learning.getNewStudyWords([newWord, starterWord], analytics), [newWord]);
+
+  const flashcardStudied = {
+    ...analytics,
+    cardHistory: [
+      {
+        id: 'card-new-study',
+        wordId: newWord.id,
+        date: '2026-01-02',
+        studiedAt: '2026-01-02T09:00:00.000Z',
+        remembered: true,
+        durationSeconds: 12,
+      },
+    ],
+  };
+  assert.equal(learning.isNewStudyWord(newWord, flashcardStudied), false);
+
+  const quizStudied = {
+    cardHistory: [],
+    quizHistory: [
+      {
+        id: 'quiz-new-study',
+        date: '2026-01-02',
+        score: 1,
+        total: 1,
+        durationSeconds: 20,
+        completedAt: '2026-01-02T10:00:00.000Z',
+        answers: [
+          {
+            wordId: newWord.id,
+            correct: true,
+            answeredAt: '2026-01-02T10:00:00.000Z',
+          },
+        ],
+      },
+    ],
+  };
+  assert.equal(learning.isNewStudyWord(newWord, quizStudied), false);
 });
 
 test('word merging keeps local flagged metadata when legacy cloud words omit it', () => {

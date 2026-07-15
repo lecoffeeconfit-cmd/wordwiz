@@ -71,7 +71,7 @@ export function WordInfoPanel({
           )}
           {word.antonyms && word.antonyms.length > 0 && (
             <View style={styles.commonWordsBox}>
-              <Text style={styles.commonWordsTitle}>OPPOSITES</Text>
+              <Text style={styles.commonWordsTitle}>ANTONYMS</Text>
               <View style={styles.commonWordsWrap}>
                 {word.antonyms.map((antonym) => (
                   <Text key={antonym} style={styles.commonWordChip}>

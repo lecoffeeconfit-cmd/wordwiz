@@ -43,30 +43,43 @@ export function getRecentDays(count: number) {
 }
 
 export function formatWordAddedDate(createdAt: string, now = new Date()) {
-  const addedAt = new Date(createdAt);
-  if (Number.isNaN(addedAt.getTime())) {
-    return 'Added recently';
+  return formatWordDateLabel(createdAt, 'Added', 'Added recently', now);
+}
+
+export function formatWordFlaggedDate(flaggedAt: string | undefined, now = new Date()) {
+  return formatWordDateLabel(flaggedAt, 'Flagged', 'Flagged recently', now);
+}
+
+function formatWordDateLabel(
+  value: string | undefined,
+  verb: string,
+  fallback: string,
+  now: Date,
+) {
+  const date = new Date(value ?? '');
+  if (Number.isNaN(date.getTime())) {
+    return fallback;
   }
 
-  if (isSameCalendarDay(addedAt, now)) {
-    return 'Added today';
+  if (isSameCalendarDay(date, now)) {
+    return `${verb} today`;
   }
 
   const yesterday = new Date(now);
   yesterday.setDate(yesterday.getDate() - 1);
-  if (isSameCalendarDay(addedAt, yesterday)) {
-    return 'Added yesterday';
+  if (isSameCalendarDay(date, yesterday)) {
+    return `${verb} yesterday`;
   }
 
   const options: Intl.DateTimeFormatOptions = {
     month: 'short',
     day: 'numeric',
   };
-  if (addedAt.getFullYear() !== now.getFullYear()) {
+  if (date.getFullYear() !== now.getFullYear()) {
     options.year = 'numeric';
   }
 
-  return `Added ${addedAt.toLocaleDateString('en-US', options)}`;
+  return `${verb} ${date.toLocaleDateString('en-US', options)}`;
 }
 
 function isSameCalendarDay(first: Date, second: Date) {

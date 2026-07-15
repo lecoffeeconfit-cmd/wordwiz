@@ -5,7 +5,9 @@ import { COLORS } from '../constants/theme';
 import type { AnalyticsData, LegalPage, QuizAnswer, QuizProgress, QuizQuestion, ReminderSettings, SortMode, Word } from '../types';
 import { styles } from '../styles';
 import { buildAchievements, buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, getDayKey, getProgressColor, getProgressPaleColor, getRecentDays, getStreakMessage, getStreakMilestone, getStreakWeek, getWordMastery, sortWordsForReview, shuffle } from '../utils';
-import { DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
+import { CompactPagination, DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
+
+const EXPANDED_REVIEW_WORD_PAGE_SIZE = 8;
 
 export function getGreeting() {
   const hour = new Date().getHours();
@@ -42,6 +44,7 @@ export function HomeScreen({
 }) {
   const [achievementCarouselWidth, setAchievementCarouselWidth] = useState(0);
   const [showAllReviewWords, setShowAllReviewWords] = useState(false);
+  const [reviewWordPage, setReviewWordPage] = useState(0);
   const lastReviewWordTapAt = useRef(0);
   const reviewWordTapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mastery = words.map((word) => getWordMastery(word, analytics));
@@ -90,7 +93,20 @@ export function HomeScreen({
   const homeQuizActionLabel =
     todayQuizzes > 0 ? 'Practice another quiz' : 'Start daily quiz';
   const reviewWords = sortWordsForReview(words, analytics);
-  const nextWords = showAllReviewWords ? reviewWords : reviewWords.slice(0, 3);
+  const reviewWordPageCount = Math.max(
+    1,
+    Math.ceil(reviewWords.length / EXPANDED_REVIEW_WORD_PAGE_SIZE),
+  );
+  const currentReviewWordPage = Math.min(
+    reviewWordPage,
+    reviewWordPageCount - 1,
+  );
+  const nextWords = showAllReviewWords
+    ? reviewWords.slice(
+        currentReviewWordPage * EXPANDED_REVIEW_WORD_PAGE_SIZE,
+        (currentReviewWordPage + 1) * EXPANDED_REVIEW_WORD_PAGE_SIZE,
+      )
+    : reviewWords.slice(0, 3);
 
   useEffect(
     () => () => {
@@ -382,7 +398,15 @@ export function HomeScreen({
                     ? 'Show fewer words to review'
                     : 'Show all words to review'
                 }
-                onPress={() => setShowAllReviewWords((shown) => !shown)}
+                onPress={() => {
+                  if (showAllReviewWords) {
+                    setShowAllReviewWords(false);
+                    return;
+                  }
+
+                  setReviewWordPage(0);
+                  setShowAllReviewWords(true);
+                }}
                 style={({ pressed }) => [
                   styles.nextWordsToggle,
                   pressed && styles.pressed,
@@ -436,6 +460,23 @@ export function HomeScreen({
               />
             </Pressable>
           ))}
+          {showAllReviewWords && reviewWordPageCount > 1 ? (
+            <CompactPagination
+              page={currentReviewWordPage}
+              pageCount={reviewWordPageCount}
+              pageSize={EXPANDED_REVIEW_WORD_PAGE_SIZE}
+              total={reviewWords.length}
+              itemLabel="words to review"
+              onPrevious={() =>
+                setReviewWordPage(Math.max(0, currentReviewWordPage - 1))
+              }
+              onNext={() =>
+                setReviewWordPage(
+                  Math.min(reviewWordPageCount - 1, currentReviewWordPage + 1),
+                )
+              }
+            />
+          ) : null}
         </View>
       )}
 

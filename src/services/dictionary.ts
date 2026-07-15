@@ -37,6 +37,7 @@ export type LookupDefinitionCandidate = {
 type DatamuseWord = {
   word?: string;
   tags?: string[];
+  defs?: string[];
   score?: number;
 };
 
@@ -66,8 +67,24 @@ type WikidataLexemeEntityResponse = {
     {
       lemmas?: { en?: { value?: string } };
       senses?: { glosses?: { en?: { value?: string } } }[];
+      claims?: Record<
+        string,
+        {
+          mainsnak?: {
+            datavalue?: {
+              value?: { id?: string };
+            };
+          };
+        }[]
+      >;
     }
   >;
+};
+
+type WikidataLexemeLookup = {
+  definitions: string[];
+  partOfSpeech: string;
+  history: Pick<WordDetails, 'origin' | 'originPeriod'> | null;
 };
 
 type WiktionaryExtractResponse = {
@@ -156,6 +173,7 @@ export async function lookupWordDetails(rawTerm: string): Promise<WordDetails> {
     !fallback &&
     !dictionaryEntry &&
     !wiktionaryData.definitions.length &&
+    !datamuseWords.definitions.length &&
     !datamuseWords.relatedWords.length &&
     !wikidataLexeme.definitions.length &&
     !wikipediaSummary &&
@@ -217,6 +235,11 @@ export async function lookupWordDetails(rawTerm: string): Promise<WordDetails> {
         text: item.text,
         source: 'wiktionary' as const,
         partOfSpeech: item.partOfSpeech,
+        index,
+      })),
+      ...datamuseWords.definitions.map((text, index) => ({
+        text,
+        source: 'datamuse' as const,
         index,
       })),
       { text: datamuseDefinition, source: 'datamuse' },
@@ -284,11 +307,20 @@ export async function lookupWordDetails(rawTerm: string): Promise<WordDetails> {
     wordnikDefinition?.partOfSpeech ||
     '';
   const historyFallback = getHistoryFallback(lookupTerm);
-  const history = chooseBestHistory([
-    historyFallback ? { ...historyFallback, score: 100 } : null,
-    wiktionaryData.history ? { ...wiktionaryData.history, score: 85 } : null,
+  const historyCandidates = [
+    historyFallback
+      ? { ...historyFallback, source: 'WordWiz reference', score: 100 }
+      : null,
+    wiktionaryData.history
+      ? { ...wiktionaryData.history, source: 'Wiktionary', score: 85 }
+      : null,
     wordnik ? getWordnikHistory(wordnik, lookupTerm) : null,
-    conceptNetData.history ? { ...conceptNetData.history, score: 70 } : null,
+    wikidataLexeme.history
+      ? { ...wikidataLexeme.history, source: 'Wikidata Lexeme', score: 76 }
+      : null,
+    conceptNetData.history
+      ? { ...conceptNetData.history, source: 'ConceptNet', score: 70 }
+      : null,
     entry?.origin && !isMissingOrigin(entry.origin)
       ? makeDictionaryOriginHistory({
           lookupTerm,
@@ -299,7 +331,7 @@ export async function lookupWordDetails(rawTerm: string): Promise<WordDetails> {
           meaningCount:
             meanings.length ||
             wiktionaryData.definitions.length ||
-            (datamuseDefinition ? 1 : 0),
+            (datamuseDefinition || datamuseWords.definitions.length ? 1 : 0),
           score: 65,
         })
       : null,
@@ -312,10 +344,11 @@ export async function lookupWordDetails(rawTerm: string): Promise<WordDetails> {
       meaningCount:
         meanings.length ||
         wiktionaryData.definitions.length ||
-        (datamuseDefinition ? 1 : 0),
+        (datamuseDefinition || datamuseWords.definitions.length ? 1 : 0),
       score: 10,
     }),
-  ]);
+  ];
+  const history = combineHistorySources(historyCandidates);
 
   return {
     definition,
@@ -339,7 +372,7 @@ export async function lookupWordDetails(rawTerm: string): Promise<WordDetails> {
           ? `Wikidata lists ${wikidataLexeme.definitions.length} sense glosses for this word.`
           : 'This word has one main meaning group in this dictionary.',
       synonyms.length ? `Synonyms include ${synonyms.slice(0, 3).join(', ')}.` : '',
-      antonyms.length ? `Opposites include ${antonyms.slice(0, 3).join(', ')}.` : '',
+      antonyms.length ? `Antonyms include ${antonyms.slice(0, 3).join(', ')}.` : '',
       wikipediaSummary?.description
         ? `Wikipedia context: ${wikipediaSummary.description}.`
         : '',
@@ -384,7 +417,7 @@ async function lookupDictionaryEntry(lookupTerm: string) {
 
 async function lookupDatamuseWords(lookupTerm: string) {
   try {
-    const [relatedResponse, antonymResponse] = await Promise.all([
+    const [relatedResponse, antonymResponse, exactResponse] = await Promise.all([
       fetch(
         `https://api.datamuse.com/words?ml=${encodeURIComponent(
           lookupTerm,
@@ -394,6 +427,11 @@ async function lookupDatamuseWords(lookupTerm: string) {
         `https://api.datamuse.com/words?rel_ant=${encodeURIComponent(
           lookupTerm,
         )}&max=8`,
+      ),
+      fetch(
+        `https://api.datamuse.com/words?sp=${encodeURIComponent(
+          lookupTerm,
+        )}&md=dp&max=4`,
       ),
     ]);
 
@@ -409,10 +447,16 @@ async function lookupDatamuseWords(lookupTerm: string) {
             .filter((word) => itemLooksLikeSynonym(word, lookupTerm)),
         ).slice(0, 8)
       : [];
+    const definitions = exactResponse.ok
+      ? getDatamuseExactDefinitions(
+          (await exactResponse.json()) as DatamuseWord[],
+          lookupTerm,
+        )
+      : [];
 
-    return { relatedWords, antonyms };
+    return { relatedWords, antonyms, definitions };
   } catch {
-    return { relatedWords: [], antonyms: [] };
+    return { relatedWords: [], antonyms: [], definitions: [] };
   }
 }
 
@@ -440,7 +484,9 @@ async function lookupConceptNet(lookupTerm: string) {
   }
 }
 
-async function lookupWikidataLexeme(lookupTerm: string) {
+async function lookupWikidataLexeme(
+  lookupTerm: string,
+): Promise<WikidataLexemeLookup> {
   try {
     const searchData = await fetchWikimediaJson<WikidataLexemeSearchResponse>(
       `https://www.wikidata.org/w/api.php?action=wbsearchentities&language=en&uselang=en&type=lexeme&format=json&origin=*&limit=5&search=${encodeURIComponent(
@@ -448,7 +494,7 @@ async function lookupWikidataLexeme(lookupTerm: string) {
       )}`,
     );
 
-    if (!searchData) return { definitions: [], partOfSpeech: '' };
+    if (!searchData) return getEmptyWikidataLexemeLookup();
 
     const lexemeIds = (searchData.search ?? [])
       .filter(
@@ -461,7 +507,7 @@ async function lookupWikidataLexeme(lookupTerm: string) {
       .slice(0, 3);
 
     if (!lexemeIds.length) {
-      return { definitions: [], partOfSpeech: '' };
+      return getEmptyWikidataLexemeLookup();
     }
 
     const entityData = await fetchWikimediaJson<WikidataLexemeEntityResponse>(
@@ -470,7 +516,7 @@ async function lookupWikidataLexeme(lookupTerm: string) {
       )}.json`,
     );
 
-    if (!entityData) return { definitions: [], partOfSpeech: '' };
+    if (!entityData) return getEmptyWikidataLexemeLookup();
 
     const definitions = uniqueText(
       Object.values(entityData.entities ?? {}).flatMap((entity) =>
@@ -485,10 +531,81 @@ async function lookupWikidataLexeme(lookupTerm: string) {
         .map(getPartOfSpeechFromDescription)
         .find(Boolean) ?? '';
 
-    return { definitions, partOfSpeech };
+    const parentLexemeIds = getWikidataParentLexemeIds(entityData);
+    const parentEntities = parentLexemeIds.length
+      ? await fetchWikimediaJson<WikidataLexemeEntityResponse>(
+          `https://www.wikidata.org/wiki/Special:EntityData/${parentLexemeIds.join(
+            '|',
+          )}.json`,
+        )
+      : null;
+
+    return {
+      definitions,
+      partOfSpeech,
+      history: getWikidataLexemeHistory(
+        lookupTerm,
+        parentEntities,
+        parentLexemeIds.length,
+      ),
+    };
   } catch {
-    return { definitions: [], partOfSpeech: '' };
+    return getEmptyWikidataLexemeLookup();
   }
+}
+
+function getEmptyWikidataLexemeLookup(): WikidataLexemeLookup {
+  return { definitions: [], partOfSpeech: '', history: null };
+}
+
+function getWikidataParentLexemeIds(
+  entityData: WikidataLexemeEntityResponse,
+) {
+  return Array.from(
+    new Set(
+      Object.values(entityData.entities ?? {})
+        .flatMap((entity) => entity.claims?.P5191 ?? [])
+        .map((claim) => claim.mainsnak?.datavalue?.value?.id)
+        .filter((id): id is string => Boolean(id)),
+    ),
+  ).slice(0, 4);
+}
+
+function getWikidataLexemeHistory(
+  lookupTerm: string,
+  parentEntities: WikidataLexemeEntityResponse | null,
+  parentCount: number,
+): Pick<WordDetails, 'origin' | 'originPeriod'> | null {
+  const parentLemmas = uniqueText(
+    Object.values(parentEntities?.entities ?? {})
+      .map((entity) => getWikidataLemma(entity))
+      .filter((lemma): lemma is string => Boolean(lemma)),
+  );
+
+  if (!parentLemmas.length) {
+    return parentCount
+      ? {
+          origin: `Wikidata records a direct lexeme-derivation link for "${toDisplayWord(lookupTerm)}", but the source lemma could not be read from this lookup.`,
+          originPeriod:
+            'Timeline: Wikidata lexeme data supplied a direct derivation clue. Its etymology links are useful supporting evidence, but coverage is incomplete and this record did not provide a dated timeline.',
+        }
+      : null;
+  }
+
+  return {
+    origin: `Wikidata links "${toDisplayWord(lookupTerm)}" to the earlier lexeme${parentLemmas.length === 1 ? '' : 's'} ${parentLemmas.map((lemma) => `“${lemma}”`).join(', ')} through its direct derivation data.`,
+    originPeriod:
+      'Timeline: Wikidata lexeme data supplied a direct derivation clue. Its etymology links are useful supporting evidence, but coverage is incomplete and this record did not provide a dated timeline.',
+  };
+}
+
+function getWikidataLemma(
+  entity: NonNullable<WikidataLexemeEntityResponse['entities']>[string],
+) {
+  return entity.lemmas?.en?.value?.trim() ??
+    Object.values(entity.lemmas ?? {})
+      .map((lemma) => lemma?.value?.trim())
+      .find(Boolean);
 }
 
 async function lookupWikipediaSummary(lookupTerm: string) {
@@ -602,6 +719,31 @@ function getDatamuseDefinition(words: DatamuseWord[], lookupTerm: string) {
     : null;
 }
 
+function getDatamuseExactDefinitions(
+  words: DatamuseWord[],
+  lookupTerm: string,
+) {
+  const normalizedTerm = lookupTerm.toLowerCase();
+  const exactMatches = words.filter(
+    (item) => item.word?.trim().toLowerCase() === normalizedTerm,
+  );
+
+  return uniqueText(
+    exactMatches
+      .flatMap((item) => item.defs ?? [])
+      .map(cleanDatamuseDefinition)
+      .filter((definition) => isUsefulDefinition(definition, lookupTerm)),
+  ).slice(0, 4);
+}
+
+function cleanDatamuseDefinition(value: string) {
+  return value
+    .replace(/^[a-z][a-z.]*\t/i, '')
+    .replace(/^\s*[a-z][a-z.]*:\s*/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function getDatamusePartOfSpeech(words: DatamuseWord[]) {
   const tags = words.flatMap((item) => item.tags ?? []);
   if (tags.includes('n')) return 'noun';
@@ -630,6 +772,7 @@ function getWordnikHistory(
   }
 
   return {
+    source: 'Wordnik',
     score: 82,
     origin: `"${toDisplayWord(lookupTerm)}" history from Wordnik: ${etymology}`,
     originPeriod:
@@ -753,6 +896,7 @@ function uniqueText(values: string[]) {
 }
 
 type HistoryCandidate = Pick<WordDetails, 'origin' | 'originPeriod'> & {
+  source: string;
   score: number;
 };
 
@@ -760,6 +904,37 @@ function chooseBestHistory(candidates: Array<HistoryCandidate | null>) {
   return candidates
     .filter((candidate): candidate is HistoryCandidate => Boolean(candidate))
     .sort((first, second) => second.score - first.score)[0];
+}
+
+function combineHistorySources(candidates: Array<HistoryCandidate | null>) {
+  const selected = chooseBestHistory(candidates);
+  if (!selected) {
+    return makeGenericHistory({
+      lookupTerm: 'This word',
+      partOfSpeech: 'word',
+      definition: '',
+      synonyms: [],
+      antonyms: [],
+      meaningCount: 0,
+      score: 0,
+    });
+  }
+
+  const sourceTrail = Array.from(
+    new Set(
+      candidates
+        .filter((candidate): candidate is HistoryCandidate => Boolean(candidate))
+        .map((candidate) => candidate.source)
+        .filter((source) => source !== 'WordWiz study note'),
+    ),
+  );
+
+  return sourceTrail.length > 1
+    ? {
+        ...selected,
+        origin: `${selected.origin} Sources consulted: ${sourceTrail.join(', ')}.`,
+      }
+    : selected;
 }
 
 function makeDictionaryOriginHistory({
@@ -785,6 +960,7 @@ function makeDictionaryOriginHistory({
   const relatedHint = getSynonymHistoryHint(synonyms);
 
   return {
+    source: 'Dictionary API',
     score,
     origin:
       `"${displayWord}" is a ${speechLabel} with this origin note from the dictionary source: ${sourceOrigin}${getMeaningHistoryHint(definition)}${relatedHint}`,
@@ -818,11 +994,15 @@ function makeGenericHistory({
   const displayWord = toDisplayWord(lookupTerm);
   const speechLabel = partOfSpeech || 'word';
   const rootClue = getInferredRootClue(lookupTerm);
+  const patternEstimate = rootClue
+    ? ` Estimated word-pattern clue (not a sourced etymology): ${rootClue}`
+    : '';
 
   return {
+    source: 'WordWiz study note',
     score,
     origin:
-      `"${displayWord}" is listed as a ${speechLabel}${getMeaningHistoryHint(definition)}${getSynonymHistoryHint(synonyms)}${getAntonymHistoryHint(antonyms)} A fully sourced older origin was not found, so this note focuses on current meaning and visible word parts.`,
+      `"${displayWord}" is listed as a ${speechLabel}${getMeaningHistoryHint(definition)}${getSynonymHistoryHint(synonyms)}${getAntonymHistoryHint(antonyms)}${patternEstimate} A fully sourced older origin was not found, so this note focuses on current meaning and visible word parts.`,
     originPeriod: makeTimeline({
       displayWord,
       rootClue,
@@ -849,7 +1029,7 @@ function getSynonymHistoryHint(synonyms: string[]) {
 function getAntonymHistoryHint(antonyms: string[]) {
   const oppositeWords = antonyms.slice(0, 3);
   return oppositeWords.length
-    ? ` Opposites include ${oppositeWords.join(', ')}.`
+    ? ` Antonyms include ${oppositeWords.join(', ')}.`
     : '';
 }
 
@@ -945,12 +1125,36 @@ export function rankDefinitionCandidates(
       ) === index,
   );
 
-  return uniqueCandidates.slice(0, 6).map((candidate, index) => ({
+  return prioritizeDefinitionSourceDiversity(uniqueCandidates)
+    .slice(0, 7)
+    .map((candidate, index) => ({
     text: candidate.text,
     source: getDefinitionSourceLabel(candidate.source),
     partOfSpeech: candidate.partOfSpeech,
     recommended: index === 0,
-  }));
+    }));
+}
+
+function prioritizeDefinitionSourceDiversity<
+  T extends { source: DefinitionSource },
+>(candidates: T[]) {
+  const prioritized: T[] = [];
+  const includedSources = new Set<DefinitionSource>();
+
+  candidates.forEach((candidate) => {
+    if (!includedSources.has(candidate.source)) {
+      prioritized.push(candidate);
+      includedSources.add(candidate.source);
+    }
+  });
+
+  candidates.forEach((candidate) => {
+    if (!prioritized.includes(candidate)) {
+      prioritized.push(candidate);
+    }
+  });
+
+  return prioritized;
 }
 
 function normalizeDefinitionText(text: string) {
@@ -960,9 +1164,9 @@ function normalizeDefinitionText(text: string) {
 function getDefinitionSourceLabel(source: DefinitionSource) {
   const labels: Record<DefinitionSource, string> = {
     fallback: 'WordWiz',
-    dictionary: 'Dictionary',
+    dictionary: 'Dictionary API',
     wiktionary: 'Wiktionary',
-    datamuse: 'Datamuse',
+    datamuse: 'Datamuse / WordNet',
     wikidata: 'Wikidata',
     wordnik: 'Wordnik',
     wikipedia: 'Wikipedia',

@@ -12,6 +12,7 @@ create table if not exists public.words (
   origin text,
   origin_period text,
   synonyms text[] not null default '{}',
+  antonyms text[] not null default '{}',
   common_words text[] not null default '{}',
   basic_info text,
   reviews integer not null default 0,
@@ -23,6 +24,7 @@ create table if not exists public.words (
 );
 
 alter table public.words
+  add column if not exists antonyms text[] not null default '{}',
   add column if not exists mastery_data jsonb not null default '{}'::jsonb;
 
 alter table public.words

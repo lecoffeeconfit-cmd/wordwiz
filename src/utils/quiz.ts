@@ -24,7 +24,7 @@ export function buildQuiz(
   const modes = getBalancedQuestionModes(quizWords, masteryByWordId);
 
   return quizWords.map((word, index) => {
-    return buildQuestionForMode(word, words, index, modes[index]);
+    return buildQuestionForMode(word, quizWords, index, modes[index]);
   });
 }
 
@@ -74,7 +74,7 @@ function getCategoryPracticeQuestionPlan(
   masteryByWordId: Record<string, number>,
   target: number,
 ) {
-  const supportedModes = getSupportedCategoryPracticeModes(words.length);
+  const supportedModes = getSupportedCategoryPracticeModes(words);
   const maxTypedRecall = Math.max(1, Math.round(target * 0.35));
   const usedModesByWordId = new Map<string, Set<QuizQuestionMode>>();
   const modeCounts = new Map<QuizQuestionMode, number>();
@@ -95,6 +95,7 @@ function getCategoryPracticeQuestionPlan(
         word,
         masteryScore,
         supportedModes,
+        words,
       ).filter(
         (mode) =>
           !usedModes.has(mode) &&
@@ -118,24 +119,41 @@ function getCategoryPracticeQuestionPlan(
   return plan;
 }
 
-function getSupportedCategoryPracticeModes(wordCount: number) {
+function getSupportedCategoryPracticeModes(words: Word[]) {
   // A definition-to-word question needs at least one saved word as a genuine
   // alternative. With one word, use the other three existing formats instead.
-  return wordCount < 2
+  const baseModes = words.length < 2
     ? (['word-to-definition', 'true-false', 'typed-word'] as QuizQuestionMode[])
     : (['word-to-definition', 'definition-to-word', 'true-false', 'typed-word'] as QuizQuestionMode[]);
+  const contextualModes: QuizQuestionMode[] = [];
+
+  if (words.some((word) => canBuildSentenceUsageQuestion(word, words))) {
+    contextualModes.push('sentence-usage');
+  }
+  if (words.some((word) => canBuildClosestSynonymQuestion(word, words))) {
+    contextualModes.push('closest-synonym');
+  }
+
+  return [...baseModes, ...contextualModes];
 }
 
 function getCategoryPracticeModeCandidates(
   word: Word,
   masteryScore: number,
   supportedModes: QuizQuestionMode[],
+  words: Word[],
 ) {
-  const preferred = getModeCandidates(word, masteryScore);
+  const preferred = getModeCandidates(word, masteryScore, words);
   return [
     ...preferred,
-    ...supportedModes.filter((mode) => !preferred.includes(mode)),
+    ...supportedModes.filter(
+      (mode) => !preferred.includes(mode) && !isContextualMode(mode),
+    ),
   ].filter((mode) => supportedModes.includes(mode));
+}
+
+function isContextualMode(mode: QuizQuestionMode) {
+  return mode === 'sentence-usage' || mode === 'closest-synonym';
 }
 
 function pickLeastUsedMode(
@@ -169,6 +187,14 @@ function buildQuestionForMode(
     return buildTypedWordQuestion(word);
   }
 
+  if (mode === 'sentence-usage') {
+    return buildSentenceUsageQuestion(word, words, index);
+  }
+
+  if (mode === 'closest-synonym') {
+    return buildClosestSynonymQuestion(word, words, index);
+  }
+
   return buildWordToDefinitionQuestion(word, words, index);
 }
 
@@ -182,14 +208,14 @@ function getBalancedQuestionModes(
 
   words.forEach((word) => {
     const masteryScore = masteryByWordId[word.id] ?? word.reviews * 12;
-    const candidates = getModeCandidates(word, masteryScore);
-    const recentModes = modes.slice(-2);
+    const candidates = getModeCandidates(word, masteryScore, words);
+    const lastMode = modes.at(-1);
     const mode =
       candidates.find(
         (candidate) =>
           (candidate !== 'typed-word' ||
             (counts.get('typed-word') ?? 0) < maxTypedRecall) &&
-          !recentModes.every((recent) => recent === candidate),
+          candidate !== lastMode,
       ) ??
       candidates.find(
         (candidate) =>
@@ -205,18 +231,35 @@ function getBalancedQuestionModes(
   return modes;
 }
 
-function getModeCandidates(word: Word, masteryScore: number): QuizQuestionMode[] {
+function getModeCandidates(
+  word: Word,
+  masteryScore: number,
+  words: Word[] = [],
+): QuizQuestionMode[] {
+  const canUseSentence = canBuildSentenceUsageQuestion(word, words);
+  const canUseSynonym = canBuildClosestSynonymQuestion(word, words);
+  const contextualModes: QuizQuestionMode[] = [
+    ...(canUseSentence ? ['sentence-usage' as const] : []),
+    ...(canUseSynonym ? ['closest-synonym' as const] : []),
+  ];
+
   if (word.mastery?.lastReviewResult === 'wrong') {
-    return ['word-to-definition', 'true-false', 'definition-to-word'];
+    return ['word-to-definition', 'true-false', 'definition-to-word', ...contextualModes];
   }
   if (masteryScore >= 85) {
-    return ['typed-word', 'definition-to-word', 'true-false'];
+    return ['typed-word', ...contextualModes, 'definition-to-word', 'true-false'];
   }
   if (masteryScore >= 70) {
-    return ['definition-to-word', 'typed-word', 'true-false'];
+    return [...contextualModes, 'definition-to-word', 'typed-word', 'true-false'];
   }
   if (masteryScore >= 25) {
-    return ['true-false', 'word-to-definition', 'definition-to-word'];
+    return [
+      ...(canUseSentence ? ['sentence-usage' as const] : []),
+      'true-false',
+      'word-to-definition',
+      'definition-to-word',
+      ...(canUseSynonym ? ['closest-synonym' as const] : []),
+    ];
   }
   return ['word-to-definition', 'true-false', 'definition-to-word'];
 }
@@ -277,7 +320,13 @@ export function getQuestionDifficulty(
   mode: QuizQuestionMode,
 ): QuizQuestionDifficulty {
   if (mode === 'true-false') return 'recognition';
-  if (mode === 'word-to-definition') return 'multiple-choice';
+  if (
+    mode === 'word-to-definition' ||
+    mode === 'sentence-usage' ||
+    mode === 'closest-synonym'
+  ) {
+    return 'multiple-choice';
+  }
   if (mode === 'definition-to-word') return 'fill-in-options';
   return 'typed-recall';
 }
@@ -411,6 +460,48 @@ function buildTypedWordQuestion(word: Word): QuizQuestion {
   };
 }
 
+function buildSentenceUsageQuestion(
+  word: Word,
+  words: Word[],
+  index: number,
+): QuizQuestion {
+  const answer = getCorrectExample(word);
+  const distractors = getSentenceDistractors(word, words, answer, index);
+
+  return {
+    word,
+    prompt: 'CHOOSE THE SENTENCE',
+    displayText: `Which sentence uses “${word.term}” correctly?`,
+    answer,
+    options: shuffle([answer, ...distractors]),
+    mode: 'sentence-usage',
+    difficulty: getQuestionDifficulty('sentence-usage'),
+    helperText: 'Look for the context that best matches the word’s meaning.',
+    feedback: `“${word.term}” means ${getMeaning(word).toLowerCase()}`,
+  };
+}
+
+function buildClosestSynonymQuestion(
+  word: Word,
+  words: Word[],
+  index: number,
+): QuizQuestion {
+  const answer = getSynonymCandidates(word)[0];
+  const distractors = getSynonymDistractors(word, words, answer, index);
+
+  return {
+    word,
+    prompt: 'CHOOSE THE CLOSEST SYNONYM',
+    displayText: `Which word is closest in meaning to “${word.term}”?`,
+    answer,
+    options: shuffle([answer, ...distractors]),
+    mode: 'closest-synonym',
+    difficulty: getQuestionDifficulty('closest-synonym'),
+    helperText: 'Choose the word with the most similar meaning.',
+    feedback: `“${answer}” is a close synonym of “${word.term}”.`,
+  };
+}
+
 function getMeaning(word: Word) {
   return getCompleteFlashcardDefinition(word.definition, word.simpleDefinition);
 }
@@ -444,6 +535,104 @@ function getWordDistractors(word: Word, words: Word[], index: number) {
     .slice(index);
 
   return shuffle(Array.from(new Set([...otherTerms, ...fallbackTerms]))).slice(0, 3);
+}
+
+function canBuildSentenceUsageQuestion(word: Word, words: Word[]) {
+  const answer = getCorrectExample(word);
+  return Boolean(answer) && getSentenceDistractors(word, words, answer, 0).length >= 2;
+}
+
+function getCorrectExample(word: Word) {
+  const examples = [word.example, ...(word.wordnik_examples ?? [])];
+  return examples.find((example) => includesWholeTerm(example, word.term))?.trim() ?? '';
+}
+
+function getSentenceDistractors(
+  word: Word,
+  words: Word[],
+  answer: string,
+  index: number,
+) {
+  const samePartOfSpeech = words.filter(
+    (item) =>
+      item.id !== word.id &&
+      Boolean(word.partOfSpeech) &&
+      item.partOfSpeech === word.partOfSpeech,
+  );
+  const otherWords = words.filter((item) => item.id !== word.id);
+  const candidates = [...samePartOfSpeech, ...otherWords].flatMap((item) => {
+    const source = getCorrectExample(item);
+    const replacement = replaceWholeTerm(source, item.term, word.term);
+    return replacement && replacement !== answer ? [replacement] : [];
+  });
+
+  return rotateAndPickUnique(candidates, answer, index, 3);
+}
+
+function canBuildClosestSynonymQuestion(word: Word, words: Word[]) {
+  const answer = getSynonymCandidates(word)[0];
+  return Boolean(answer) && getSynonymDistractors(word, words, answer, 0).length >= 2;
+}
+
+function getSynonymCandidates(word: Word) {
+  return Array.from(
+    new Set([...(word.synonyms ?? []), ...(word.commonWords ?? [])])
+      .values(),
+  )
+    .map((synonym) => synonym.trim())
+    .filter(
+      (synonym) =>
+        synonym.length > 1 && synonym.toLocaleLowerCase() !== word.term.toLocaleLowerCase(),
+    );
+}
+
+function getSynonymDistractors(
+  word: Word,
+  words: Word[],
+  answer: string,
+  index: number,
+) {
+  const candidates = words
+    .filter((item) => item.id !== word.id)
+    .flatMap((item) => [...getSynonymCandidates(item), item.term]);
+
+  return rotateAndPickUnique(candidates, answer, index, 3);
+}
+
+function rotateAndPickUnique(
+  candidates: string[],
+  answer: string,
+  index: number,
+  count: number,
+) {
+  const normalizedAnswer = answer.toLocaleLowerCase();
+  const unique = Array.from(
+    new Map(
+      candidates
+        .map((candidate) => candidate.trim())
+        .filter(
+          (candidate) =>
+            candidate.length > 1 && candidate.toLocaleLowerCase() !== normalizedAnswer,
+        )
+        .map((candidate) => [candidate.toLocaleLowerCase(), candidate]),
+    ).values(),
+  );
+  const start = unique.length === 0 ? 0 : index % unique.length;
+  return [...unique.slice(start), ...unique.slice(0, start)].slice(0, count);
+}
+
+function includesWholeTerm(value: string, term: string) {
+  if (!value.trim() || !term.trim()) return false;
+  const escapedTerm = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`\\b${escapedTerm}\\b`, 'i').test(value);
+}
+
+function replaceWholeTerm(value: string, sourceTerm: string, replacement: string) {
+  if (!value.trim() || !sourceTerm.trim()) return null;
+  const escapedTerm = sourceTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const expression = new RegExp(`\\b${escapedTerm}\\b`, 'gi');
+  if (!expression.test(value)) return null;
+  return value.replace(expression, replacement).trim();
 }
 
 function getAlternateWord(word: Word, words: Word[]) {

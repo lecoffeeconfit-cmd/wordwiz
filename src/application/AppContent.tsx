@@ -119,7 +119,6 @@ export default function AppContent() {
   const [wordToEdit, setWordToEdit] = useState<Word | null>(null);
   const cloudHydratedUserId = useRef<string | null>(null);
   const cloudHydratingUserId = useRef<string | null>(null);
-  const cloudWarningShown = useRef(false);
   const latestWords = useRef<Word[]>([]);
   const hasHiddenNativeSplash = useRef(false);
   const lastReminderRefreshKey = useRef<string | null>(null);
@@ -387,10 +386,8 @@ export default function AppContent() {
         cloudHydratedUserId.current = userId;
         markCloudCacheFresh(userId);
       } catch (error) {
-        console.error('WordWiz cloud hydration failed:', error);
         reportError(error, { area: 'cloud_hydration' });
         trackEvent('cloud_sync_failed', { operation: 'hydrate' });
-        setAppNotice('Cloud sync is unavailable right now. Your local learning data is still ready.');
       } finally {
         if (cloudHydratingUserId.current === userId) {
           cloudHydratingUserId.current = null;
@@ -425,9 +422,9 @@ export default function AppContent() {
       missingWords,
       getScreenContext(activeTab, 'backfill_local_words'),
     ).catch((error) => {
-      console.error('WordWiz cloud backfill word save failed:', error);
       reportError(error, { area: 'backfill_word' });
       trackEvent('cloud_sync_failed', { operation: 'backfill_word' });
+      deferCloudSync();
     });
   }
 
@@ -508,7 +505,6 @@ export default function AppContent() {
           markCloudCacheFresh(currentUser.id);
         })
         .catch((error) => {
-          console.error('WordWiz cloud word flag save failed:', error);
           reportError(error, { area: 'save_word_flag' });
           trackEvent('cloud_sync_failed', { operation: 'save_word_flag' });
           setWords((currentWords) =>
@@ -520,7 +516,7 @@ export default function AppContent() {
                 : word,
             ),
           );
-          showCloudSaveWarning();
+          deferCloudSync();
         });
     }
   }
@@ -879,10 +875,9 @@ export default function AppContent() {
         );
         markCloudCacheFresh(currentUser.id);
       } catch (error) {
-        console.error('WordWiz cloud word save failed:', error);
         reportError(error, { area: 'save_word' });
         trackEvent('cloud_sync_failed', { operation: 'save_word' });
-        showCloudSaveWarning();
+        deferCloudSync();
       }
     }
 
@@ -917,13 +912,27 @@ export default function AppContent() {
           markCloudCacheFresh(currentUser.id);
         })
         .catch((error) => {
-          console.error('WordWiz cloud word delete failed:', error);
           reportError(error, { area: 'delete_word' });
           trackEvent('cloud_sync_failed', { operation: 'delete_word' });
-          showCloudSaveWarning();
+          deferCloudSync();
         });
     }
     trackEvent('word_deleted');
+  }
+
+  function confirmRemoveWord(word: Word) {
+    Alert.alert(
+      `Delete “${word.term}”?`,
+      'This will remove the word and its local learning progress. This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete word',
+          style: 'destructive',
+          onPress: () => removeWord(word),
+        },
+      ],
+    );
   }
 
   function recordCardReview(
@@ -978,10 +987,9 @@ export default function AppContent() {
           markCloudCacheFresh(currentUser.id);
         })
         .catch((error) => {
-          console.error('WordWiz cloud card review save failed:', error);
           reportError(error, { area: 'save_card_review' });
           trackEvent('cloud_sync_failed', { operation: 'save_card_review' });
-          showCloudSaveWarning();
+          deferCloudSync();
         });
     }
   }
@@ -1037,10 +1045,9 @@ export default function AppContent() {
           markCloudCacheFresh(currentUser.id);
         })
         .catch((error) => {
-          console.error('WordWiz cloud quiz save failed:', error);
           reportError(error, { area: 'save_quiz' });
           trackEvent('cloud_sync_failed', { operation: 'save_quiz' });
-          showCloudSaveWarning();
+          deferCloudSync();
         });
     }
   }
@@ -1114,23 +1121,23 @@ export default function AppContent() {
           markCloudCacheFresh(currentUser.id);
         })
         .catch((error) => {
-          console.error('WordWiz cloud reminder save failed:', error);
           reportError(error, { area: 'save_reminder_settings' });
           trackEvent('cloud_sync_failed', { operation: 'save_reminder' });
-          showCloudSaveWarning();
+          deferCloudSync();
         });
     }
   }
 
-  function showCloudSaveWarning() {
-    if (cloudWarningShown.current) {
+  function deferCloudSync() {
+    if (!currentUser) {
       return;
     }
 
-    cloudWarningShown.current = true;
-    setAppNotice(
-      'Saved on this device. Cloud sync is temporarily unavailable and will try again later.',
-    );
+    AsyncStorage.removeItem(
+      getUserCacheKey(currentUser.id, 'cloud-hydrated-at'),
+    ).catch((error) => {
+      reportError(error, { area: 'cloud_cache_invalidate' });
+    });
   }
 
   function ensureSupabaseReady() {
@@ -1173,7 +1180,7 @@ export default function AppContent() {
           sortMode={sortMode}
           onChangeSort={setSortMode}
           onAdd={openAddWord}
-          onRemove={removeWord}
+          onRemove={confirmRemoveWord}
           onStudy={() => openCards()}
           onStudyFlaggedCards={() => openCards(undefined, 'flagged')}
           onStudyFlaggedQuiz={openFlaggedQuiz}

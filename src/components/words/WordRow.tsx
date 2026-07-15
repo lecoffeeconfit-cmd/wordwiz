@@ -3,7 +3,7 @@ import { Pressable, Text, View } from 'react-native';
 import { COLORS, TILE_COLORS } from '../../constants/theme';
 import type { Word } from '../../types';
 import { styles } from '../../styles';
-import { formatWordAddedDate } from '../../utils';
+import { formatWordAddedDate, formatWordFlaggedDate } from '../../utils';
 import { SpeakButton } from '../shared/SpeakButton';
 
 function getLetterColor(term: string) {
@@ -33,7 +33,7 @@ export function WordRow({
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={`Study ${word.term} flashcard`}
-        accessibilityHint="Opens this word in flashcards"
+        accessibilityHint="Opens this word in flashcards. Press and hold to delete it."
         onPress={() => onPress?.(word)}
         onLongPress={() => onRemove(word)}
         style={({ pressed }) => [
@@ -77,11 +77,21 @@ export function WordRow({
               {word.pronunciation}
             </Text>
           )}
-          <View style={styles.wordAddedMeta}>
-            <Ionicons name="calendar-outline" size={11} color={COLORS.muted} />
-            <Text style={styles.wordAddedText}>
-              {formatWordAddedDate(word.createdAt)}
-            </Text>
+          <View style={styles.wordDateMetaRow}>
+            <View style={styles.wordAddedMeta}>
+              <Ionicons name="calendar-outline" size={11} color={COLORS.muted} />
+              <Text style={styles.wordAddedText}>
+                {formatWordAddedDate(word.createdAt)}
+              </Text>
+            </View>
+            {word.isFlagged ? (
+              <View style={styles.wordFlaggedMeta}>
+                <Ionicons name="bookmark" size={11} color={COLORS.purpleDark} />
+                <Text style={styles.wordFlaggedText}>
+                  {formatWordFlaggedDate(word.flaggedAt)}
+                </Text>
+              </View>
+            ) : null}
           </View>
         </View>
         <View style={styles.reviewCount}>

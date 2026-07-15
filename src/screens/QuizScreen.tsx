@@ -4,12 +4,12 @@ import { FlatList, Pressable, ScrollView, Text, TextInput, View } from 'react-na
 import { COLORS } from '../constants/theme';
 import type { AnalyticsData, LegalPage, QuizAnswer, QuizProgress, QuizQuestion, ReminderSettings, ReviewRating, SortMode, Word } from '../types';
 import { styles } from '../styles';
-import { buildCategoryPracticeQuiz, buildQuiz, calculateStreakStats, evaluateQuizAnswer, formatReminderTime, formatStudyTime, getCategoryPracticeQuizTarget, getDayKey, getRecentDays, getStreakMessage, getStreakWeek, getTypedRecallHint, getWordMastery, getWordMasteryCategoryForWord, shuffle, WORD_MASTERY_CATEGORIES, type WordMasteryCategoryId } from '../utils';
+import { buildCategoryPracticeQuiz, buildQuiz, calculateStreakStats, evaluateQuizAnswer, formatReminderTime, formatStudyTime, formatWordFlaggedDate, getCategoryPracticeQuizTarget, getDayKey, getNewStudyWords, getRecentDays, getStreakMessage, getStreakWeek, getTypedRecallHint, getWordMastery, getWordMasteryCategoryForWord, NEW_STUDY_GROUP, shuffle, WORD_MASTERY_CATEGORIES, type WordMasteryCategoryId } from '../utils';
 import { DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 import { reportError, trackEvent } from '../services';
 
 const REVEALED_TYPED_ANSWER = '__wordwiz-revealed-answer__';
-type QuizStudyGroupId = WordMasteryCategoryId | 'flagged';
+type QuizStudyGroupId = WordMasteryCategoryId | 'new' | 'flagged';
 
 const FLAGGED_STUDY_GROUP = {
   id: 'flagged' as const,
@@ -84,19 +84,31 @@ export function QuizScreen({
     () => words.filter((word) => word.isFlagged).length,
     [words],
   );
+  const newWords = useMemo(
+    () => getNewStudyWords(words, analytics),
+    [analytics, words],
+  );
   const filteredQuizWords = useMemo(
     () =>
       selectedCategory === 'all'
         ? words
+        : selectedCategory === 'new'
+          ? newWords
         : selectedCategory === 'flagged'
           ? words.filter((word) => word.isFlagged)
         : wordMastery
             .filter((item) => item.categoryId === selectedCategory)
             .map((item) => item.word),
-    [selectedCategory, wordMastery, words],
+    [newWords, selectedCategory, wordMastery, words],
   );
+  const studyGroups = [
+    WORD_MASTERY_CATEGORIES[0],
+    NEW_STUDY_GROUP,
+    ...WORD_MASTERY_CATEGORIES.slice(1),
+    FLAGGED_STUDY_GROUP,
+  ];
   const selectedCategoryDetails =
-    [...WORD_MASTERY_CATEGORIES, FLAGGED_STUDY_GROUP].find(
+    studyGroups.find(
       (category) => category.id === selectedCategory,
     ) ?? WORD_MASTERY_CATEGORIES[0];
   const categoryQuizQuestionCount =
@@ -118,10 +130,12 @@ export function QuizScreen({
       contentContainerStyle={styles.practiceCategoryList}
       style={styles.practiceCategoryScroller}
     >
-      {[...WORD_MASTERY_CATEGORIES, FLAGGED_STUDY_GROUP].map((category) => {
+      {studyGroups.map((category) => {
         const isActive = selectedCategory === category.id;
         const count =
-          category.id === 'flagged'
+          category.id === 'new'
+            ? newWords.length
+            : category.id === 'flagged'
             ? flaggedCount
             : categoryCounts[category.id] ?? 0;
 
@@ -422,8 +436,9 @@ export function QuizScreen({
           </View>
           <Text style={styles.quizIntroTitle}>Ready for today’s challenge?</Text>
           <Text style={styles.quizIntroText}>
-            You’ll answer a fresh mix of meaning, word match, and true or
-            false questions. It only takes a minute.
+            {selectedCategory === 'new'
+              ? 'Start with your newest words. They will move into Learning after this completed practice.'
+              : 'You’ll answer a fresh mix of meanings, synonyms, sentence context, and recall questions. It only takes a minute.'}
           </Text>
           <View style={styles.quizFacts}>
             <QuizFact icon="time-outline" text="About 1 minute" />
@@ -530,35 +545,39 @@ export function QuizScreen({
         </Text>
       </View>
 
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={
-          question.word.isFlagged
-            ? 'Remove word from flagged words'
-            : 'Flag word'
-        }
-        accessibilityState={{ selected: question.word.isFlagged }}
-        onPress={() => onToggleFlag(question.word.id)}
-        style={({ pressed }) => [
-          styles.quizFlagButton,
-          question.word.isFlagged && styles.quizFlagButtonActive,
-          pressed && styles.pressed,
-        ]}
-      >
-        <Ionicons
-          name={question.word.isFlagged ? 'bookmark' : 'bookmark-outline'}
-          size={16}
-          color={question.word.isFlagged ? COLORS.purpleDark : COLORS.muted}
-        />
-        <Text
-          style={[
-            styles.quizFlagButtonText,
-            question.word.isFlagged && styles.quizFlagButtonTextActive,
+      <View style={styles.quizFlagActionRow}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={
+            question.word.isFlagged
+              ? 'Remove word from flagged words'
+              : 'Flag word'
+          }
+          accessibilityState={{ selected: question.word.isFlagged }}
+          onPress={() => onToggleFlag(question.word.id)}
+          style={({ pressed }) => [
+            styles.quizFlagButton,
+            question.word.isFlagged && styles.quizFlagButtonActive,
+            pressed && styles.pressed,
           ]}
         >
-          {question.word.isFlagged ? 'FLAGGED WORD' : 'FLAG WORD'}
-        </Text>
-      </Pressable>
+          <Ionicons
+            name={question.word.isFlagged ? 'bookmark' : 'bookmark-outline'}
+            size={16}
+            color={question.word.isFlagged ? COLORS.purpleDark : COLORS.muted}
+          />
+          <Text
+            style={[
+              styles.quizFlagButtonText,
+              question.word.isFlagged && styles.quizFlagButtonTextActive,
+            ]}
+          >
+            {question.word.isFlagged
+              ? formatWordFlaggedDate(question.word.flaggedAt).toUpperCase()
+              : 'FLAG WORD'}
+          </Text>
+        </Pressable>
+      </View>
 
       <View style={styles.quizFocusCard}>
         <View style={styles.quizFocusItem}>

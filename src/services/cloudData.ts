@@ -21,6 +21,7 @@ type WordRow = {
   origin: string | null;
   origin_period: string | null;
   synonyms: string[] | null;
+  antonyms?: string[] | null;
   common_words: string[] | null;
   basic_info: string | null;
   reviews: number;
@@ -76,6 +77,7 @@ const WORD_COLUMNS = [
   'origin',
   'origin_period',
   'synonyms',
+  'antonyms',
   'common_words',
   'basic_info',
   'reviews',
@@ -115,15 +117,9 @@ export async function fetchUserLearningData(
   userId: string,
   context?: CloudRequestContext,
 ): Promise<UserLearningData> {
-  let wordColumns = WORD_COLUMNS;
-  let [wordsResult, quizResult, reviewsResult, reminderResult] =
+  const [wordsResult, quizResult, reviewsResult, reminderResult] =
     await Promise.all([
-      supabase
-        .from('words')
-        .select(WORD_COLUMNS)
-        .eq('user_id', userId)
-        .order('created_at', { ascending: false })
-        .limit(MAX_CLOUD_WORDS),
+      fetchCloudWords(userId),
       supabase
         .from('quiz_attempts')
         .select(QUIZ_ATTEMPT_COLUMNS)
@@ -142,26 +138,6 @@ export async function fetchUserLearningData(
         .eq('user_id', userId)
         .maybeSingle(),
     ]);
-
-  if (isMissingFlagColumns(wordsResult.error)) {
-    wordColumns = omitFlagColumns(wordColumns);
-    wordsResult = await supabase
-      .from('words')
-      .select(wordColumns)
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false })
-      .limit(MAX_CLOUD_WORDS);
-  }
-
-  if (isMissingMasteryDataColumn(wordsResult.error)) {
-    wordColumns = wordColumns.replace('mastery_data,', '');
-    wordsResult = await supabase
-      .from('words')
-      .select(wordColumns)
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false })
-      .limit(MAX_CLOUD_WORDS);
-  }
 
   const firstError =
     getQueryError('words', wordsResult.error) ??
@@ -251,24 +227,13 @@ export async function saveCloudWord(
   const payload = toWordPayload(userId, word);
   const hasCloudId = isUuid(word.id);
   const cloudPayload = hasCloudId ? { ...payload, id: word.id } : payload;
-  let { error } = hasCloudId
-    ? await supabase.from('words').upsert(cloudPayload)
-    : await supabase.from('words').insert(cloudPayload);
-
-  let fallbackPayload: Record<string, unknown> = cloudPayload;
-  if (isMissingFlagColumns(error)) {
-    fallbackPayload = omitFlagFields(fallbackPayload);
-    ({ error } = hasCloudId
-      ? await supabase.from('words').upsert(fallbackPayload)
-      : await supabase.from('words').insert(fallbackPayload));
-  }
-
-  if (isMissingMasteryDataColumn(error)) {
-    fallbackPayload = omitMasteryData(fallbackPayload);
-    ({ error } = hasCloudId
-      ? await supabase.from('words').upsert(fallbackPayload)
-      : await supabase.from('words').insert(fallbackPayload));
-  }
+  const error = await writeCloudWordsWithCompatibility(
+    cloudPayload,
+    (compatiblePayload) =>
+      hasCloudId
+        ? supabase.from('words').upsert(compatiblePayload)
+        : supabase.from('words').insert(compatiblePayload),
+  );
 
   if (error) {
     throw getQueryError('words', error);
@@ -292,18 +257,10 @@ export async function saveCloudWords(
     ...toWordPayload(userId, word),
     ...(isUuid(word.id) ? { id: word.id } : {}),
   }));
-  let { error } = await supabase.from('words').upsert(payloads);
-
-  let fallbackPayloads: Record<string, unknown>[] = payloads;
-  if (isMissingFlagColumns(error)) {
-    fallbackPayloads = fallbackPayloads.map(omitFlagFields);
-    ({ error } = await supabase.from('words').upsert(fallbackPayloads));
-  }
-
-  if (isMissingMasteryDataColumn(error)) {
-    fallbackPayloads = fallbackPayloads.map(omitMasteryData);
-    ({ error } = await supabase.from('words').upsert(fallbackPayloads));
-  }
+  const error = await writeCloudWordsWithCompatibility(
+    payloads,
+    (compatiblePayloads) => supabase.from('words').upsert(compatiblePayloads),
+  );
 
   if (error) {
     throw getQueryError('words', error);
@@ -513,6 +470,7 @@ function mapWordRow(row: WordRow): Word {
     origin: row.origin ?? undefined,
     originPeriod: row.origin_period ?? undefined,
     synonyms: row.synonyms ?? [],
+    antonyms: row.antonyms ?? [],
     commonWords: row.common_words ?? [],
     basicInfo: row.basic_info ?? undefined,
     createdAt: row.created_at,
@@ -566,6 +524,7 @@ function toWordPayload(userId: string, word: Word) {
     origin: word.origin ?? null,
     origin_period: word.originPeriod ?? null,
     synonyms: word.synonyms ?? [],
+    antonyms: word.antonyms ?? [],
     common_words: word.commonWords ?? [],
     basic_info: word.basicInfo ?? null,
     reviews: word.reviews,
@@ -586,12 +545,140 @@ function omitFlagColumns(columns: string) {
   return columns.replace('is_flagged,', '').replace('flagged_at,', '');
 }
 
+function omitAntonymColumn(columns: string) {
+  return columns.replace('antonyms,', '');
+}
+
 function omitFlagFields<
   T extends { is_flagged?: unknown; flagged_at?: unknown },
 >(payload: T) {
   const { is_flagged: _isFlagged, flagged_at: _flaggedAt, ...legacyPayload } =
     payload;
   return legacyPayload;
+}
+
+function omitAntonymField<T extends { antonyms?: unknown }>(payload: T) {
+  const { antonyms: _antonyms, ...legacyPayload } = payload;
+  return legacyPayload;
+}
+
+async function fetchCloudWords(userId: string) {
+  let columns = WORD_COLUMNS;
+  let result = await selectCloudWords(userId, columns);
+
+  // Existing WordWiz databases may predate one or more of these optional
+  // columns. Retry with every supported combination instead of preventing the
+  // rest of the learner's cloud data from loading.
+  for (let attempt = 0; result.error && attempt < 3; attempt += 1) {
+    const nextColumns = omitUnsupportedWordColumns(columns, result.error);
+    if (nextColumns === columns) {
+      break;
+    }
+
+    columns = nextColumns;
+    result = await selectCloudWords(userId, columns);
+  }
+
+  return result;
+}
+
+function selectCloudWords(userId: string, columns: string) {
+  return supabase
+    .from('words')
+    .select(columns)
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+    .limit(MAX_CLOUD_WORDS);
+}
+
+function omitUnsupportedWordColumns(
+  columns: string,
+  error: { message?: string } | null,
+) {
+  let compatibleColumns = columns;
+
+  if (isMissingFlagColumns(error)) {
+    compatibleColumns = omitFlagColumns(compatibleColumns);
+  }
+
+  if (isMissingMasteryDataColumn(error)) {
+    compatibleColumns = compatibleColumns.replace('mastery_data,', '');
+  }
+
+  if (isMissingAntonymColumn(error)) {
+    compatibleColumns = omitAntonymColumn(compatibleColumns);
+  }
+
+  return compatibleColumns;
+}
+
+async function writeCloudWordsWithCompatibility<
+  T extends Record<string, unknown> | Record<string, unknown>[],
+>(
+  payload: T,
+  write: (payload: T) => PromiseLike<{ error: { message?: string } | null }>,
+) {
+  let compatiblePayload = payload;
+  let canOmitFlagFields = true;
+  let canOmitMasteryData = true;
+  let canOmitAntonyms = true;
+  let result = await write(compatiblePayload);
+
+  for (let attempt = 0; result.error && attempt < 3; attempt += 1) {
+    const omitFlags =
+      canOmitFlagFields && isMissingFlagColumns(result.error);
+    const omitMastery =
+      canOmitMasteryData && isMissingMasteryDataColumn(result.error);
+    const omitAntonyms =
+      canOmitAntonyms && isMissingAntonymColumn(result.error);
+
+    if (!omitFlags && !omitMastery && !omitAntonyms) {
+      break;
+    }
+
+    if (omitFlags) {
+      compatiblePayload = removeFlagFields(compatiblePayload) as T;
+      canOmitFlagFields = false;
+    }
+
+    if (omitMastery) {
+      compatiblePayload = removeMasteryData(compatiblePayload) as T;
+      canOmitMasteryData = false;
+    }
+
+    if (omitAntonyms) {
+      compatiblePayload = removeAntonymFields(compatiblePayload) as T;
+      canOmitAntonyms = false;
+    }
+
+    result = await write(compatiblePayload);
+  }
+
+  return result.error;
+}
+
+function removeFlagFields(
+  payload: Record<string, unknown> | Record<string, unknown>[],
+) {
+  return Array.isArray(payload)
+    ? payload.map(omitFlagFields)
+    : omitFlagFields(payload);
+}
+
+function removeMasteryData(
+  payload: Record<string, unknown> | Record<string, unknown>[],
+) {
+  return Array.isArray(payload)
+    ? payload.map(omitMasteryData)
+    : omitMasteryData(payload);
+}
+
+function removeAntonymFields(
+  payload: Record<string, unknown> | Record<string, unknown>[],
+) {
+  return Array.isArray(payload)
+    ? payload.map(omitAntonymField)
+    : omitAntonymField(payload);
 }
 
 function isMissingMasteryDataColumn(error: { message?: string } | null) {
@@ -601,6 +688,10 @@ function isMissingMasteryDataColumn(error: { message?: string } | null) {
 function isMissingFlagColumns(error: { message?: string } | null) {
   const message = error?.message?.toLowerCase() ?? '';
   return message.includes('is_flagged') || message.includes('flagged_at');
+}
+
+function isMissingAntonymColumn(error: { message?: string } | null) {
+  return Boolean(error?.message?.toLowerCase().includes('antonyms'));
 }
 
 function parseMasteryProgress(value: unknown): Word['mastery'] {

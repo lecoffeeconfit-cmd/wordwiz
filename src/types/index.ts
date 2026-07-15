@@ -166,7 +166,9 @@ export type QuizQuestionMode =
   | 'word-to-definition'
   | 'definition-to-word'
   | 'true-false'
-  | 'typed-word';
+  | 'typed-word'
+  | 'sentence-usage'
+  | 'closest-synonym';
 
 export type QuizQuestion = {
   word: Word;

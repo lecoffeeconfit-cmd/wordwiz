@@ -97,6 +97,15 @@ export const WORD_MASTERY_CATEGORIES: WordMasteryCategory[] = [
   },
 ];
 
+export const NEW_STUDY_GROUP = {
+  id: 'new' as const,
+  label: 'New words',
+  shortLabel: 'New',
+  color: '#F29E4C',
+  pale: '#FFF1DF',
+  icon: 'sparkles' as const,
+};
+
 export function getWordMasteryCategoryId(score: number): WordMasteryCategoryId {
   if (score >= 100) return 'master';
   if (score >= 80) return 'strong';
@@ -118,20 +127,29 @@ export function getWordMasteryCategoryForWord(
   analytics: AnalyticsData,
 ) {
   const progress = getWordMasteryProgress(word, analytics);
-  if (progress.masteryPercent >= 100 || isWordMastered(progress)) {
-    return WORD_MASTERY_CATEGORIES.find((category) => category.id === 'master') ??
-      WORD_MASTERY_CATEGORIES[4];
+  // The visual category must always match the percentage shown to the learner.
+  // A word can have durable-review evidence before it reaches 100%, but it is
+  // only presented as Proficient once the visible score is actually complete.
+  return getWordMasteryCategory(progress.masteryPercent);
+}
+
+export function isNewStudyWord(word: Word, analytics: AnalyticsData) {
+  if (word.id.startsWith('starter-') || word.reviews > 0) {
+    return false;
   }
 
-  if (progress.masteryPercent >= 70) {
-    return WORD_MASTERY_CATEGORIES.find((category) => category.id === 'strong') ??
-      WORD_MASTERY_CATEGORIES[3];
-  }
-  if (progress.masteryPercent >= 50) {
-    return WORD_MASTERY_CATEGORIES.find((category) => category.id === 'building') ??
-      WORD_MASTERY_CATEGORIES[2];
-  }
-  return WORD_MASTERY_CATEGORIES[1];
+  const hasFlashcardReview = analytics.cardHistory.some(
+    (event) => event.wordId === word.id,
+  );
+  const hasQuizReview = analytics.quizHistory.some((attempt) =>
+    attempt.answers.some((answer) => answer.wordId === word.id),
+  );
+
+  return !hasFlashcardReview && !hasQuizReview;
+}
+
+export function getNewStudyWords(words: Word[], analytics: AnalyticsData) {
+  return words.filter((word) => isNewStudyWord(word, analytics));
 }
 
 export function sortWordsAlphabetically(words: Word[]) {

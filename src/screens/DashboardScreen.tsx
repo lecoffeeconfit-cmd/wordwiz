@@ -6,8 +6,11 @@ import type { AnalyticsData, LegalPage, QuizAnswer, QuizProgress, QuizQuestion, 
 import type { AuthUser } from '../types';
 import { styles } from '../styles';
 import { MASTERY_LEVELS, buildAchievements, buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, getDayKey, getDueReviewWords, getHeroProgressColor, getMasteryLevel, getMasteryLevelProgress, getNextMasteryLevel, getProgressColor, getProgressPaleColor, getQuizAttemptKind, getRecentDays, getStreakMessage, getStreakMilestone, getStreakWeek, getWordMastery, getWordMasteryCategory, getWordMasteryCategoryForWord, shuffle } from '../utils';
-import { DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
+import { CompactPagination, DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 import { LessonProgressRing } from '../components/dashboard/LessonProgressRing';
+
+const EXPANDED_LIST_PAGE_SIZE = 8;
+const DUE_REVIEW_PREVIEW_SIZE = 6;
 
 export function DashboardScreen({
   words,
@@ -43,6 +46,9 @@ export function DashboardScreen({
   const [quizTrendExpanded, setQuizTrendExpanded] = useState(false);
   const [practiceEstimateExpanded, setPracticeEstimateExpanded] = useState(false);
   const [dueReviewsExpanded, setDueReviewsExpanded] = useState(false);
+  const [dueReviewPage, setDueReviewPage] = useState(0);
+  const [masteryPage, setMasteryPage] = useState(0);
+  const [quizTrendPage, setQuizTrendPage] = useState(0);
   const [activityWindow, setActivityWindow] = useState<7 | 30>(7);
   const masterSparkleScale = useRef(new Animated.Value(1)).current;
   const lastMasteryRowTapAt = useRef(0);
@@ -81,12 +87,46 @@ export function DashboardScreen({
       score: getWordMastery(word, analytics),
       category: getWordMasteryCategoryForWord(word, analytics),
     }))
-    .sort((first, second) => second.score - first.score);
+    .sort(
+      (first, second) =>
+        second.score - first.score ||
+        first.word.term.localeCompare(second.word.term, undefined, {
+          sensitivity: 'base',
+        }),
+    );
   const dueReviews = getDueReviewWords(words, analytics);
   const flaggedCount = words.filter((word) => word.isFlagged).length;
+  const dueReviewPageCount = Math.max(
+    1,
+    Math.ceil(dueReviews.length / EXPANDED_LIST_PAGE_SIZE),
+  );
+  const currentDueReviewPage = Math.min(
+    dueReviewPage,
+    dueReviewPageCount - 1,
+  );
+  const dueReviewStartIndex = currentDueReviewPage * EXPANDED_LIST_PAGE_SIZE;
   const dueReviewPreview = dueReviewsExpanded
-    ? dueReviews
-    : dueReviews.slice(0, 3);
+    ? dueReviews.slice(
+        dueReviewStartIndex,
+        dueReviewStartIndex + EXPANDED_LIST_PAGE_SIZE,
+      )
+    : dueReviews.slice(0, DUE_REVIEW_PREVIEW_SIZE);
+  const masteryPageCount = Math.max(
+    1,
+    Math.ceil(mastery.length / EXPANDED_LIST_PAGE_SIZE),
+  );
+  const currentMasteryPage = Math.min(masteryPage, masteryPageCount - 1);
+  const masteryStartIndex = currentMasteryPage * EXPANDED_LIST_PAGE_SIZE;
+  const masteryRangeEnd = Math.min(
+    masteryStartIndex + EXPANDED_LIST_PAGE_SIZE,
+    mastery.length,
+  );
+  const masteryPreview = masteryExpanded
+    ? mastery.slice(
+        masteryStartIndex,
+        masteryStartIndex + EXPANDED_LIST_PAGE_SIZE,
+      )
+    : mastery.slice(0, 7);
   const overallMastery = words.length
     ? Math.round(
         mastery.reduce((total, item) => total + item.score, 0) / words.length,
@@ -159,8 +199,19 @@ export function DashboardScreen({
     ...weeklyActivity.map((day) => day.activityScore),
   );
   const recentQuizzes = analytics.quizHistory.slice(0, 5);
+  const quizTrendPageCount = Math.max(
+    1,
+    Math.ceil(analytics.quizHistory.length / EXPANDED_LIST_PAGE_SIZE),
+  );
+  const currentQuizTrendPage = Math.min(
+    quizTrendPage,
+    quizTrendPageCount - 1,
+  );
   const quizTrendAttempts = quizTrendExpanded
-    ? analytics.quizHistory
+    ? analytics.quizHistory.slice(
+        currentQuizTrendPage * EXPANDED_LIST_PAGE_SIZE,
+        (currentQuizTrendPage + 1) * EXPANDED_LIST_PAGE_SIZE,
+      )
     : recentQuizzes;
   const streakStats = calculateStreakStats(analytics);
   const streak = streakStats.current;
@@ -245,6 +296,66 @@ export function DashboardScreen({
     return () => sparkleLoop.stop();
   }, [masterSparkleScale]);
 
+  const practiceEstimate = (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel="Practice estimate details"
+      accessibilityHint="Shows the reviews, quizzes, and study time behind this estimate"
+      accessibilityState={{ expanded: practiceEstimateExpanded }}
+      onPress={() => setPracticeEstimateExpanded((expanded) => !expanded)}
+      style={({ pressed }) => [styles.insightCard, pressed && styles.pressed]}
+    >
+      <View style={styles.insightHeader}>
+        <View style={styles.insightIcon}>
+          <Ionicons name="sparkles" size={23} color={COLORS.blue} />
+        </View>
+        <View style={styles.insightCopy}>
+          <Text style={styles.insightLabel}>PRACTICE ESTIMATE</Text>
+          <Text style={styles.insightTitle}>
+            {words.length === 0
+              ? 'Start with a few words'
+              : remainingReviews === 0
+                ? 'Your words are in great shape'
+                : `About ${estimatedMinutes} ${estimatedMinutes === 1 ? 'minute' : 'minutes'} studying flashcards`}
+          </Text>
+          <Text style={styles.insightText}>
+            {words.length === 0
+              ? 'Add words and practice them to unlock a learning estimate.'
+              : remainingReviews === 0
+                ? 'Keep using them naturally to help the meanings last.'
+                : 'A personalized estimate to strengthen your saved words.'}
+          </Text>
+        </View>
+        <View style={styles.insightChevron}>
+          <Ionicons
+            name={practiceEstimateExpanded ? 'chevron-up' : 'chevron-down'}
+            size={18}
+            color={COLORS.blue}
+          />
+        </View>
+      </View>
+      {practiceEstimateExpanded && words.length > 0 ? (
+        <View style={styles.insightDetails}>
+          <PracticeEstimateDetail
+            icon="layers-outline"
+            title={`${remainingReviews} review${remainingReviews === 1 ? '' : 's'} left`}
+            text="Short, repeated recall sessions move words toward the strong zone."
+          />
+          <PracticeEstimateDetail
+            icon="help-circle-outline"
+            title={`About ${estimatedQuizCount} ${estimatedQuizCount === 1 ? 'quiz' : 'quizzes'}`}
+            text={`Based on quizzes of about ${typicalQuizSize} ${typicalQuizSize === 1 ? 'word' : 'words'} each.`}
+          />
+          <PracticeEstimateDetail
+            icon="time-outline"
+            title={`About ${estimatedMinutes} ${estimatedMinutes === 1 ? 'minute' : 'minutes'} of flashcard study`}
+            text="Based on roughly 20 seconds per flashcard review."
+          />
+        </View>
+      ) : null}
+    </Pressable>
+  );
+
   return (
     <ScrollView
       style={styles.screen}
@@ -256,6 +367,8 @@ export function DashboardScreen({
         title="Learning dashboard"
         subtitle="Small sessions add up. Here’s the story your practice tells."
       />
+
+      {practiceEstimate}
 
       <View style={styles.dashboardHero}>
         <View style={styles.heroCopy}>
@@ -370,161 +483,6 @@ export function DashboardScreen({
           </View>
         </View>
 
-        <View style={styles.reminderCard}>
-          <View style={styles.reminderHeader}>
-            <View style={styles.reminderIcon}>
-              <Ionicons
-                name="notifications"
-                size={22}
-                color={COLORS.blue}
-              />
-            </View>
-            <View style={styles.reminderHeaderCopy}>
-              <Text style={styles.reminderLabel}>DAILY REMINDER</Text>
-              <Text style={styles.reminderTitle}>
-                {reminderSettings.enabled ? reminderTime : 'Off'}
-              </Text>
-            </View>
-            <Pressable
-              onPress={() =>
-                onUpdateReminder({
-                  ...reminderSettings,
-                  enabled: !reminderSettings.enabled,
-                })
-              }
-              style={[
-                styles.reminderSwitch,
-                reminderSettings.enabled && styles.reminderSwitchOn,
-              ]}
-            >
-              <View
-                style={[
-                  styles.reminderSwitchKnob,
-                  reminderSettings.enabled && styles.reminderSwitchKnobOn,
-                ]}
-              />
-            </Pressable>
-          </View>
-          <Text style={styles.reminderText}>
-            Smart reminders adapt to your streak, quiz goal, new words, and
-            reviews.
-          </Text>
-          <View style={styles.reminderCustomTime}>
-            <View style={styles.reminderCustomHeader}>
-              <Text style={styles.reminderCustomLabel}>SET ANY TIME</Text>
-              <Text style={styles.reminderCustomValue}>{reminderTime}</Text>
-            </View>
-            <View style={styles.reminderStepperRow}>
-              <ReminderTimeStepper
-                label="Hour"
-                value={formatReminderHour(reminderSettings.hour)}
-                onDecrease={() =>
-                  updateReminderTime(
-                    reminderSettings.hour - 1,
-                    reminderSettings.minute,
-                  )
-                }
-                onIncrease={() =>
-                  updateReminderTime(
-                    reminderSettings.hour + 1,
-                    reminderSettings.minute,
-                  )
-                }
-              />
-              <ReminderTimeStepper
-                label="Minute"
-                value={formatReminderMinute(reminderSettings.minute)}
-                onDecrease={() =>
-                  updateReminderTime(
-                    reminderSettings.hour,
-                    reminderSettings.minute - 1,
-                  )
-                }
-                onIncrease={() =>
-                  updateReminderTime(
-                    reminderSettings.hour,
-                    reminderSettings.minute + 1,
-                  )
-                }
-              />
-            </View>
-          </View>
-          <Text style={styles.reminderQuickLabel}>QUICK PICKS</Text>
-          <View style={styles.reminderTimes}>
-            {[
-              { label: '8 AM', hour: 8, minute: 0 },
-              { label: '7 PM', hour: 19, minute: 0 },
-              { label: '9 PM', hour: 21, minute: 0 },
-            ].map((time) => (
-              <ReminderTimeButton
-                key={time.label}
-                label={time.label}
-                active={
-                  reminderSettings.hour === time.hour &&
-                  reminderSettings.minute === time.minute
-                }
-                onPress={() => updateReminderTime(time.hour, time.minute)}
-              />
-            ))}
-          </View>
-        </View>
-      </View>
-
-      <View style={styles.dailyGoalCard}>
-        <View style={styles.dailyGoalHeader}>
-          <View style={styles.dailyGoalIcon}>
-            <Ionicons name="trophy-outline" size={23} color={COLORS.teal} />
-          </View>
-          <View style={styles.dailyGoalCopy}>
-            <Text style={styles.dailyGoalLabel}>DAILY PRACTICE</Text>
-            <Text style={styles.dailyGoalTitle}>Quiz goal</Text>
-          </View>
-          <View style={styles.dailyGoalBadge}>
-            <Text style={styles.dailyGoalBadgeText}>
-              {dailyQuizGoal} {dailyQuizGoal === 1 ? 'quiz' : 'quizzes'}
-            </Text>
-          </View>
-        </View>
-        <Text style={styles.dailyGoalText}>
-          Choose how many quizzes you want to complete each day. Every finished
-          quiz counts, even when it has fewer than ten questions.
-        </Text>
-        <View style={styles.dailyGoalStepper}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Decrease daily quiz goal"
-            accessibilityState={{ disabled: dailyQuizGoal <= 1 }}
-            disabled={dailyQuizGoal <= 1}
-            onPress={() => onUpdateDailyQuizGoal(dailyQuizGoal - 1)}
-            style={({ pressed }) => [
-              styles.dailyGoalStepButton,
-              dailyQuizGoal <= 1 && styles.dailyGoalStepButtonDisabled,
-              pressed && dailyQuizGoal > 1 && styles.pressed,
-            ]}
-          >
-            <Ionicons name="remove" size={21} color={COLORS.teal} />
-          </Pressable>
-          <View style={styles.dailyGoalValue}>
-            <Text style={styles.dailyGoalNumber}>{dailyQuizGoal}</Text>
-            <Text style={styles.dailyGoalUnit}>
-              {dailyQuizGoal === 1 ? 'QUIZ PER DAY' : 'QUIZZES PER DAY'}
-            </Text>
-          </View>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Increase daily quiz goal"
-            accessibilityState={{ disabled: dailyQuizGoal >= 5 }}
-            disabled={dailyQuizGoal >= 5}
-            onPress={() => onUpdateDailyQuizGoal(dailyQuizGoal + 1)}
-            style={({ pressed }) => [
-              styles.dailyGoalStepButton,
-              dailyQuizGoal >= 5 && styles.dailyGoalStepButtonDisabled,
-              pressed && dailyQuizGoal < 5 && styles.pressed,
-            ]}
-          >
-            <Ionicons name="add" size={21} color={COLORS.teal} />
-          </Pressable>
-        </View>
       </View>
 
       <DashboardSection
@@ -813,6 +771,158 @@ export function DashboardScreen({
         </View>
       </View>
 
+      <DashboardSection title="WORD MASTERY" badge={`${words.length} words`}>
+        {mastery.length === 0 ? (
+          <Text style={styles.dashboardEmptyText}>
+            Add your first word to start measuring mastery.
+          </Text>
+        ) : (
+          <>
+            {masteryExpanded ? (
+              <Text style={styles.expandedListHint}>
+                Double-tap any word to show fewer
+              </Text>
+            ) : null}
+            {masteryPreview.map((item) => {
+              const wordCategory = item.category;
+              const isMasterWord = wordCategory.id === 'master';
+
+              return (
+                <Pressable
+                  key={item.word.id}
+                  accessibilityRole={masteryExpanded ? 'button' : undefined}
+                  accessibilityHint={
+                    masteryExpanded
+                      ? 'Double-tap twice quickly to collapse the word list'
+                      : undefined
+                  }
+                  disabled={!masteryExpanded}
+                  onPress={collapseMasteryListOnDoubleTap}
+                  style={[
+                    styles.masteryRow,
+                    isMasterWord && styles.masteryRowComplete,
+                  ]}
+                >
+                  <View style={styles.masteryRowTop}>
+                    <View style={styles.masteryWordCopy}>
+                      <Text style={styles.masteryWord}>{item.word.term}</Text>
+                      <Text
+                        style={[
+                          styles.masteryWordLevel,
+                          { color: wordCategory.color },
+                        ]}
+                      >
+                        {getMasteryLevel(item.score).shortTitle}
+                      </Text>
+                    </View>
+                    <View style={styles.masteryPercentRow}>
+                      {isMasterWord ? (
+                        <Animated.View
+                          style={[
+                            styles.masteryCompleteSparkle,
+                            {
+                              transform: [{ scale: masterSparkleScale }],
+                            },
+                          ]}
+                        >
+                          <Ionicons
+                            name="sparkles"
+                            size={15}
+                            color={wordCategory.color}
+                          />
+                        </Animated.View>
+                      ) : null}
+                      <Text
+                        style={[
+                          styles.masteryPercent,
+                          {
+                            color: wordCategory.color,
+                          },
+                        ]}
+                      >
+                        {item.score}%
+                      </Text>
+                    </View>
+                  </View>
+                  <View
+                    style={[
+                      styles.masteryTrack,
+                      isMasterWord && { backgroundColor: wordCategory.pale },
+                    ]}
+                  >
+                    <View
+                      style={[
+                        styles.masteryFill,
+                        {
+                          width: `${Math.max(item.score, 3)}%`,
+                          backgroundColor: wordCategory.color,
+                        },
+                      ]}
+                    />
+                  </View>
+                </Pressable>
+              );
+            })}
+            {masteryExpanded && masteryPageCount > 1 ? (
+              <CompactPagination
+                page={currentMasteryPage}
+                pageCount={masteryPageCount}
+                pageSize={EXPANDED_LIST_PAGE_SIZE}
+                total={mastery.length}
+                itemLabel="word mastery rows"
+                onPrevious={() => setMasteryPage(Math.max(0, currentMasteryPage - 1))}
+                onNext={() =>
+                  setMasteryPage(
+                    Math.min(masteryPageCount - 1, currentMasteryPage + 1),
+                  )
+                }
+              />
+            ) : null}
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={
+                masteryExpanded
+                  ? 'Show fewer word mastery rows'
+                  : 'Show all word mastery rows'
+              }
+              accessibilityState={{ expanded: masteryExpanded }}
+              onPress={() => {
+                if (masteryExpanded) {
+                  setMasteryExpanded(false);
+                  return;
+                }
+
+                setMasteryPage(0);
+                setMasteryExpanded(true);
+              }}
+              style={({ pressed }) => [
+                styles.masterySummary,
+                pressed && styles.pressed,
+              ]}
+            >
+              <View style={styles.masterySummaryCopy}>
+                <Text style={styles.masterySummaryTitle}>
+                  {masteryExpanded
+                    ? `Showing ${masteryStartIndex + 1}–${masteryRangeEnd} of ${mastery.length} words`
+                    : 'Showing top words'}
+                </Text>
+                <Text style={styles.masterySummaryText}>
+                  {masteredWords} proficient · {strongWords} strong · {buildingWords} building
+                </Text>
+              </View>
+              <Text style={styles.masterySummaryAction}>
+                {masteryExpanded ? 'Collapse' : 'View all'}
+              </Text>
+              <Ionicons
+                name={masteryExpanded ? 'chevron-up' : 'chevron-down'}
+                size={18}
+                color={COLORS.muted}
+              />
+            </Pressable>
+          </>
+        )}
+      </DashboardSection>
+
       <DashboardSection
         title="DUE FOR REVIEW"
         badge={dueReviews.length ? `${dueReviews.length} due` : 'All caught up'}
@@ -863,12 +973,35 @@ export function DashboardScreen({
                 </View>
               );
             })}
+            {dueReviewsExpanded && dueReviewPageCount > 1 ? (
+              <CompactPagination
+                page={currentDueReviewPage}
+                pageCount={dueReviewPageCount}
+                pageSize={EXPANDED_LIST_PAGE_SIZE}
+                total={dueReviews.length}
+                itemLabel="due review words"
+                onPrevious={() => setDueReviewPage(Math.max(0, currentDueReviewPage - 1))}
+                onNext={() =>
+                  setDueReviewPage(
+                    Math.min(dueReviewPageCount - 1, currentDueReviewPage + 1),
+                  )
+                }
+              />
+            ) : null}
             <View style={styles.dueReviewActions}>
-              {dueReviews.length > 3 ? (
+              {dueReviews.length > DUE_REVIEW_PREVIEW_SIZE ? (
                 <Pressable
                   accessibilityRole="button"
                   accessibilityState={{ expanded: dueReviewsExpanded }}
-                  onPress={() => setDueReviewsExpanded((expanded) => !expanded)}
+                  onPress={() => {
+                    if (dueReviewsExpanded) {
+                      setDueReviewsExpanded(false);
+                      return;
+                    }
+
+                    setDueReviewPage(0);
+                    setDueReviewsExpanded(true);
+                  }}
                   style={({ pressed }) => [
                     styles.dueReviewViewAll,
                     pressed && styles.pressed,
@@ -1078,132 +1211,163 @@ export function DashboardScreen({
         ) : null}
       </DashboardSection>
 
-      <DashboardSection title="WORD MASTERY" badge={`${words.length} words`}>
-        {mastery.length === 0 ? (
-          <Text style={styles.dashboardEmptyText}>
-            Add your first word to start measuring mastery.
-          </Text>
-        ) : (
-          <>
-            {masteryExpanded ? (
-              <Text style={styles.expandedListHint}>
-                Double-tap any word to show fewer
-              </Text>
-            ) : null}
-            {(masteryExpanded ? mastery : mastery.slice(0, 5)).map((item) => {
-              const wordCategory = item.category;
-              const isMasterWord = wordCategory.id === 'master';
 
-              return (
-                <Pressable
-                  key={item.word.id}
-                  accessibilityRole={masteryExpanded ? 'button' : undefined}
-                  accessibilityHint={
-                    masteryExpanded
-                      ? 'Double-tap twice quickly to collapse the word list'
-                      : undefined
-                  }
-                  disabled={!masteryExpanded}
-                  onPress={collapseMasteryListOnDoubleTap}
-                  style={[
-                    styles.masteryRow,
-                    isMasterWord && styles.masteryRowComplete,
-                  ]}
-                >
-                  <View style={styles.masteryRowTop}>
-                    <View style={styles.masteryWordCopy}>
-                      <Text style={styles.masteryWord}>{item.word.term}</Text>
-                      <Text
-                        style={[
-                          styles.masteryWordLevel,
-                          { color: wordCategory.color },
-                        ]}
-                      >
-                        {getMasteryLevel(item.score).shortTitle}
-                      </Text>
-                    </View>
-                    <View style={styles.masteryPercentRow}>
-                      {isMasterWord ? (
-                        <Animated.View
-                          style={[
-                            styles.masteryCompleteSparkle,
-                            {
-                              transform: [{ scale: masterSparkleScale }],
-                            },
-                          ]}
-                        >
-                          <Ionicons
-                            name="sparkles"
-                            size={15}
-                            color={wordCategory.color}
-                          />
-                        </Animated.View>
-                      ) : null}
-                      <Text
-                        style={[
-                          styles.masteryPercent,
-                          {
-                            color: wordCategory.color,
-                          },
-                        ]}
-                      >
-                        {item.score}%
-                      </Text>
-                    </View>
-                  </View>
-                  <View
-                    style={[
-                      styles.masteryTrack,
-                      isMasterWord && { backgroundColor: wordCategory.pale },
-                    ]}
-                  >
-                    <View
-                      style={[
-                        styles.masteryFill,
-                        {
-                          width: `${Math.max(item.score, 3)}%`,
-                          backgroundColor: wordCategory.color,
-                        },
-                      ]}
-                    />
-                  </View>
-                </Pressable>
-              );
-            })}
+
+        <View style={styles.reminderCard}>
+          <View style={styles.reminderHeader}>
+            <View style={styles.reminderIcon}>
+              <Ionicons
+                name="notifications"
+                size={22}
+                color={COLORS.blue}
+              />
+            </View>
+            <View style={styles.reminderHeaderCopy}>
+              <Text style={styles.reminderLabel}>DAILY REMINDER</Text>
+              <Text style={styles.reminderTitle}>
+                {reminderSettings.enabled ? reminderTime : 'Off'}
+              </Text>
+            </View>
             <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={
-                masteryExpanded
-                  ? 'Show fewer word mastery rows'
-                  : 'Show all word mastery rows'
+              onPress={() =>
+                onUpdateReminder({
+                  ...reminderSettings,
+                  enabled: !reminderSettings.enabled,
+                })
               }
-              accessibilityState={{ expanded: masteryExpanded }}
-              onPress={() => setMasteryExpanded((expanded) => !expanded)}
-              style={({ pressed }) => [
-                styles.masterySummary,
-                pressed && styles.pressed,
+              style={[
+                styles.reminderSwitch,
+                reminderSettings.enabled && styles.reminderSwitchOn,
               ]}
             >
-              <View style={styles.masterySummaryCopy}>
-                <Text style={styles.masterySummaryTitle}>
-                  {masteryExpanded ? 'Showing all words' : 'Showing top words'}
-                </Text>
-                <Text style={styles.masterySummaryText}>
-                  {masteredWords} proficient · {strongWords} strong · {buildingWords} building
-                </Text>
-              </View>
-              <Text style={styles.masterySummaryAction}>
-                {masteryExpanded ? 'Collapse' : 'View all'}
-              </Text>
-              <Ionicons
-                name={masteryExpanded ? 'chevron-up' : 'chevron-down'}
-                size={18}
-                color={COLORS.muted}
+              <View
+                style={[
+                  styles.reminderSwitchKnob,
+                  reminderSettings.enabled && styles.reminderSwitchKnobOn,
+                ]}
               />
             </Pressable>
-          </>
-        )}
-      </DashboardSection>
+          </View>
+          <Text style={styles.reminderText}>
+            Smart reminders adapt to your streak, quiz goal, new words, and
+            reviews.
+          </Text>
+          <View style={styles.reminderCustomTime}>
+            <View style={styles.reminderCustomHeader}>
+              <Text style={styles.reminderCustomLabel}>SET ANY TIME</Text>
+              <Text style={styles.reminderCustomValue}>{reminderTime}</Text>
+            </View>
+            <View style={styles.reminderStepperRow}>
+              <ReminderTimeStepper
+                label="Hour"
+                value={formatReminderHour(reminderSettings.hour)}
+                onDecrease={() =>
+                  updateReminderTime(
+                    reminderSettings.hour - 1,
+                    reminderSettings.minute,
+                  )
+                }
+                onIncrease={() =>
+                  updateReminderTime(
+                    reminderSettings.hour + 1,
+                    reminderSettings.minute,
+                  )
+                }
+              />
+              <ReminderTimeStepper
+                label="Minute"
+                value={formatReminderMinute(reminderSettings.minute)}
+                onDecrease={() =>
+                  updateReminderTime(
+                    reminderSettings.hour,
+                    reminderSettings.minute - 1,
+                  )
+                }
+                onIncrease={() =>
+                  updateReminderTime(
+                    reminderSettings.hour,
+                    reminderSettings.minute + 1,
+                  )
+                }
+              />
+            </View>
+          </View>
+          <Text style={styles.reminderQuickLabel}>QUICK PICKS</Text>
+          <View style={styles.reminderTimes}>
+            {[
+              { label: '8 AM', hour: 8, minute: 0 },
+              { label: '7 PM', hour: 19, minute: 0 },
+              { label: '9 PM', hour: 21, minute: 0 },
+            ].map((time) => (
+              <ReminderTimeButton
+                key={time.label}
+                label={time.label}
+                active={
+                  reminderSettings.hour === time.hour &&
+                  reminderSettings.minute === time.minute
+                }
+                onPress={() => updateReminderTime(time.hour, time.minute)}
+              />
+            ))}
+          </View>
+        </View>
+
+      <View style={styles.dailyGoalCard}>
+        <View style={styles.dailyGoalHeader}>
+          <View style={styles.dailyGoalIcon}>
+            <Ionicons name="trophy-outline" size={23} color={COLORS.teal} />
+          </View>
+          <View style={styles.dailyGoalCopy}>
+            <Text style={styles.dailyGoalLabel}>DAILY PRACTICE</Text>
+            <Text style={styles.dailyGoalTitle}>Quiz goal</Text>
+          </View>
+          <View style={styles.dailyGoalBadge}>
+            <Text style={styles.dailyGoalBadgeText}>
+              {dailyQuizGoal} {dailyQuizGoal === 1 ? 'quiz' : 'quizzes'}
+            </Text>
+          </View>
+        </View>
+        <Text style={styles.dailyGoalText}>
+          Choose how many quizzes you want to complete each day. Every finished
+          quiz counts, even when it has fewer than ten questions.
+        </Text>
+        <View style={styles.dailyGoalStepper}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Decrease daily quiz goal"
+            accessibilityState={{ disabled: dailyQuizGoal <= 1 }}
+            disabled={dailyQuizGoal <= 1}
+            onPress={() => onUpdateDailyQuizGoal(dailyQuizGoal - 1)}
+            style={({ pressed }) => [
+              styles.dailyGoalStepButton,
+              dailyQuizGoal <= 1 && styles.dailyGoalStepButtonDisabled,
+              pressed && dailyQuizGoal > 1 && styles.pressed,
+            ]}
+          >
+            <Ionicons name="remove" size={21} color={COLORS.teal} />
+          </Pressable>
+          <View style={styles.dailyGoalValue}>
+            <Text style={styles.dailyGoalNumber}>{dailyQuizGoal}</Text>
+            <Text style={styles.dailyGoalUnit}>
+              {dailyQuizGoal === 1 ? 'QUIZ PER DAY' : 'QUIZZES PER DAY'}
+            </Text>
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Increase daily quiz goal"
+            accessibilityState={{ disabled: dailyQuizGoal >= 5 }}
+            disabled={dailyQuizGoal >= 5}
+            onPress={() => onUpdateDailyQuizGoal(dailyQuizGoal + 1)}
+            style={({ pressed }) => [
+              styles.dailyGoalStepButton,
+              dailyQuizGoal >= 5 && styles.dailyGoalStepButtonDisabled,
+              pressed && dailyQuizGoal < 5 && styles.pressed,
+            ]}
+          >
+            <Ionicons name="add" size={21} color={COLORS.teal} />
+          </Pressable>
+        </View>
+      </View>
 
       <DashboardSection title="QUIZ TREND" badge="Recent">
         {recentQuizzes.length === 0 ? (
@@ -1288,15 +1452,7 @@ export function DashboardScreen({
                         backgroundColor: tone.fill,
                       },
                     ]}
-                  >
-                    {percent >= 80 ? (
-                      <View pointerEvents="none" style={styles.trendSparkleCluster}>
-                        <View style={styles.trendSparkleLarge} />
-                        <View style={styles.trendSparkleSmall} />
-                        <View style={styles.trendGlint} />
-                      </View>
-                    ) : null}
-                  </View>
+                  />
                 </View>
                 <View style={styles.trendFooter}>
                   <Text
@@ -1314,6 +1470,23 @@ export function DashboardScreen({
               </Pressable>
             );
             })}
+            {quizTrendExpanded && quizTrendPageCount > 1 ? (
+              <CompactPagination
+                page={currentQuizTrendPage}
+                pageCount={quizTrendPageCount}
+                pageSize={EXPANDED_LIST_PAGE_SIZE}
+                total={analytics.quizHistory.length}
+                itemLabel="quiz history"
+                onPrevious={() =>
+                  setQuizTrendPage(Math.max(0, currentQuizTrendPage - 1))
+                }
+                onNext={() =>
+                  setQuizTrendPage(
+                    Math.min(quizTrendPageCount - 1, currentQuizTrendPage + 1),
+                  )
+                }
+              />
+            ) : null}
             {analytics.quizHistory.length > recentQuizzes.length ? (
               <Pressable
                 accessibilityRole="button"
@@ -1322,7 +1495,15 @@ export function DashboardScreen({
                     ? 'Show recent quiz history'
                     : 'View all quiz history'
                 }
-                onPress={() => setQuizTrendExpanded((expanded) => !expanded)}
+                onPress={() => {
+                  if (quizTrendExpanded) {
+                    setQuizTrendExpanded(false);
+                    return;
+                  }
+
+                  setQuizTrendPage(0);
+                  setQuizTrendExpanded(true);
+                }}
                 style={({ pressed }) => [
                   styles.trendHistoryToggle,
                   pressed && styles.pressed,
@@ -1344,61 +1525,7 @@ export function DashboardScreen({
         )}
       </DashboardSection>
 
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Practice estimate details"
-        accessibilityHint="Shows the reviews, quizzes, and study time behind this estimate"
-        accessibilityState={{ expanded: practiceEstimateExpanded }}
-        onPress={() => setPracticeEstimateExpanded((expanded) => !expanded)}
-        style={({ pressed }) => [styles.insightCard, pressed && styles.pressed]}
-      >
-        <View style={styles.insightHeader}>
-          <View style={styles.insightIcon}>
-            <Ionicons name="sparkles" size={23} color={COLORS.purple} />
-          </View>
-          <View style={styles.insightCopy}>
-            <Text style={styles.insightLabel}>PRACTICE ESTIMATE</Text>
-            <Text style={styles.insightTitle}>
-              {remainingReviews === 0 && words.length > 0
-                ? 'Your words are in great shape'
-                : `${remainingReviews} reviews to Word Mastery`}
-            </Text>
-            <Text style={styles.insightText}>
-              {words.length === 0
-                ? 'Add words and practice them to unlock a learning estimate.'
-                : remainingReviews === 0
-                  ? 'Keep using them naturally to help the meanings last.'
-                  : `About ${estimatedMinutes} more minutes to move your saved words into the strong zone.`}
-            </Text>
-          </View>
-          <View style={styles.insightChevron}>
-            <Ionicons
-              name={practiceEstimateExpanded ? 'chevron-up' : 'chevron-down'}
-              size={18}
-              color={COLORS.purpleDark}
-            />
-          </View>
-        </View>
-        {practiceEstimateExpanded && words.length > 0 ? (
-          <View style={styles.insightDetails}>
-            <PracticeEstimateDetail
-              icon="layers-outline"
-              title={`${remainingReviews} review${remainingReviews === 1 ? '' : 's'} left`}
-              text="Short, repeated recall sessions move words toward the strong zone."
-            />
-            <PracticeEstimateDetail
-              icon="help-circle-outline"
-              title={`About ${estimatedQuizCount} ${estimatedQuizCount === 1 ? 'quiz' : 'quizzes'}`}
-              text={`Based on quizzes of about ${typicalQuizSize} ${typicalQuizSize === 1 ? 'word' : 'words'} each.`}
-            />
-            <PracticeEstimateDetail
-              icon="time-outline"
-              title={`About ${estimatedMinutes} ${estimatedMinutes === 1 ? 'minute' : 'minutes'}`}
-              text="Estimated at roughly 20 seconds per review."
-            />
-          </View>
-        ) : null}
-      </Pressable>
+
 
       <View style={styles.accountCard}>
         <View style={styles.accountAvatar}>

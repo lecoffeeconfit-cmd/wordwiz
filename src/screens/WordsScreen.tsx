@@ -144,7 +144,7 @@ export function WordsScreen({
                 <Text style={styles.flaggedWordsTitle}>Flagged Words</Text>
                 <Text style={styles.flaggedWordsText}>
                   {flaggedCount
-                    ? `${flaggedCount} saved for extra practice`
+                    ? `${flaggedCount} saved · tap a purple bookmark to unflag.`
                     : 'Flag words while studying to review them here.'}
                 </Text>
               </View>
@@ -234,6 +234,12 @@ export function WordsScreen({
                 />
               </View>
             </View>
+
+            {words.length > 0 ? (
+              <Text style={styles.wordListGestureHint}>
+                Press and hold a word to delete it
+              </Text>
+            ) : null}
 
             {words.length > 0 && (
               <View

@@ -383,6 +383,9 @@ export function AddWordModal({
 
   const hasLookupDefinition =
     lookupStatus.startsWith('Definition found') && definition.trim().length > 0;
+  const definitionSourceCount = new Set(
+    definitionOptions.map((option) => option.source),
+  ).size;
   const viewedDefinitionOption = definitionOptions[definitionOptionIndex];
   const viewedDefinitionIsSelected =
     viewedDefinitionOption?.text.trim() === definition.trim();
@@ -585,7 +588,7 @@ export function AddWordModal({
                     <Text style={styles.definitionPickerTitle}>Definition options</Text>
                     <Text style={styles.definitionPickerHelper}>
                       {definitionOptions.length > 1
-                        ? `Recommended · ${definitionOptions.length} sources available`
+                        ? `Recommended · ${definitionOptions.length} options from ${definitionSourceCount} ${definitionSourceCount === 1 ? 'source' : 'sources'}`
                         : 'Recommended · 1 source available'}
                     </Text>
                   </View>
@@ -762,7 +765,7 @@ export function AddWordModal({
               inputRef={synonymsInputRef}
             />
             <InputGroup
-              label="OPPOSITES (ANTONYMS)"
+              label="ANTONYMS"
               icon="swap-horizontal-outline"
               value={antonymsText}
               onChangeText={setAntonymsText}
@@ -870,7 +873,7 @@ export function AddWordModal({
                       placeholder="quick, start, move"
                     />
                     <SectionEditField
-                      label="Opposites"
+                      label="Antonyms"
                       value={basicInfoDraft.antonymsText}
                       onChangeText={(value) =>
                         setBasicInfoDraft((draft) => ({
@@ -901,7 +904,7 @@ export function AddWordModal({
                     ) : null}
                     {parseListText(antonymsText).length > 0 ? (
                       <Text style={styles.lookupInfoText}>
-                        Opposites: {parseListText(antonymsText).join(', ')}
+                        Antonyms: {parseListText(antonymsText).join(', ')}
                       </Text>
                     ) : null}
                     {commonWordsText ? (
