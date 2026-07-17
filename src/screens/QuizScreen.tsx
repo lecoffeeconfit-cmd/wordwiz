@@ -515,8 +515,8 @@ export function QuizScreen({
       <Pressable
         accessibilityRole="button"
         accessibilityState={{ expanded: isQuizSetupExpanded }}
-        accessibilityLabel="Quiz setup"
-        accessibilityHint="Choose a quiz type and difficulty"
+        accessibilityLabel="Choose quiz type"
+        accessibilityHint="Choose the kind of quiz to take"
         onPress={() => setIsQuizSetupExpanded((expanded) => !expanded)}
         style={({ pressed }) => [styles.quizSetupHeader, pressed && styles.pressed]}
       >
@@ -524,10 +524,10 @@ export function QuizScreen({
           <Ionicons name="options-outline" size={18} color={COLORS.purpleDark} />
         </View>
         <View style={styles.quizSetupToggleCopy}>
-          <Text style={styles.quizSetupTitle}>Quiz setup</Text>
+          <Text style={styles.quizSetupTitle}>Choose quiz type</Text>
           <Text style={styles.quizSetupText}>
             {quizPreferences.enabled
-              ? `${getQuizSessionLabel(sessionMode)} session`
+              ? `${getQuizSessionLabel(sessionMode)} · tap to change`
               : 'Quizzes paused · manage in Stats'}
           </Text>
         </View>
@@ -746,6 +746,7 @@ export function QuizScreen({
           <View
             style={[
               styles.practiceCategoryBanner,
+              styles.quizReadyBanner,
               { backgroundColor: selectedCategoryDetails.pale },
             ]}
           >

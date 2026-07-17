@@ -31,7 +31,7 @@ export function AddWordModal({
     example: string,
     details?: Partial<WordDetails>,
     options?: { closeAfterSave?: boolean },
-  ) => void | Promise<void>;
+  ) => boolean | Promise<boolean>;
   wordToEdit?: Word | null;
   words?: Word[];
   onEditExisting?: (word: Word) => void;
@@ -341,7 +341,7 @@ export function AddWordModal({
     });
   }
 
-  function submit() {
+  async function submit() {
     if (duplicateWord) {
       Keyboard.dismiss();
       return;
@@ -354,31 +354,13 @@ export function AddWordModal({
       );
       return;
     }
-    void onAdd(
+    const saved = await onAdd(
       term,
       definition,
       example,
       getSubmissionDetails(getPendingSectionDetails()),
     );
-    setTerm('');
-    setDefinition('');
-    setSimpleDefinition('');
-    setExample('');
-    setPartOfSpeech('');
-    setPronunciation('');
-    setOrigin('');
-    setOriginPeriod('');
-    setBasicInfo('');
-    setSynonyms([]);
-    setAntonyms([]);
-    setAntonymsText('');
-    setCommonWordsText('');
-    setWordnikDetails({});
-    setDefinitionOptions([]);
-    setDefinitionOptionIndex(0);
-    setLookupStatus('');
-    setSpellingSuggestions([]);
-    closeSectionEditors();
+    if (saved) resetForm();
   }
 
   const hasLookupDefinition =
@@ -527,7 +509,7 @@ export function AddWordModal({
                     <Pressable
                       accessibilityRole="button"
                       accessibilityLabel="Quick save word"
-                      onPress={submit}
+                      onPress={() => void submit()}
                       style={({ pressed }) => [
                         styles.lookupQuickAddButton,
                         pressed && styles.pressed,
@@ -1043,7 +1025,7 @@ export function AddWordModal({
             <Pressable
               accessibilityRole="button"
               accessibilityLabel={wordToEdit ? 'Save changes' : 'Save word'}
-              onPress={submit}
+              onPress={() => void submit()}
               style={({ pressed }) => [
                 styles.primaryButton,
                 pressed && styles.primaryButtonPressed,

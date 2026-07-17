@@ -9,8 +9,10 @@ import { styles } from '../styles';
 import { DEFAULT_TIME_BASED_LEARNING_SETTINGS, MASTERY_LEVELS, buildAchievements, buildQuiz, calculateStreakStats, FLUENT_RECALL_SECONDS, formatReminderTime, formatStudyTime, getDayKey, getDueReviewWords, getHeroProgressColor, getMasteryLevel, getMasteryLevelProgress, getNextMasteryLevel, getProgressColor, getProgressPaleColor, getQuizAttemptKind, getQuizFeedbackByWord, getQuizFeedbackSummary, getQuizRecallPaceByQuestionType, getQuizRecallPaceByWord, getQuizResponseSignalSummary, getQuizRetrievalProfile, getRecentDays, getStreakMessage, getStreakMilestone, getStreakWeek, getWordMastery, getWordMasteryCategory, getWordMasteryCategoryForWord, normalizeTimeBasedLearningSettings, shuffle } from '../utils';
 import { CompactPagination, DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 import { LessonProgressRing } from '../components/dashboard/LessonProgressRing';
+import { useSubscription } from '../subscription/SubscriptionProvider';
 
 const EXPANDED_LIST_PAGE_SIZE = 8;
+const QUIZ_TREND_PAGE_SIZE = 6;
 const DUE_REVIEW_PREVIEW_SIZE = 6;
 const QUIZ_DIFFICULTY_OPTIONS: { id: QuizDifficultyPreference; label: string }[] = [
   { id: 'automatic', label: 'Auto' },
@@ -61,6 +63,7 @@ export function DashboardScreen({
   onLogout: () => void;
   onDeleteAccount: () => void;
 }) {
+  const subscription = useSubscription();
   const [achievementsExpanded, setAchievementsExpanded] = useState(false);
   const [masteryExpanded, setMasteryExpanded] = useState(false);
   const [quizTrendExpanded, setQuizTrendExpanded] = useState(false);
@@ -257,7 +260,7 @@ export function DashboardScreen({
   const recentQuizzes = analytics.quizHistory.slice(0, 5);
   const quizTrendPageCount = Math.max(
     1,
-    Math.ceil(analytics.quizHistory.length / EXPANDED_LIST_PAGE_SIZE),
+    Math.ceil(analytics.quizHistory.length / QUIZ_TREND_PAGE_SIZE),
   );
   const currentQuizTrendPage = Math.min(
     quizTrendPage,
@@ -265,8 +268,8 @@ export function DashboardScreen({
   );
   const quizTrendAttempts = quizTrendExpanded
     ? analytics.quizHistory.slice(
-        currentQuizTrendPage * EXPANDED_LIST_PAGE_SIZE,
-        (currentQuizTrendPage + 1) * EXPANDED_LIST_PAGE_SIZE,
+        currentQuizTrendPage * QUIZ_TREND_PAGE_SIZE,
+        (currentQuizTrendPage + 1) * QUIZ_TREND_PAGE_SIZE,
       )
     : recentQuizzes;
   const streakStats = calculateStreakStats(analytics);
@@ -1723,7 +1726,7 @@ export function DashboardScreen({
         </Pressable>
 
         {timedLearningEnabled ? (
-          <View style={styles.timeBasedSettingsCard}>
+          <View style={[styles.timeBasedSettingsCard, styles.dashboardPaceCard]}>
             <Pressable
               accessibilityRole="button"
               accessibilityState={{ expanded: isTimeSettingsExpanded }}
@@ -1900,7 +1903,7 @@ export function DashboardScreen({
               <CompactPagination
                 page={currentQuizTrendPage}
                 pageCount={quizTrendPageCount}
-                pageSize={EXPANDED_LIST_PAGE_SIZE}
+                pageSize={QUIZ_TREND_PAGE_SIZE}
                 total={analytics.quizHistory.length}
                 itemLabel="quiz history"
                 onPrevious={() =>
@@ -1979,6 +1982,28 @@ export function DashboardScreen({
           <Text style={styles.logoutButtonText}>Log out</Text>
         </Pressable>
       </View>
+
+      {subscription.hasPlusAccess ? (
+        <View style={styles.subscriptionStatusCard}>
+          <View style={styles.subscriptionStatusIcon}>
+            <Ionicons name="sparkles" size={21} color={COLORS.purpleDark} />
+          </View>
+          <View style={styles.subscriptionStatusCopy}>
+            <Text style={styles.subscriptionStatusLabel}>WORDWIZ PLUS</Text>
+            <Text style={styles.subscriptionStatusTitle}>Plus is active</Text>
+            <Text style={styles.subscriptionStatusText}>
+              Manage renewal or billing through Apple.
+            </Text>
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => void subscription.manageSubscription()}
+            style={({ pressed }) => [styles.subscriptionManageButton, pressed && styles.pressed]}
+          >
+            <Text style={styles.subscriptionManageButtonText}>Manage</Text>
+          </Pressable>
+        </View>
+      ) : null}
 
       <View style={styles.deleteAccountCard}>
         <View style={styles.deleteAccountIcon}>

@@ -5,7 +5,7 @@ import { COLORS } from '../constants/theme';
 import type { AnalyticsData, LegalPage, QuizAnswer, QuizProgress, QuizQuestion, ReminderSettings, SortMode, Word } from '../types';
 import { styles } from '../styles';
 import { buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, formatWordAddedDate, formatWordFlaggedDate, getCompleteFlashcardDefinition, getDayKey, getNewStudyWords, getRecentDays, getStreakMessage, getStreakWeek, getWordLearningContexts, getWordMastery, getWordMasteryCategoryForWord, NEW_STUDY_GROUP, shuffle, sortWordsAlphabetically, WORD_MASTERY_CATEGORIES, type WordMasteryCategoryId } from '../utils';
-import { DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, SpeakButton, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
+import { DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, SpeakButton, SpeakDefinitionButton, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 
 type CardsStudyGroupId = WordMasteryCategoryId | 'new' | 'flagged';
 
@@ -554,6 +554,13 @@ export function CardsScreen({
               <Text style={styles.flashcardDefinition}>
                 {cardDefinition}
               </Text>
+              <View style={styles.flashcardDefinitionAction}>
+                <SpeakDefinitionButton
+                  definition={cardDefinition}
+                  term={current.term}
+                  showLabel
+                />
+              </View>
               {showsSimplifiedDefinition && (
                 <Text style={styles.fullDefinitionText}>
                   Full meaning: {current.definition}

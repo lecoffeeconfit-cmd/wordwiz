@@ -227,14 +227,20 @@ export async function saveCloudWord(
   context?: CloudRequestContext,
 ) {
   const payload = toWordPayload(userId, word);
-  const hasCloudId = isUuid(word.id);
-  const cloudPayload = hasCloudId ? { ...payload, id: word.id } : payload;
+  if (!isUuid(word.id)) {
+    // New authenticated words are created through create_word_with_monthly_limit.
+    // Keeping this path update-only prevents a client from bypassing the limit.
+    return word;
+  }
+  const cloudPayload = { ...payload, id: word.id };
   const error = await writeCloudWordsWithCompatibility(
     cloudPayload,
     (compatiblePayload) =>
-      hasCloudId
-        ? supabase.from('words').upsert(compatiblePayload)
-        : supabase.from('words').insert(compatiblePayload),
+      supabase
+        .from('words')
+        .update(compatiblePayload)
+        .eq('user_id', userId)
+        .eq('id', word.id),
   );
 
   if (error) {
@@ -254,21 +260,8 @@ export async function saveCloudWords(
   if (words.length === 0) {
     return;
   }
-
-  const payloads = words.map((word) => ({
-    ...toWordPayload(userId, word),
-    ...(isUuid(word.id) ? { id: word.id } : {}),
-  }));
-  const error = await writeCloudWordsWithCompatibility(
-    payloads,
-    (compatiblePayloads) => supabase.from('words').upsert(compatiblePayloads),
-  );
-
-  if (error) {
-    throw getQueryError('words', error);
-  }
-
-  logCloudWrite('words:batch_save', payloads, context, { rows: payloads.length });
+  await Promise.all(words.map((word) => saveCloudWord(userId, word, context)));
+  logCloudWrite('words:batch_save', words, context, { rows: words.length });
 }
 
 export async function deleteCloudWord(

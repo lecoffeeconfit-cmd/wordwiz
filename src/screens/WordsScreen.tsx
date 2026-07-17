@@ -27,6 +27,7 @@ export function WordsScreen({
   onStudyFlaggedQuiz,
   onToggleFlag,
   onSelectWord,
+  freeWordUsage,
 }: {
   words: Word[];
   sortMode: SortMode;
@@ -38,6 +39,7 @@ export function WordsScreen({
   onStudyFlaggedQuiz: () => void;
   onToggleFlag: (wordId: string) => void;
   onSelectWord: (word: Word) => void;
+  freeWordUsage: { wordsAdded: number; limit: number } | null;
 }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearchFocused, setIsSearchFocused] = useState(false);
@@ -135,6 +137,15 @@ export function WordsScreen({
                 </Pressable>
               )}
             </View>
+
+            {freeWordUsage ? (
+              <View style={styles.freeWordUsageCard}>
+                <Ionicons name="sparkles-outline" size={19} color={COLORS.purpleDark} />
+                <Text style={styles.freeWordUsageText}>
+                  {freeWordUsage.wordsAdded} of {freeWordUsage.limit} free words added this month
+                </Text>
+              </View>
+            ) : null}
 
             <View style={styles.flaggedWordsCard}>
               <View style={styles.flaggedWordsIcon}>

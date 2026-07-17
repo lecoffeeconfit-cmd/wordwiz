@@ -4,7 +4,7 @@ import { COLORS, TILE_COLORS } from '../../constants/theme';
 import type { Word } from '../../types';
 import { styles } from '../../styles';
 import { formatWordAddedDate, formatWordFlaggedDate } from '../../utils';
-import { SpeakButton } from '../shared/SpeakButton';
+import { SpeakButton, SpeakDefinitionButton } from '../shared/SpeakButton';
 
 function getLetterColor(term: string) {
   const firstLetter = term.trim().charAt(0).toUpperCase();
@@ -64,9 +64,15 @@ export function WordRow({
             )}
             <SpeakButton term={word.term} />
           </View>
-          <Text numberOfLines={2} style={styles.wordDefinition}>
-            {word.simpleDefinition || word.definition}
-          </Text>
+          <View style={styles.wordDefinitionRow}>
+            <Text numberOfLines={2} style={styles.wordDefinition}>
+              {word.simpleDefinition || word.definition}
+            </Text>
+            <SpeakDefinitionButton
+              definition={word.simpleDefinition || word.definition}
+              term={word.term}
+            />
+          </View>
           {word.commonWords && word.commonWords.length > 0 && (
             <Text numberOfLines={1} style={styles.commonWordsLine}>
               Synonyms: {word.commonWords.slice(0, 3).join(', ')}

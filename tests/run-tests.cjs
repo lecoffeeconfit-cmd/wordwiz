@@ -208,6 +208,28 @@ test('native container JSX does not render raw text nodes', () => {
   assert.deepEqual(violations, []);
 });
 
+test('subscription access uses the configured public iOS key and active plus entitlement', () => {
+  const envSource = fs.readFileSync(path.join(projectRoot, 'src/config/env.ts'), 'utf8');
+  const revenueCatSource = fs.readFileSync(path.join(projectRoot, 'src/services/revenueCat.ts'), 'utf8');
+
+  assert.match(envSource, /EXPO_PUBLIC_REVENUECAT_IOS_API_KEY/);
+  assert.match(revenueCatSource, /env\.revenueCatIosApiKey/);
+  assert.match(revenueCatSource, /entitlements\.active\[PLUS_ENTITLEMENT_ID\]/);
+  assert.doesNotMatch(revenueCatSource, /test[_-]?store/i);
+});
+
+test('free word limit is enforced atomically in Supabase and cannot be bypassed by direct insert', () => {
+  const migration = fs.readFileSync(
+    path.join(projectRoot, 'supabase/revenuecat_subscription_migration.sql'),
+    'utf8',
+  );
+
+  assert.match(migration, /create_word_with_monthly_limit\(p_word jsonb\)/);
+  assert.match(migration, /on conflict \(user_id, month_key\) do update/i);
+  assert.match(migration, /free_word_limit_reached/);
+  assert.match(migration, /Words are created through the allowance RPC/);
+});
+
 test('word saving trims input and creates a new saved word', () => {
   const savedWord = learning.buildWordFromInput({
     term: '  Luminous ',

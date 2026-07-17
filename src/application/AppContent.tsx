@@ -13,7 +13,7 @@ import {
   STARTER_WORDS,
 } from '../constants/data';
 import { COLORS } from '../constants/theme';
-import { AddWordModal } from '../modals';
+import { AddWordModal, WordWizPlusModal } from '../modals';
 import {
   CardsScreen,
   DashboardScreen,
@@ -39,6 +39,10 @@ import {
   cancelReminder,
   buildSmartReminderMessages,
   deleteCloudWord,
+  createCloudWordWithFreeLimit,
+  FreeWordLimitError,
+  getFreeWordUsage,
+  syncRevenueCatEntitlement,
   fetchUserLearningData,
   reportError,
   saveCloudCardReview,
@@ -51,6 +55,7 @@ import {
   trackEvent,
 } from '../services';
 import { env } from '../config/env';
+import { useSubscription } from '../subscription/SubscriptionProvider';
 import { styles } from '../styles';
 import type {
   AnalyticsData,
@@ -99,6 +104,7 @@ const DEFAULT_QUIZ_PREFERENCES: QuizPreferences = {
 };
 
 export default function AppContent() {
+  const subscription = useSubscription();
   const insets = useSafeAreaInsets();
   const [activeTab, setActiveTab] = useState<Tab>('home');
   const [words, setWords] = useState<Word[]>([]);
@@ -129,11 +135,22 @@ export default function AppContent() {
   const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState(false);
   const [showAddWord, setShowAddWord] = useState(false);
   const [wordToEdit, setWordToEdit] = useState<Word | null>(null);
+  const [freeWordUsage, setFreeWordUsage] = useState<{
+    monthKey: string;
+    wordsAdded: number;
+    limit: number;
+  } | null>(null);
+  const [showPlusPaywall, setShowPlusPaywall] = useState(false);
+  const [plusPaywallReason, setPlusPaywallReason] = useState<
+    'quiz' | 'word-limit' | 'premium-feature'
+  >('premium-feature');
   const cloudHydratedUserId = useRef<string | null>(null);
   const cloudHydratingUserId = useRef<string | null>(null);
   const latestWords = useRef<Word[]>([]);
   const hasHiddenNativeSplash = useRef(false);
   const lastReminderRefreshKey = useRef<string | null>(null);
+  const isSavingWord = useRef(false);
+  const pendingPlusAction = useRef<(() => void) | null>(null);
   const smartReminderContext = useMemo(
     () => buildCurrentReminderContext(words, analytics, dailyQuizGoal),
     [analytics, currentDayKey, dailyQuizGoal, words],
@@ -249,6 +266,30 @@ export default function AppContent() {
   useEffect(() => {
     setSentryUser(currentUser);
   }, [currentUser]);
+
+  useEffect(() => {
+    void subscription.syncUser(currentUser?.id ?? null);
+  }, [currentUser?.id, subscription.syncUser]);
+
+  const refreshFreeWordUsage = useCallback(async () => {
+    if (!currentUser || subscription.hasPlusAccess) {
+      setFreeWordUsage(null);
+      return;
+    }
+
+    try {
+      setFreeWordUsage(await getFreeWordUsage());
+    } catch (error) {
+      reportError(error, { area: 'free_word_usage' });
+      // Keep the limit unknown until the server responds. The create RPC remains
+      // the authoritative enforcement point, so this never grants extra words.
+      setFreeWordUsage(null);
+    }
+  }, [currentUser, subscription.hasPlusAccess]);
+
+  useEffect(() => {
+    void refreshFreeWordUsage();
+  }, [refreshFreeWordUsage]);
 
   useEffect(() => {
     const intervalId = setInterval(() => {
@@ -520,9 +561,30 @@ export default function AppContent() {
     setActiveTab('cards');
   }
 
-  function openFlaggedQuiz() {
-    setInitialQuizStudyGroup('flagged');
+  function presentPlusPaywall(
+    reason: 'quiz' | 'word-limit' | 'premium-feature',
+    action?: () => void,
+  ) {
+    if (subscription.hasPlusAccess) {
+      action?.();
+      return;
+    }
+    pendingPlusAction.current = action ?? null;
+    setPlusPaywallReason(reason);
+    setShowPlusPaywall(true);
+  }
+
+  function openQuiz(studyGroup?: 'flagged') {
+    if (!subscription.canUseQuizzes) {
+      presentPlusPaywall('quiz', () => openQuiz(studyGroup));
+      return;
+    }
+    setInitialQuizStudyGroup(studyGroup);
     setActiveTab('quiz');
+  }
+
+  function openFlaggedQuiz() {
+    openQuiz('flagged');
   }
 
   function toggleWordFlag(wordId: string) {
@@ -566,6 +628,10 @@ export default function AppContent() {
   }
 
   function openAddWord() {
+    if (!subscription.canAddWord(freeWordUsage?.wordsAdded ?? null)) {
+      presentPlusPaywall('word-limit', openAddWord);
+      return;
+    }
     setWordToEdit(null);
     setShowAddWord(true);
   }
@@ -914,7 +980,10 @@ export default function AppContent() {
     example: string,
     details: Partial<WordDetails> = {},
     options: { closeAfterSave?: boolean } = {},
-  ) {
+  ): Promise<boolean> {
+    if (isSavingWord.current) {
+      return false;
+    }
     const cleanTerm = term.trim();
     const isReplacingStarterWord = STARTER_WORDS.some(
       (starterWord) =>
@@ -924,8 +993,14 @@ export default function AppContent() {
       (word) => word.term.toLowerCase() === cleanTerm.toLowerCase(),
     );
     if (existingWord && wordToEdit?.id !== existingWord.id) {
-      return;
+      return false;
     }
+    const isEditingExistingWord = Boolean(
+      wordToEdit &&
+        existingWord &&
+        wordToEdit.id === existingWord.id &&
+        !isReplacingStarterWord,
+    );
     const wordData = buildWordFromInput({
       existingWord: isReplacingStarterWord ? undefined : existingWord,
       term: cleanTerm,
@@ -937,24 +1012,50 @@ export default function AppContent() {
     });
     let savedWord = wordData;
 
-    if (currentUser) {
-      try {
+    if (!currentUser) {
+      Alert.alert('Sign in required', 'Sign in before saving a new word.');
+      return false;
+    }
+
+    isSavingWord.current = true;
+    try {
+      if (!isEditingExistingWord) {
+        if (!subscription.canAddWord(freeWordUsage?.wordsAdded ?? null)) {
+          presentPlusPaywall('word-limit', openAddWord);
+          return false;
+        }
+        savedWord = await createCloudWordWithFreeLimit(wordData);
+        await refreshFreeWordUsage();
+      } else {
         savedWord = await saveCloudWord(
           currentUser.id,
           wordData,
-          getScreenContext(activeTab, 'add_word'),
+          getScreenContext(activeTab, 'edit_word'),
         );
-        markCloudCacheFresh(currentUser.id);
-      } catch (error) {
-        reportError(error, { area: 'save_word' });
-        trackEvent('cloud_sync_failed', { operation: 'save_word' });
-        deferCloudSync();
       }
+      markCloudCacheFresh(currentUser.id);
+    } catch (error) {
+      if (error instanceof FreeWordLimitError) {
+        setFreeWordUsage((currentUsage) => currentUsage
+          ? { ...currentUsage, wordsAdded: currentUsage.limit }
+          : currentUsage);
+        presentPlusPaywall('word-limit', openAddWord);
+        return false;
+      }
+      reportError(error, { area: 'save_word' });
+      trackEvent('cloud_sync_failed', { operation: 'save_word' });
+      Alert.alert(
+        'Could not save word',
+        'Your word was not saved. Please check your connection and try again.',
+      );
+      return false;
+    } finally {
+      isSavingWord.current = false;
     }
 
     setWords((currentWords) => upsertSavedWord(currentWords, savedWord));
     trackEvent('word_saved', {
-      updatedExisting: Boolean(existingWord && !isReplacingStarterWord),
+      updatedExisting: isEditingExistingWord,
       hasSimpleDefinition: Boolean(savedWord.simpleDefinition),
     });
     if (options.closeAfterSave !== false) {
@@ -962,7 +1063,20 @@ export default function AppContent() {
       setWordToEdit(null);
       setActiveTab('words');
     }
+    return true;
   }
+
+  useEffect(() => {
+    if (
+      activeTab === 'quiz' &&
+      currentUser &&
+      !subscription.isLoading &&
+      !subscription.canUseQuizzes
+    ) {
+      setActiveTab('home');
+      presentPlusPaywall('quiz', () => openQuiz());
+    }
+  }, [activeTab, currentUser, subscription.canUseQuizzes, subscription.isLoading]);
 
   function removeWord(wordToRemove: Word) {
     setWords((currentWords) =>
@@ -1071,6 +1185,10 @@ export default function AppContent() {
     durationSeconds: number,
     answers: QuizAnswer[],
   ) {
+    if (!subscription.canUseQuizzes) {
+      presentPlusPaywall('quiz');
+      return;
+    }
     const { progress, attempt } = buildQuizCompletion({
       score,
       total,
@@ -1124,6 +1242,10 @@ export default function AppContent() {
   }
 
   function openDueReview() {
+    if (!subscription.canUseQuizzes) {
+      presentPlusPaywall('quiz', openDueReview);
+      return;
+    }
     setInitialQuizStudyGroup(undefined);
     setQuizPriorityWordIds(
       getDueReviewWords(words, analytics).map((item) => item.word.id),
@@ -1235,10 +1357,7 @@ export default function AppContent() {
           onAddWord={openAddWord}
           onStudy={() => openCards()}
           onReviewWord={(wordId) => openCards(wordId)}
-          onQuiz={() => {
-            setInitialQuizStudyGroup(undefined);
-            setActiveTab('quiz');
-          }}
+          onQuiz={() => openQuiz()}
           onStats={() => setActiveTab('dashboard')}
         />
       );
@@ -1257,6 +1376,7 @@ export default function AppContent() {
           onStudyFlaggedQuiz={openFlaggedQuiz}
           onToggleFlag={toggleWordFlag}
           onSelectWord={(word) => openCards(word.id)}
+          freeWordUsage={subscription.hasPlusAccess ? null : freeWordUsage}
         />
       );
     }
@@ -1404,7 +1524,8 @@ export default function AppContent() {
                     setInitialQuizStudyGroup(undefined);
                   }
                   if (tab === 'quiz') {
-                    setInitialQuizStudyGroup(undefined);
+                    openQuiz();
+                    return;
                   }
                   setActiveTab(tab);
                 }}
@@ -1420,6 +1541,28 @@ export default function AppContent() {
         onEditExisting={setWordToEdit}
         onClose={closeWordModal}
         onAdd={addWord}
+      />
+      <WordWizPlusModal
+        visible={showPlusPaywall}
+        reason={plusPaywallReason}
+        onClose={() => {
+          pendingPlusAction.current = null;
+          setShowPlusPaywall(false);
+        }}
+        onPlusActivated={() => {
+          void syncRevenueCatEntitlement()
+            .catch((error) => {
+              reportError(error, { area: 'revenuecat_entitlement_sync' });
+            })
+            .finally(() => {
+              setShowPlusPaywall(false);
+              const action = pendingPlusAction.current;
+              pendingPlusAction.current = null;
+              void refreshFreeWordUsage();
+              action?.();
+            });
+        }}
+        onOpenLegal={openLegalPage}
       />
     </SafeAreaView>
   );

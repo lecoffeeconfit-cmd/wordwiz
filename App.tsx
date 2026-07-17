@@ -2,6 +2,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import * as SplashScreen from 'expo-splash-screen';
 import AppContent from './src/application/AppContent';
 import { initializeSentry, wrapWithSentry } from './src/services';
+import { SubscriptionProvider } from './src/subscription/SubscriptionProvider';
 
 SplashScreen.preventAutoHideAsync();
 SplashScreen.setOptions({
@@ -14,7 +15,9 @@ initializeSentry();
 function App() {
   return (
     <SafeAreaProvider>
-      <AppContent />
+      <SubscriptionProvider>
+        <AppContent />
+      </SubscriptionProvider>
     </SafeAreaProvider>
   );
 }
