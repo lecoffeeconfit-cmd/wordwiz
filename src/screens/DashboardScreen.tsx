@@ -2,19 +2,30 @@ import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, FlatList, Pressable, ScrollView, Text, View } from 'react-native';
 import { COLORS } from '../constants/theme';
-import type { AnalyticsData, LegalPage, QuizAnswer, QuizProgress, QuizQuestion, ReminderSettings, SortMode, Word } from '../types';
+import type { AnalyticsData, LegalPage, QuizAnswer, QuizDifficultyPreference, QuizPreferences, QuizProgress, QuizQuestion, ReminderSettings, SortMode, TimeBasedLearningSettings, Word } from '../types';
+import type { QuizFeedbackSummary } from '../utils';
 import type { AuthUser } from '../types';
 import { styles } from '../styles';
-import { MASTERY_LEVELS, buildAchievements, buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, getDayKey, getDueReviewWords, getHeroProgressColor, getMasteryLevel, getMasteryLevelProgress, getNextMasteryLevel, getProgressColor, getProgressPaleColor, getQuizAttemptKind, getRecentDays, getStreakMessage, getStreakMilestone, getStreakWeek, getWordMastery, getWordMasteryCategory, getWordMasteryCategoryForWord, shuffle } from '../utils';
+import { DEFAULT_TIME_BASED_LEARNING_SETTINGS, MASTERY_LEVELS, buildAchievements, buildQuiz, calculateStreakStats, FLUENT_RECALL_SECONDS, formatReminderTime, formatStudyTime, getDayKey, getDueReviewWords, getHeroProgressColor, getMasteryLevel, getMasteryLevelProgress, getNextMasteryLevel, getProgressColor, getProgressPaleColor, getQuizAttemptKind, getQuizFeedbackByWord, getQuizFeedbackSummary, getQuizRecallPaceByQuestionType, getQuizRecallPaceByWord, getQuizResponseSignalSummary, getQuizRetrievalProfile, getRecentDays, getStreakMessage, getStreakMilestone, getStreakWeek, getWordMastery, getWordMasteryCategory, getWordMasteryCategoryForWord, normalizeTimeBasedLearningSettings, shuffle } from '../utils';
 import { CompactPagination, DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 import { LessonProgressRing } from '../components/dashboard/LessonProgressRing';
 
 const EXPANDED_LIST_PAGE_SIZE = 8;
 const DUE_REVIEW_PREVIEW_SIZE = 6;
+const QUIZ_DIFFICULTY_OPTIONS: { id: QuizDifficultyPreference; label: string }[] = [
+  { id: 'automatic', label: 'Auto' },
+  { id: 'easy', label: 'Easy' },
+  { id: 'standard', label: 'Standard' },
+  { id: 'hard', label: 'Hard' },
+  { id: 'ultra', label: 'Ultra' },
+];
 
 export function DashboardScreen({
   words,
   analytics,
+  timedLearningEnabled,
+  timeBasedLearningSettings,
+  quizPreferences,
   currentUser,
   reminderSettings,
   dailyQuizGoal,
@@ -23,12 +34,18 @@ export function DashboardScreen({
   onStudyFlaggedQuiz,
   onUpdateReminder,
   onUpdateDailyQuizGoal,
+  onTimedLearningChange,
+  onTimeBasedLearningSettingsChange,
+  onQuizPreferencesChange,
   onOpenLegal,
   onLogout,
   onDeleteAccount,
 }: {
   words: Word[];
   analytics: AnalyticsData;
+  timedLearningEnabled: boolean;
+  timeBasedLearningSettings: TimeBasedLearningSettings;
+  quizPreferences: QuizPreferences;
   currentUser: AuthUser | null;
   reminderSettings: ReminderSettings;
   dailyQuizGoal: number;
@@ -37,6 +54,9 @@ export function DashboardScreen({
   onStudyFlaggedQuiz: () => void;
   onUpdateReminder: (settings: ReminderSettings) => void;
   onUpdateDailyQuizGoal: (goal: number) => void;
+  onTimedLearningChange: (enabled: boolean) => void;
+  onTimeBasedLearningSettingsChange: (settings: TimeBasedLearningSettings) => void;
+  onQuizPreferencesChange: (preferences: QuizPreferences) => void;
   onOpenLegal: (page: LegalPage) => void;
   onLogout: () => void;
   onDeleteAccount: () => void;
@@ -49,7 +69,13 @@ export function DashboardScreen({
   const [dueReviewPage, setDueReviewPage] = useState(0);
   const [masteryPage, setMasteryPage] = useState(0);
   const [quizTrendPage, setQuizTrendPage] = useState(0);
+  const [feedbackView, setFeedbackView] = useState<'overall' | 'words'>('overall');
+  const [recallPaceView, setRecallPaceView] = useState<'types' | 'words'>('types');
   const [activityWindow, setActivityWindow] = useState<7 | 30>(7);
+  const [isTimeSettingsExpanded, setIsTimeSettingsExpanded] = useState(false);
+  const normalizedTimeSettings = normalizeTimeBasedLearningSettings(
+    timeBasedLearningSettings,
+  );
   const masterSparkleScale = useRef(new Animated.Value(1)).current;
   const lastMasteryRowTapAt = useRef(0);
   const lastAchievementTapAt = useRef(0);
@@ -71,6 +97,36 @@ export function DashboardScreen({
   const quizAccuracySegments = buildQuizAccuracySegments(
     totalCorrect,
     totalWrong,
+  );
+  const feedbackSummary = getQuizFeedbackSummary(analytics);
+  const wordsById = new Map(words.map((word) => [word.id, word]));
+  const feedbackByWord = getQuizFeedbackByWord(analytics)
+    .map((feedback) => ({
+      ...feedback,
+      term: wordsById.get(feedback.wordId)?.term ?? 'Saved word',
+    }))
+    .slice(0, 6);
+  const recallPaceByType = getQuizRecallPaceByQuestionType(analytics);
+  const recallPaceByWord = getQuizRecallPaceByWord(analytics)
+    .map((pace) => ({
+      ...pace,
+      term: wordsById.get(pace.key)?.term ?? 'Saved word',
+    }))
+    .slice(0, 6);
+  const recallPace = recallPaceView === 'types'
+    ? recallPaceByType
+    : recallPaceByWord;
+  const recallPaceAnswerCount = recallPaceByType.reduce(
+    (total, pace) => total + pace.answerCount,
+    0,
+  );
+  const recallSignalSummary = getQuizResponseSignalSummary(
+    analytics,
+    timeBasedLearningSettings,
+  );
+  const retrievalProfile = getQuizRetrievalProfile(
+    analytics,
+    timeBasedLearningSettings,
   );
   const totalSeconds =
     analytics.quizHistory.reduce(
@@ -771,6 +827,184 @@ export function DashboardScreen({
         </View>
       </View>
 
+      <DashboardSection
+        title="RECALL FEEDBACK"
+        badge={feedbackSummary.total ? `${feedbackSummary.total} check-ins` : 'New'}
+      >
+        <Text style={styles.feedbackIntro}>
+          Your check-ins after correct answers help tailor the next review.
+        </Text>
+        <View style={styles.feedbackViewToggle}>
+          {([
+            ['overall', 'Overall'],
+            ['words', 'By word'],
+          ] as const).map(([view, label]) => (
+            <Pressable
+              key={view}
+              accessibilityRole="button"
+              accessibilityState={{ selected: feedbackView === view }}
+              onPress={() => setFeedbackView(view)}
+              style={[
+                styles.feedbackViewToggleButton,
+                feedbackView === view && styles.feedbackViewToggleButtonActive,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.feedbackViewToggleText,
+                  feedbackView === view && styles.feedbackViewToggleTextActive,
+                ]}
+              >
+                {label}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+        {feedbackSummary.total === 0 ? (
+          <View style={styles.feedbackEmpty}>
+            <Ionicons name="chatbubble-ellipses-outline" size={21} color={COLORS.purpleDark} />
+            <Text style={styles.feedbackEmptyText}>
+              After a correct quiz answer, choose Hard, Got it, or Easy to see your learning pattern here.
+            </Text>
+          </View>
+        ) : feedbackView === 'overall' ? (
+          <View style={styles.feedbackOverviewCard}>
+            <FeedbackDistribution summary={feedbackSummary} />
+          </View>
+        ) : (
+          <View style={styles.feedbackWordList}>
+            {feedbackByWord.map((feedback) => (
+              <View key={feedback.wordId} style={styles.feedbackWordRow}>
+                <View style={styles.feedbackWordHeader}>
+                  <Text numberOfLines={1} style={styles.feedbackWordName}>
+                    {feedback.term}
+                  </Text>
+                  <Text style={styles.feedbackWordTotal}>
+                    {feedback.total} {feedback.total === 1 ? 'check-in' : 'check-ins'}
+                  </Text>
+                </View>
+                <FeedbackDistribution summary={feedback} compact />
+              </View>
+            ))}
+          </View>
+        )}
+      </DashboardSection>
+
+      <DashboardSection
+        title="RECALL PACE"
+        badge={recallPaceAnswerCount ? `${recallPaceAnswerCount} responses` : 'New'}
+      >
+        <Text style={styles.recallPaceIntro}>
+          Accuracy comes first. Pace is recorded for every answer and helps choose the next review.
+        </Text>
+        {recallSignalSummary.total > 0 ? (
+          <RecallSignalDistribution
+            summary={recallSignalSummary}
+            settings={timeBasedLearningSettings}
+          />
+        ) : null}
+        <View style={styles.feedbackViewToggle}>
+          {([
+            ['types', 'Question type'],
+            ['words', 'By word'],
+          ] as const).map(([view, label]) => (
+            <Pressable
+              key={view}
+              accessibilityRole="button"
+              accessibilityState={{ selected: recallPaceView === view }}
+              onPress={() => setRecallPaceView(view)}
+              style={[
+                styles.feedbackViewToggleButton,
+                styles.recallPaceToggleButton,
+                recallPaceView === view && styles.feedbackViewToggleButtonActive,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.feedbackViewToggleText,
+                  recallPaceView === view && styles.feedbackViewToggleTextActive,
+                ]}
+              >
+                {label}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+        {recallPace.length === 0 ? (
+          <View style={styles.feedbackEmpty}>
+            <Ionicons name="speedometer-outline" size={21} color={COLORS.blue} />
+            <Text style={styles.feedbackEmptyText}>
+              Complete a few quiz questions to see how quickly you recall each kind of prompt.
+            </Text>
+          </View>
+        ) : (
+          <RecallPaceList
+            items={recallPace}
+            view={recallPaceView}
+          />
+        )}
+      </DashboardSection>
+
+      <DashboardSection
+        title="RETRIEVAL PROFILE"
+        badge={retrievalProfile.totalAnswers ? `${retrievalProfile.recallPercent}% recall` : 'New'}
+      >
+        <Text style={styles.retrievalProfileIntro}>
+          An estimate from question format, accuracy, and pace—not a direct reading of memory.
+        </Text>
+        {retrievalProfile.totalAnswers === 0 ? (
+          <View style={styles.feedbackEmpty}>
+            <Ionicons name="bulb-outline" size={21} color={COLORS.purpleDark} />
+            <Text style={styles.feedbackEmptyText}>
+              Complete a few quiz questions to see how much of your evidence comes from recognition versus recall.
+            </Text>
+          </View>
+        ) : (
+          <>
+            <View style={styles.retrievalProfileSplit}>
+              <RetrievalEvidenceCard
+                label="Recognition"
+                value={retrievalProfile.recognitionPercent}
+                detail="Cued choices"
+                color={COLORS.blue}
+                pale="#EAF3FF"
+              />
+              <RetrievalEvidenceCard
+                label="Recall"
+                value={retrievalProfile.recallPercent}
+                detail="Bring it to mind"
+                color={COLORS.greenDark}
+                pale="#E8FBF4"
+              />
+            </View>
+            <View style={styles.retrievalEvidenceRow}>
+              <Ionicons name="key-outline" size={17} color={COLORS.purpleDark} />
+              <Text style={styles.retrievalEvidenceText}>
+                {retrievalProfile.directRecallCorrect} direct recalls · {retrievalProfile.delayedDirectRecallCorrect} after a day or more
+              </Text>
+            </View>
+          </>
+        )}
+        <View style={styles.retrievalProgression}>
+          <Text style={styles.retrievalProgressionTitle}>HOW WORDWIZ BUILDS RETRIEVAL</Text>
+          {[
+            'See the word and meaning',
+            'Choose the definition',
+            'Choose the word from its meaning',
+            'Use context and distinguish close meanings',
+            'Type the word from its definition',
+            'Recall it again after a longer delay',
+          ].map((step, index) => (
+            <View key={step} style={styles.retrievalProgressionStep}>
+              <View style={styles.retrievalProgressionNumber}>
+                <Text style={styles.retrievalProgressionNumberText}>{index + 1}</Text>
+              </View>
+              <Text style={styles.retrievalProgressionText}>{step}</Text>
+            </View>
+          ))}
+        </View>
+      </DashboardSection>
+
       <DashboardSection title="WORD MASTERY" badge={`${words.length} words`}>
         {mastery.length === 0 ? (
           <Text style={styles.dashboardEmptyText}>
@@ -1369,6 +1603,198 @@ export function DashboardScreen({
         </View>
       </View>
 
+      <View style={styles.quizPreferencesCard}>
+        <View style={styles.quizPreferencesHeader}>
+          <View style={styles.quizPreferencesIcon}>
+            <Ionicons name="options-outline" size={20} color={COLORS.purpleDark} />
+          </View>
+          <View style={styles.quizPreferencesCopy}>
+            <Text style={styles.quizPreferencesEyebrow}>LEARNING PREFERENCES</Text>
+            <Text style={styles.quizPreferencesTitle}>Quiz difficulty & pace</Text>
+          </View>
+        </View>
+
+        <Pressable
+          accessibilityRole="switch"
+          accessibilityLabel="Quiz learning"
+          accessibilityHint="Turn quiz sessions on or off"
+          accessibilityState={{ checked: quizPreferences.enabled }}
+          onPress={() =>
+            onQuizPreferencesChange({
+              ...quizPreferences,
+              enabled: !quizPreferences.enabled,
+            })
+          }
+          style={({ pressed }) => [
+            styles.quizPreferenceToggle,
+            quizPreferences.enabled && styles.quizPreferenceToggleActive,
+            pressed && styles.pressed,
+          ]}
+        >
+          <View style={styles.quizPreferenceToggleCopy}>
+            <Text style={styles.quizPreferenceToggleTitle}>Quiz learning</Text>
+            <Text style={styles.quizPreferenceToggleText}>
+              {quizPreferences.enabled
+                ? 'Sessions are ready when you are'
+                : 'Paused — flashcards still work'}
+            </Text>
+          </View>
+          <View style={[
+            styles.timedLearningSwitch,
+            quizPreferences.enabled && styles.timedLearningSwitchActive,
+          ]}>
+            <View style={[
+              styles.timedLearningSwitchKnob,
+              quizPreferences.enabled && styles.timedLearningSwitchKnobActive,
+            ]} />
+          </View>
+        </Pressable>
+
+        <Text style={styles.quizPreferenceLabel}>DEFAULT QUIZ DIFFICULTY</Text>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.quizPreferenceDifficultyScroller}
+          contentContainerStyle={styles.quizPreferenceDifficultyRow}
+        >
+          {QUIZ_DIFFICULTY_OPTIONS.map((option) => {
+            const active = quizPreferences.difficulty === option.id;
+            return (
+              <Pressable
+                key={option.id}
+                accessibilityRole="button"
+                accessibilityState={{ selected: active }}
+                onPress={() =>
+                  onQuizPreferencesChange({
+                    ...quizPreferences,
+                    difficulty: option.id,
+                  })
+                }
+                style={({ pressed }) => [
+                  styles.quizPreferenceDifficulty,
+                  active && styles.quizPreferenceDifficultyActive,
+                  option.id === 'ultra' && styles.quizPreferenceDifficultyUltra,
+                  pressed && styles.pressed,
+                ]}
+              >
+                <Text style={[
+                  styles.quizPreferenceDifficultyText,
+                  active && styles.quizPreferenceDifficultyTextActive,
+                ]}>
+                  {option.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+        <Text style={styles.quizPreferenceHint}>
+          Auto adapts to each word. Easy favors recognition; Hard and Ultra favor typed recall.
+        </Text>
+
+        <Pressable
+          accessibilityRole="switch"
+          accessibilityLabel="Time-based learning"
+          accessibilityHint="Adds an optional fluency timer to strong words"
+          accessibilityState={{ checked: timedLearningEnabled }}
+          onPress={() => onTimedLearningChange(!timedLearningEnabled)}
+          style={({ pressed }) => [
+            styles.quizPreferenceToggle,
+            timedLearningEnabled && styles.quizPreferenceToggleActive,
+            pressed && styles.pressed,
+          ]}
+        >
+          <View style={styles.quizPreferenceToggleCopy}>
+            <Text style={styles.quizPreferenceToggleTitle}>Time-based learning</Text>
+            <Text style={styles.quizPreferenceToggleText}>
+              {timedLearningEnabled
+                ? 'Fluency timer · no mastery penalty when time runs out'
+                : 'Optional pace timer for strong and proficient words'}
+            </Text>
+          </View>
+          <View style={[
+            styles.timedLearningSwitch,
+            timedLearningEnabled && styles.timedLearningSwitchActive,
+          ]}>
+            <View style={[
+              styles.timedLearningSwitchKnob,
+              timedLearningEnabled && styles.timedLearningSwitchKnobActive,
+            ]} />
+          </View>
+        </Pressable>
+
+        {timedLearningEnabled ? (
+          <View style={styles.timeBasedSettingsCard}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ expanded: isTimeSettingsExpanded }}
+              onPress={() => setIsTimeSettingsExpanded((expanded) => !expanded)}
+              style={({ pressed }) => [styles.timeBasedSettingsHeader, pressed && styles.pressed]}
+            >
+              <View style={styles.timeBasedSettingsHeaderCopy}>
+                <Text style={styles.timeBasedSettingsEyebrow}>RECOMMENDED PACE</Text>
+                <Text style={styles.timeBasedSettingsSummary}>
+                  Choice {normalizedTimeSettings.multipleChoiceSeconds}s · Fill {normalizedTimeSettings.fillInSeconds}s · Type {normalizedTimeSettings.typedRecallSeconds}s
+                </Text>
+              </View>
+              <Ionicons
+                name={isTimeSettingsExpanded ? 'chevron-up' : 'chevron-down'}
+                size={18}
+                color={COLORS.purpleDark}
+              />
+            </Pressable>
+            {isTimeSettingsExpanded ? (
+              <>
+                <Text style={styles.timeBasedSettingsNote}>
+                  Under {FLUENT_RECALL_SECONDS}s is fluent recall. Correct answers still count when you take longer.
+                </Text>
+                {([
+                  ['multipleChoiceSeconds', 'Multiple choice', 8, 30],
+                  ['fillInSeconds', 'Fill in the blank', 12, 45],
+                  ['typedRecallSeconds', 'Type the word', 15, 60],
+                ] as const).map(([key, label, minimum, maximum]) => (
+                  <View key={key} style={styles.timeBasedSettingRow}>
+                    <Text style={styles.timeBasedSettingLabel}>{label}</Text>
+                    <View style={styles.timeBasedSettingStepper}>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={`Decrease ${label} time`}
+                        onPress={() => onTimeBasedLearningSettingsChange({
+                          ...normalizedTimeSettings,
+                          [key]: Math.max(minimum, normalizedTimeSettings[key] - 1),
+                        })}
+                        style={({ pressed }) => [styles.timeBasedStepperButton, pressed && styles.pressed]}
+                      >
+                        <Ionicons name="remove" size={16} color={COLORS.purpleDark} />
+                      </Pressable>
+                      <Text style={styles.timeBasedSettingValue}>{normalizedTimeSettings[key]}s</Text>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={`Increase ${label} time`}
+                        onPress={() => onTimeBasedLearningSettingsChange({
+                          ...normalizedTimeSettings,
+                          [key]: Math.min(maximum, normalizedTimeSettings[key] + 1),
+                        })}
+                        style={({ pressed }) => [styles.timeBasedStepperButton, pressed && styles.pressed]}
+                      >
+                        <Ionicons name="add" size={16} color={COLORS.purpleDark} />
+                      </Pressable>
+                    </View>
+                  </View>
+                ))}
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => onTimeBasedLearningSettingsChange(DEFAULT_TIME_BASED_LEARNING_SETTINGS)}
+                  style={({ pressed }) => [styles.timeBasedResetButton, pressed && styles.pressed]}
+                >
+                  <Ionicons name="refresh" size={14} color={COLORS.blue} />
+                  <Text style={styles.timeBasedResetText}>Use recommended times</Text>
+                </Pressable>
+              </>
+            ) : null}
+          </View>
+        ) : null}
+      </View>
+
       <DashboardSection title="QUIZ TREND" badge="Recent">
         {recentQuizzes.length === 0 ? (
           <Text style={styles.dashboardEmptyText}>
@@ -1599,6 +2025,188 @@ export function DashboardScreen({
       </Text>
     </ScrollView>
   );
+}
+
+function FeedbackDistribution({
+  summary,
+  compact = false,
+}: {
+  summary: QuizFeedbackSummary;
+  compact?: boolean;
+}) {
+  const items = [
+    { id: 'hard', label: 'Hard', value: summary.hard, color: COLORS.orange },
+    { id: 'correct', label: 'Got it', value: summary.correct, color: COLORS.blue },
+    { id: 'easy', label: 'Easy', value: summary.easy, color: COLORS.greenDark },
+  ];
+
+  return (
+    <>
+      <View style={styles.feedbackDistributionBar}>
+        {items.map((item) =>
+          item.value > 0 ? (
+            <View
+              key={item.id}
+              style={[
+                styles.feedbackDistributionSegment,
+                { flex: item.value, backgroundColor: item.color },
+              ]}
+            />
+          ) : null,
+        )}
+      </View>
+      <View
+        style={[
+          styles.feedbackDistributionLegend,
+          compact && styles.feedbackDistributionLegendCompact,
+        ]}
+      >
+        {items.map((item) => {
+          const percent = summary.total
+            ? Math.round((item.value / summary.total) * 100)
+            : 0;
+          return (
+            <View key={item.id} style={styles.feedbackLegendItem}>
+              <View
+                style={[styles.feedbackLegendDot, { backgroundColor: item.color }]}
+              />
+              <Text style={styles.feedbackLegendText}>
+                {item.label} {compact ? item.value : `${item.value} · ${percent}%`}
+              </Text>
+            </View>
+          );
+        })}
+      </View>
+    </>
+  );
+}
+
+function RecallPaceList({
+  items,
+  view,
+}: {
+  items: Array<{
+    key: string;
+    answerCount: number;
+    averageSeconds: number;
+    term?: string;
+  }>;
+  view: 'types' | 'words';
+}) {
+  const slowestAverage = Math.max(...items.map((item) => item.averageSeconds), 1);
+
+  return (
+    <View style={styles.recallPaceList}>
+      {items.map((item) => {
+        const label = view === 'types'
+          ? formatQuestionType(item.key)
+          : item.term ?? 'Saved word';
+        const width = Math.max(10, Math.round((item.averageSeconds / slowestAverage) * 100));
+        return (
+          <View key={item.key} style={styles.recallPaceRow}>
+            <View style={styles.recallPaceHeader}>
+              <Text numberOfLines={1} style={styles.recallPaceName}>{label}</Text>
+              <View style={styles.recallPaceValuePill}>
+                <Ionicons name="time-outline" size={12} color={COLORS.blue} />
+                <Text style={styles.recallPaceValue}>{formatPace(item.averageSeconds)}</Text>
+              </View>
+            </View>
+            <View style={styles.recallPaceTrack}>
+              <View style={[styles.recallPaceFill, { width: `${width}%` }]} />
+            </View>
+            <Text style={styles.recallPaceMeta}>
+              {item.answerCount} {item.answerCount === 1 ? 'response' : 'responses'}
+            </Text>
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
+function RecallSignalDistribution({
+  summary,
+  settings,
+}: {
+  summary: {
+    fluent: number;
+    successful: number;
+    reinforcement: number;
+    incorrect: number;
+    total: number;
+  };
+  settings: TimeBasedLearningSettings;
+}) {
+  const signals = [
+    { id: 'fluent', label: 'Fluent', value: summary.fluent, color: COLORS.greenDark },
+    { id: 'successful', label: 'Recalled', value: summary.successful, color: COLORS.blue },
+    { id: 'reinforcement', label: 'Reinforce', value: summary.reinforcement, color: COLORS.orange },
+    { id: 'incorrect', label: 'Missed', value: summary.incorrect, color: COLORS.red },
+  ];
+
+  return (
+    <View style={styles.recallSignalCard}>
+      <View style={styles.recallSignalBar}>
+        {signals.map((signal) =>
+          signal.value ? (
+            <View
+              key={signal.id}
+              style={[styles.recallSignalSegment, { flex: signal.value, backgroundColor: signal.color }]}
+            />
+          ) : null,
+        )}
+      </View>
+      <View style={styles.recallSignalLegend}>
+        {signals.map((signal) => (
+          <Text key={signal.id} style={[styles.recallSignalLegendText, { color: signal.color }]}>
+            {signal.label} {signal.value}
+          </Text>
+        ))}
+      </View>
+      <Text style={styles.recallSignalNote}>
+        Fluent under {FLUENT_RECALL_SECONDS}s · recommended windows: {settings.multipleChoiceSeconds}s multiple choice, {settings.fillInSeconds}s fill, {settings.typedRecallSeconds}s type.
+      </Text>
+    </View>
+  );
+}
+
+function RetrievalEvidenceCard({
+  label,
+  value,
+  detail,
+  color,
+  pale,
+}: {
+  label: string;
+  value: number;
+  detail: string;
+  color: string;
+  pale: string;
+}) {
+  return (
+    <View style={[styles.retrievalEvidenceCard, { backgroundColor: pale }]}>
+      <Text style={[styles.retrievalEvidenceValue, { color }]}>{value}%</Text>
+      <Text style={styles.retrievalEvidenceLabel}>{label}</Text>
+      <Text style={styles.retrievalEvidenceDetail}>{detail}</Text>
+    </View>
+  );
+}
+
+function formatPace(seconds: number) {
+  return `${seconds % 1 === 0 ? seconds : seconds.toFixed(1)}s avg`;
+}
+
+function formatQuestionType(mode: string) {
+  const labels: Record<string, string> = {
+    'word-to-definition': 'Meaning match',
+    'definition-to-word': 'Word match',
+    'true-false': 'True or false',
+    'typed-word': 'Type the word',
+    'sentence-usage': 'Sentence context',
+    'sentence-completion': 'Complete the context',
+    'closest-synonym': 'Closest synonym',
+  };
+  return labels[mode] ?? 'Quiz question';
 }
 
 function PracticeEstimateDetail({

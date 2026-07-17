@@ -8,10 +8,12 @@ export function QuizComplete({
   score,
   total,
   mode = 'daily',
+  bonusXp = 0,
 }: {
   score: number;
   total: number;
   mode?: 'daily' | 'practice';
+  bonusXp?: number;
 }) {
   const percentage = total ? Math.round((score / total) * 100) : 0;
   const isPractice = mode === 'practice';
@@ -95,6 +97,12 @@ export function QuizComplete({
               >
                 {isPerfect ? 'PERFECT RECALL' : 'STRONG RECALL'}
               </Text>
+            </View>
+          ) : null}
+          {bonusXp > 0 ? (
+            <View style={styles.completeXpPill}>
+              <Ionicons name="flash" size={14} color={COLORS.purpleDark} />
+              <Text style={styles.completeXpPillText}>+{bonusXp} SPEED XP</Text>
             </View>
           ) : null}
         </View>

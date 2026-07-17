@@ -21,6 +21,25 @@ export type QuizQuestionDifficulty =
   | 'fill-in-options'
   | 'typed-recall';
 
+export type QuizDifficultyPreference =
+  | 'automatic'
+  | 'easy'
+  | 'standard'
+  | 'hard'
+  | 'ultra';
+
+export type QuizSessionMode =
+  | 'standard'
+  | 'quick'
+  | 'challenge'
+  | 'mistake-review'
+  | 'mastery-test';
+
+export type QuizPreferences = {
+  enabled: boolean;
+  difficulty: QuizDifficultyPreference;
+};
+
 export type MasteryResult = {
   correct: boolean;
   difficulty: QuizQuestionDifficulty;
@@ -44,6 +63,9 @@ export type WordMasteryProgress = {
   reviewStage?: number;
   successfulReviewCount?: number;
   lapseCount?: number;
+  directRecallCorrect?: number;
+  delayedDirectRecallCorrect?: number;
+  lastDirectRecallAt?: string;
   lastReviewResult?: 'wrong' | ReviewRating;
   masteredAt?: string;
   lastSuccessfulReviewAt?: string;
@@ -56,6 +78,7 @@ export type Word = {
   definition: string;
   simpleDefinition?: string;
   example: string;
+  contextExamples?: string[];
   partOfSpeech?: string;
   pronunciation?: string;
   origin?: string;
@@ -98,6 +121,7 @@ export type WordDetails = Pick<
   | 'definition'
   | 'simpleDefinition'
   | 'example'
+  | 'contextExamples'
   | 'partOfSpeech'
   | 'pronunciation'
   | 'origin'
@@ -151,8 +175,25 @@ export type QuizAnswer = {
   wordId: string;
   correct: boolean;
   difficulty?: QuizQuestionDifficulty;
+  questionMode?: QuizQuestionMode;
   answeredAt?: string;
+  responseTimeSeconds?: number;
+  recallPace?: QuizRecallPaceSignal;
   reviewRating?: ReviewRating;
+  timedOut?: boolean;
+  speedBonusXp?: number;
+};
+
+export type QuizRecallPaceSignal =
+  | 'fluent'
+  | 'successful'
+  | 'reinforcement'
+  | 'incorrect';
+
+export type TimeBasedLearningSettings = {
+  multipleChoiceSeconds: number;
+  fillInSeconds: number;
+  typedRecallSeconds: number;
 };
 
 export type QuizAttempt = QuizProgress & {
@@ -168,6 +209,7 @@ export type QuizQuestionMode =
   | 'true-false'
   | 'typed-word'
   | 'sentence-usage'
+  | 'sentence-completion'
   | 'closest-synonym';
 
 export type QuizQuestion = {
@@ -180,6 +222,7 @@ export type QuizQuestion = {
   difficulty: QuizQuestionDifficulty;
   helperText: string;
   feedback: string;
+  strictSpelling?: boolean;
 };
 
 export type CardStudyEvent = {

@@ -522,6 +522,23 @@ test('flashcards use the complete definition when a saved summary ends mid-sente
   );
 });
 
+test('context examples keep source sentences distinct and add clear learning cues', () => {
+  const contexts = dictionaryUtils.buildWordContextExamples({
+    term: 'Serendipity',
+    definition: 'A fortunate discovery that happens by chance.',
+    example: 'Finding the quiet cafe after getting lost was serendipity.',
+    sourceExamples: [
+      'Finding the quiet cafe after getting lost was serendipity.',
+      'Their meeting was pure serendipity after the missed train.',
+    ],
+  });
+
+  assert.equal(contexts.length, 3);
+  assert.equal(new Set(contexts.map((context) => context.toLowerCase())).size, 3);
+  assert.ok(contexts.every((context) => /serendipity/i.test(context)));
+  assert.equal(contexts[0], 'Finding the quiet cafe after getting lost was serendipity.');
+});
+
 test('word saving replaces duplicate simple definitions', () => {
   const savedWord = learning.buildWordFromInput({
     term: '  Curious ',
@@ -724,6 +741,53 @@ test('quiz builder creates answer options for up to ten words', () => {
   });
 });
 
+test('quick, hard, and ultra quiz profiles build the requested retrieval challenge', () => {
+  const words = [
+    makeWord('quick-a', 'Avid', 'Very eager or enthusiastic.'),
+    makeWord('quick-b', 'Calm', 'Peaceful and free from excitement.'),
+    makeWord('quick-c', 'Daring', 'Willing to take risks.'),
+  ];
+  const mastery = Object.fromEntries(words.map((word) => [word.id, 75]));
+  const quick = quiz.buildQuiz(words, [], mastery, [], {
+    sessionMode: 'quick',
+    difficulty: 'standard',
+    questionLimit: 20,
+  });
+  const hard = quiz.buildQuiz(words, [], mastery, [], {
+    difficulty: 'hard',
+  });
+  const ultra = quiz.buildQuiz(words, [], mastery, [], {
+    difficulty: 'ultra',
+  });
+
+  assert.equal(quick.length, 20);
+  assert.ok(hard.filter((question) => question.mode === 'typed-word').length >= 2);
+  assert.ok(ultra.every((question) => question.mode === 'typed-word'));
+  assert.ok(ultra.every((question) => question.strictSpelling));
+  assert.equal(
+    quiz.evaluateQuizAnswer('Avid', 'Avdi', 'typed-word', true).correct,
+    false,
+  );
+});
+
+test('mistake review prioritizes missed and unusually slow words', () => {
+  const priority = quiz.getMistakeReviewWordIds({
+    cardHistory: [],
+    quizHistory: [{
+      id: 'mistake-review',
+      completedAt: '2026-01-02T10:00:00.000Z',
+      durationSeconds: 20,
+      score: 1,
+      total: 2,
+      answers: [
+        { wordId: 'missed', correct: false, difficulty: 'multiple-choice' },
+        { wordId: 'slow', correct: true, difficulty: 'typed-recall', responseTimeSeconds: 45 },
+      ],
+    }],
+  });
+  assert.deepEqual(priority, ['missed', 'slow']);
+});
+
 test('contextual quiz formats use saved examples and meaningful synonym choices', () => {
   const words = [
     {
@@ -763,9 +827,13 @@ test('contextual quiz formats use saved examples and meaningful synonym choices'
   const synonymQuestion = questions.find(
     (question) => question.mode === 'closest-synonym',
   );
+  const completionQuestion = questions.find(
+    (question) => question.mode === 'sentence-completion',
+  );
 
   assert.ok(sentenceQuestion);
   assert.ok(synonymQuestion);
+  assert.ok(completionQuestion);
   assert.match(sentenceQuestion.displayText, /uses “.+” correctly/);
   assert.equal(sentenceQuestion.options.length, 4);
   assert.equal(new Set(sentenceQuestion.options).size, 4);
@@ -778,6 +846,9 @@ test('contextual quiz formats use saved examples and meaningful synonym choices'
   assert.equal(synonymQuestion.options.length, 4);
   assert.ok(synonymQuestion.options.includes(synonymQuestion.answer));
   assert.equal(synonymQuestion.difficulty, 'multiple-choice');
+  assert.match(completionQuestion.displayText, /_____/);
+  assert.ok(completionQuestion.options.includes(completionQuestion.answer));
+  assert.equal(completionQuestion.difficulty, 'fill-in-options');
 });
 
 test('quiz questions become more demanding as word mastery grows', () => {
@@ -846,6 +917,274 @@ test('typed recall accepts close spellings but flags the correction', () => {
     quiz.evaluateQuizAnswer('Compensatory', 'Compensitory', 'definition-to-word'),
     { correct: false, hasSpellingNote: false },
   );
+});
+
+test('timed learning rewards fast answers without punishing a timeout', () => {
+  assert.equal(quiz.getTimedLearningBonusXp(15), 5);
+  assert.equal(quiz.getTimedLearningBonusXp(4), 2);
+  assert.equal(quiz.getTimedLearningBonusXp(0), 0);
+
+  const word = {
+    ...makeWord('timed-word', 'Fluent', 'Able to speak easily.', 3),
+    mastery: {
+      masteryPercent: 82,
+      totalCorrect: 5,
+      totalIncorrect: 1,
+      correctStreak: 2,
+      successfulReviewDays: ['2026-01-01'],
+      recentResults: [],
+      reviewStage: 4,
+      successfulReviewCount: 5,
+      lapseCount: 1,
+      nextReviewAt: '2026-01-03T10:00:00.000Z',
+    },
+  };
+  const timedOut = learning.applyQuizMastery(
+    [word],
+    [{
+      wordId: word.id,
+      correct: false,
+      timedOut: true,
+      difficulty: 'multiple-choice',
+      answeredAt: '2026-01-02T10:00:00.000Z',
+    }],
+    { cardHistory: [], quizHistory: [] },
+  )[0];
+
+  assert.equal(timedOut.reviews, 4);
+  assert.equal(timedOut.mastery.masteryPercent, 82);
+  assert.equal(timedOut.mastery.totalIncorrect, 1);
+  assert.equal(timedOut.mastery.reviewStage, 4);
+});
+
+test('response pace uses practical defaults by question format', () => {
+  const defaults = quiz.DEFAULT_TIME_BASED_LEARNING_SETTINGS;
+
+  assert.equal(
+    quiz.getQuizRecallPaceSignal({
+      correct: true,
+      responseTimeSeconds: 5,
+      difficulty: 'typed-recall',
+      settings: defaults,
+    }),
+    'fluent',
+  );
+  assert.equal(
+    quiz.getQuizRecallPaceSignal({
+      correct: true,
+      responseTimeSeconds: 16,
+      difficulty: 'multiple-choice',
+      settings: defaults,
+    }),
+    'reinforcement',
+  );
+  assert.equal(
+    quiz.getQuizRecallPaceSignal({
+      correct: true,
+      responseTimeSeconds: 16,
+      difficulty: 'fill-in-options',
+      settings: defaults,
+    }),
+    'successful',
+  );
+  assert.equal(
+    quiz.getQuizRecallPaceSignal({
+      correct: false,
+      responseTimeSeconds: 2,
+      difficulty: 'multiple-choice',
+      settings: defaults,
+    }),
+    'incorrect',
+  );
+  assert.equal(
+    quiz.getTimeBasedLearningLimitSeconds('typed-recall', {
+      multipleChoiceSeconds: 15,
+      fillInSeconds: 25,
+      typedRecallSeconds: 36,
+    }),
+    36,
+  );
+});
+
+test('slow correct recall reinforces earlier without treating it as wrong', () => {
+  const word = {
+    ...makeWord('pace-word', 'Steady', 'Firm and regular.', 3),
+    mastery: {
+      masteryPercent: 60,
+      totalCorrect: 4,
+      totalIncorrect: 0,
+      correctStreak: 4,
+      successfulReviewDays: ['2026-01-01'],
+      recentResults: [],
+      reviewStage: 4,
+      successfulReviewCount: 4,
+      lapseCount: 0,
+      nextReviewAt: '2026-01-01T10:00:00.000Z',
+    },
+  };
+  const [updated] = learning.applyQuizMastery(
+    [word],
+    [{
+      wordId: word.id,
+      correct: true,
+      difficulty: 'multiple-choice',
+      responseTimeSeconds: 18,
+      recallPace: 'reinforcement',
+      reviewRating: 'easy',
+      answeredAt: '2026-01-02T10:00:00.000Z',
+    }],
+    { cardHistory: [], quizHistory: [] },
+  );
+
+  assert.equal(updated.mastery.totalCorrect, 5);
+  assert.equal(updated.mastery.totalIncorrect, 0);
+  assert.equal(updated.mastery.lastReviewResult, 'hard');
+});
+
+test('response signal summary groups fluent, successful, reinforcement, and missed answers', () => {
+  const summary = quiz.getQuizResponseSignalSummary({
+    cardHistory: [],
+    quizHistory: [{
+      id: 'signals',
+      date: '2026-07-16',
+      score: 3,
+      total: 4,
+      durationSeconds: 30,
+      completedAt: '2026-07-16T12:00:00.000Z',
+      answers: [
+        { wordId: 'a', correct: true, difficulty: 'multiple-choice', responseTimeSeconds: 4 },
+        { wordId: 'b', correct: true, difficulty: 'multiple-choice', responseTimeSeconds: 9 },
+        { wordId: 'c', correct: true, difficulty: 'multiple-choice', responseTimeSeconds: 20 },
+        { wordId: 'd', correct: false, difficulty: 'multiple-choice', responseTimeSeconds: 7 },
+      ],
+    }],
+  });
+
+  assert.deepEqual(summary, {
+    fluent: 1,
+    successful: 1,
+    reinforcement: 1,
+    incorrect: 1,
+    total: 4,
+  });
+});
+
+test('retrieval profile separates recognition evidence from delayed direct recall', () => {
+  const profile = quiz.getQuizRetrievalProfile({
+    cardHistory: [],
+    quizHistory: [{
+      id: 'retrieval-profile',
+      completedAt: '2026-01-03T10:00:00.000Z',
+      durationSeconds: 30,
+      score: 3,
+      total: 3,
+      answers: [
+        {
+          wordId: 'word-a',
+          correct: true,
+          difficulty: 'multiple-choice',
+          questionMode: 'word-to-definition',
+          answeredAt: '2026-01-01T10:00:00.000Z',
+          responseTimeSeconds: 4,
+        },
+        {
+          wordId: 'word-a',
+          correct: true,
+          difficulty: 'typed-recall',
+          questionMode: 'typed-word',
+          answeredAt: '2026-01-02T10:00:00.000Z',
+          responseTimeSeconds: 10,
+        },
+        {
+          wordId: 'word-a',
+          correct: true,
+          difficulty: 'typed-recall',
+          questionMode: 'typed-word',
+          answeredAt: '2026-01-03T10:00:00.000Z',
+          responseTimeSeconds: 10,
+        },
+      ],
+    }],
+  });
+
+  assert.ok(profile.recallPercent > profile.recognitionPercent);
+  assert.equal(profile.directRecallCorrect, 2);
+  assert.equal(profile.delayedDirectRecallCorrect, 1);
+});
+
+test('quiz feedback summaries group confidence choices overall and by word', () => {
+  const analytics = {
+    cardHistory: [],
+    quizHistory: [
+      {
+        id: 'feedback-1',
+        date: '2026-01-01',
+        score: 2,
+        total: 3,
+        durationSeconds: 20,
+        completedAt: '2026-01-01T10:00:00.000Z',
+        answers: [
+          { wordId: 'one', correct: true, reviewRating: 'easy' },
+          { wordId: 'one', correct: true, reviewRating: 'hard' },
+          { wordId: 'two', correct: false },
+        ],
+      },
+      {
+        id: 'feedback-2',
+        date: '2026-01-02',
+        score: 2,
+        total: 2,
+        durationSeconds: 12,
+        completedAt: '2026-01-02T10:00:00.000Z',
+        answers: [
+          { wordId: 'two', correct: true, reviewRating: 'correct' },
+          { wordId: 'one', correct: true, reviewRating: 'hard' },
+        ],
+      },
+    ],
+  };
+
+  assert.deepEqual(learning.getQuizFeedbackSummary(analytics), {
+    hard: 2,
+    correct: 1,
+    easy: 1,
+    total: 4,
+  });
+  assert.deepEqual(learning.getQuizFeedbackByWord(analytics), [
+    { wordId: 'one', hard: 2, correct: 0, easy: 1, total: 3 },
+    { wordId: 'two', hard: 0, correct: 1, easy: 0, total: 1 },
+  ]);
+});
+
+test('quiz recall pace keeps timing for every question type and word', () => {
+  const analytics = {
+    cardHistory: [],
+    quizHistory: [
+      {
+        id: 'pace-1',
+        date: '2026-07-16',
+        score: 2,
+        total: 3,
+        durationSeconds: 18,
+        completedAt: '2026-07-16T12:00:00.000Z',
+        answers: [
+          { wordId: 'love', correct: true, questionMode: 'typed-word', responseTimeSeconds: 8 },
+          { wordId: 'love', correct: true, questionMode: 'typed-word', responseTimeSeconds: 4 },
+          { wordId: 'curious', correct: false, questionMode: 'true-false', responseTimeSeconds: 2 },
+          { wordId: 'legacy', correct: true },
+        ],
+      },
+    ],
+  };
+
+  assert.deepEqual(learning.getQuizRecallPaceByQuestionType(analytics), [
+    { key: 'typed-word', answerCount: 2, totalSeconds: 12, averageSeconds: 6 },
+    { key: 'true-false', answerCount: 1, totalSeconds: 2, averageSeconds: 2 },
+  ]);
+  assert.deepEqual(learning.getQuizRecallPaceByWord(analytics), [
+    { key: 'love', answerCount: 2, totalSeconds: 12, averageSeconds: 6 },
+    { key: 'curious', answerCount: 1, totalSeconds: 2, averageSeconds: 2 },
+  ]);
 });
 
 test('quiz prompts use a complete definition when a saved summary is cut off', () => {

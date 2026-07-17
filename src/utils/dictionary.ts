@@ -1,3 +1,5 @@
+import type { Word } from '../types';
+
 export function cleanLookupWord(value: string) {
   return value.trim().toLowerCase().replace(/[^a-z'-]/g, '');
 }
@@ -5,6 +7,77 @@ export function cleanLookupWord(value: string) {
 export function fallbackExample(word: string) {
   const displayWord = word.trim() || 'word';
   return `I learned the word ${displayWord} and tried to use it in my own sentence.`;
+}
+
+export type WordLearningContext = {
+  label: 'Everyday example' | 'Simple clue' | 'Academic clue';
+  text: string;
+};
+
+export function buildWordContextExamples({
+  term,
+  definition,
+  example,
+  sourceExamples = [],
+}: {
+  term: string;
+  definition: string;
+  example: string;
+  sourceExamples?: string[];
+}) {
+  const cleanTerm = term.trim();
+  const meaning = lowercaseFirst(cleanDefinitionText(definition));
+  const sourced = uniqueContextSentences(
+    [example, ...sourceExamples],
+    cleanTerm,
+  );
+  const learningClues = cleanTerm && meaning
+    ? [
+        `In a simple explanation, “${cleanTerm}” describes ${meaning}.`,
+        `In more formal writing, “${cleanTerm}” refers to ${meaning}.`,
+      ]
+    : [];
+
+  return uniqueContextSentences([...sourced, ...learningClues], cleanTerm).slice(0, 3);
+}
+
+export function getWordLearningContexts(word: Word): WordLearningContext[] {
+  const examples = buildWordContextExamples({
+    term: word.term,
+    definition: getCompleteFlashcardDefinition(word.definition, word.simpleDefinition),
+    example: word.example,
+    sourceExamples: [
+      ...(word.contextExamples ?? []),
+      ...(word.wordnik_examples ?? []),
+    ],
+  });
+  const labels: WordLearningContext['label'][] = [
+    'Everyday example',
+    'Simple clue',
+    'Academic clue',
+  ];
+
+  return examples.map((text, index) => ({
+    label: labels[index] ?? 'Academic clue',
+    text,
+  }));
+}
+
+function uniqueContextSentences(candidates: string[], term: string) {
+  const normalizedTerm = term.toLocaleLowerCase();
+  return Array.from(
+    new Map(
+      candidates
+        .map((candidate) => candidate.replace(/\s+/g, ' ').trim())
+        .filter(
+          (candidate) =>
+            candidate.length >= 12 &&
+            candidate.length <= 240 &&
+            candidate.toLocaleLowerCase().includes(normalizedTerm),
+        )
+        .map((candidate) => [candidate.toLocaleLowerCase(), candidate]),
+    ).values(),
+  );
 }
 
 export function makeSimpleDefinition(definition: string, word: string) {

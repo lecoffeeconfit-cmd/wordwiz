@@ -6,6 +6,7 @@ import type {
 } from '../types';
 import {
   cleanLookupWord,
+  buildWordContextExamples,
   fallbackExample,
   getSynonyms,
   inferOriginPeriod,
@@ -276,6 +277,9 @@ export async function lookupWordDetails(rawTerm: string): Promise<WordDetails> {
     exampleDefinition?.example ??
     wordnikExample ??
     fallbackExample(rawTerm);
+  const dictionaryExamples = meanings.flatMap((meaning) =>
+    (meaning.definitions ?? []).map((item) => item.example ?? ''),
+  );
   const simpleDefinition =
     fallback?.simpleDefinition ?? makeSimpleDefinition(definition, rawTerm);
   const pronunciation =
@@ -355,6 +359,15 @@ export async function lookupWordDetails(rawTerm: string): Promise<WordDetails> {
     definitionOptions,
     simpleDefinition,
     example,
+    contextExamples: buildWordContextExamples({
+      term: rawTerm,
+      definition,
+      example,
+      sourceExamples: [
+        ...dictionaryExamples,
+        ...(wordnik?.wordnik_examples ?? []),
+      ],
+    }),
     partOfSpeech,
     pronunciation,
     origin: history.origin,

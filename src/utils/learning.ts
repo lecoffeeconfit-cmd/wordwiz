@@ -12,9 +12,129 @@ import type {
   WordMasteryProgress,
 } from '../types';
 import { getDayKey, getDayKeyForDate, getPreviousDayKey, getRecentDays } from './date';
-import { makeDistinctSimpleDefinition } from './dictionary';
+import { buildWordContextExamples, makeDistinctSimpleDefinition } from './dictionary';
+import { getQuizRecallPaceSignal, isDirectRecallQuestion } from './quiz';
 
 export const NOVICE_MASTERY_COLOR = '#89CFF0';
+
+export type QuizFeedbackSummary = {
+  hard: number;
+  correct: number;
+  easy: number;
+  total: number;
+};
+
+export type QuizFeedbackByWord = QuizFeedbackSummary & {
+  wordId: string;
+};
+
+export type QuizRecallPace = {
+  key: string;
+  answerCount: number;
+  totalSeconds: number;
+  averageSeconds: number;
+};
+
+function getQuizRecallPace(
+  analytics: AnalyticsData,
+  getKey: (answer: QuizAnswer) => string | undefined,
+): QuizRecallPace[] {
+  const paceByKey = new Map<string, Omit<QuizRecallPace, 'averageSeconds'>>();
+
+  analytics.quizHistory.forEach((attempt) => {
+    attempt.answers.forEach((answer) => {
+      const seconds = answer.responseTimeSeconds;
+      const key = getKey(answer);
+      if (
+        !key ||
+        typeof seconds !== 'number' ||
+        !Number.isFinite(seconds) ||
+        seconds < 0
+      ) return;
+
+      const current = paceByKey.get(key) ?? {
+        key,
+        answerCount: 0,
+        totalSeconds: 0,
+      };
+      current.answerCount += 1;
+      current.totalSeconds += seconds;
+      paceByKey.set(key, current);
+    });
+  });
+
+  return [...paceByKey.values()]
+    .map((pace) => ({
+      ...pace,
+      averageSeconds: Math.round((pace.totalSeconds / pace.answerCount) * 10) / 10,
+    }))
+    .sort(
+      (first, second) =>
+        second.averageSeconds - first.averageSeconds ||
+        second.answerCount - first.answerCount ||
+        first.key.localeCompare(second.key),
+    );
+}
+
+export function getQuizRecallPaceByQuestionType(
+  analytics: AnalyticsData,
+): QuizRecallPace[] {
+  return getQuizRecallPace(
+    analytics,
+    (answer) => answer.questionMode,
+  );
+}
+
+export function getQuizRecallPaceByWord(
+  analytics: AnalyticsData,
+): QuizRecallPace[] {
+  return getQuizRecallPace(analytics, (answer) => answer.wordId);
+}
+
+export function getQuizFeedbackSummary(
+  analytics: AnalyticsData,
+): QuizFeedbackSummary {
+  return analytics.quizHistory.reduce<QuizFeedbackSummary>(
+    (summary, attempt) => {
+      attempt.answers.forEach((answer) => {
+        if (!answer.reviewRating) return;
+        summary[answer.reviewRating] += 1;
+        summary.total += 1;
+      });
+      return summary;
+    },
+    { hard: 0, correct: 0, easy: 0, total: 0 },
+  );
+}
+
+export function getQuizFeedbackByWord(
+  analytics: AnalyticsData,
+): QuizFeedbackByWord[] {
+  const feedbackByWordId = new Map<string, QuizFeedbackByWord>();
+
+  analytics.quizHistory.forEach((attempt) => {
+    attempt.answers.forEach((answer) => {
+      if (!answer.reviewRating) return;
+      const current = feedbackByWordId.get(answer.wordId) ?? {
+        wordId: answer.wordId,
+        hard: 0,
+        correct: 0,
+        easy: 0,
+        total: 0,
+      };
+      current[answer.reviewRating] += 1;
+      current.total += 1;
+      feedbackByWordId.set(answer.wordId, current);
+    });
+  });
+
+  return [...feedbackByWordId.values()].sort(
+    (first, second) =>
+      second.hard - first.hard ||
+      second.total - first.total ||
+      first.wordId.localeCompare(second.wordId),
+  );
+}
 
 export function getProgressColor(score: number) {
   if (score >= 100) return '#F4B400';
@@ -190,6 +310,15 @@ export function buildWordFromInput({
       cleanTerm,
     ),
     example: example.trim(),
+    contextExamples: buildWordContextExamples({
+      term: cleanTerm,
+      definition: cleanDefinition,
+      example,
+      sourceExamples: [
+        ...(details.contextExamples ?? existingWord?.contextExamples ?? []),
+        ...(details.wordnik_examples ?? existingWord?.wordnik_examples ?? []),
+      ],
+    }),
     partOfSpeech: details.partOfSpeech?.trim(),
     pronunciation: details.pronunciation?.trim(),
     origin: details.origin?.trim(),
@@ -394,6 +523,8 @@ export function createWordMasteryProgress(initialReviewAt = new Date().toISOStri
     reviewStage: 0,
     successfulReviewCount: 0,
     lapseCount: 0,
+    directRecallCorrect: 0,
+    delayedDirectRecallCorrect: 0,
     nextReviewAt: toSafeDate(initialReviewAt).toISOString(),
   };
 }
@@ -423,6 +554,8 @@ export function isWordMastered(progress: WordMasteryProgress) {
     (progress.successfulReviewCount ?? 0) >= 6 &&
     (progress.reviewStage ?? 0) >= 6 &&
     getDifficultyRank(progress.highestQuestionDifficultyCompleted) >= 3 &&
+    (progress.directRecallCorrect ?? 0) >= 2 &&
+    (progress.delayedDirectRecallCorrect ?? 0) >= 1 &&
     recentResults.at(-1)?.correct === true &&
     recentIncorrect <= 2
   );
@@ -443,6 +576,24 @@ export function applyQuizMastery(
 
     const reviewedAt = toSafeDate(answer.answeredAt);
     const current = getWordMasteryProgress(word, analytics);
+    if (answer.timedOut) {
+      return {
+        ...word,
+        reviews: word.reviews + 1,
+        mastery: {
+          ...current,
+          lastReviewedAt: reviewedAt.toISOString(),
+          lastReviewResult: 'hard',
+          // A time-out is not counted as an incorrect answer or a mastery
+          // loss, but it earns a gentle earlier check rather than being
+          // ignored entirely.
+          nextReviewAt: addMinutes(
+            reviewedAt,
+            REVIEW_STAGE_INTERVAL_MINUTES[2],
+          ).toISOString(),
+        },
+      };
+    }
     const mastery = updateMasteryFromQuizAnswer(current, answer, reviewedAt);
 
     return {
@@ -562,6 +713,23 @@ function buildLegacyMasteryProgress(
     ),
   );
   const lastCorrect = [...recentResults].reverse().find((result) => result.correct);
+  const directRecallAnswers = quizAnswers.filter(
+    ({ answer }) =>
+      answer.correct &&
+      isDirectRecallQuestion(answer.questionMode, answer.difficulty),
+  );
+  const delayedDirectRecallCorrect = directRecallAnswers.reduce(
+    (total, { answer, attempt }, index) => {
+      if (index === 0) return total;
+      const previous = directRecallAnswers[index - 1];
+      const previousAt = new Date(
+        previous.answer.answeredAt ?? previous.attempt.completedAt,
+      ).getTime();
+      const currentAt = new Date(answer.answeredAt ?? attempt.completedAt).getTime();
+      return total + (currentAt - previousAt >= 86_400_000 ? 1 : 0);
+    },
+    0,
+  );
   let correctStreak = 0;
   for (const result of [...recentResults].reverse()) {
     if (!result.correct) break;
@@ -586,6 +754,11 @@ function buildLegacyMasteryProgress(
     reviewStage: word.reviews * 12 + cardScore + quizScore >= 100 ? 6 : 0,
     successfulReviewCount: quizAnswers.filter(({ answer }) => answer.correct).length,
     lapseCount: quizAnswers.filter(({ answer }) => !answer.correct).length,
+    directRecallCorrect: directRecallAnswers.length,
+    delayedDirectRecallCorrect,
+    lastDirectRecallAt:
+      directRecallAnswers.at(-1)?.answer.answeredAt ??
+      directRecallAnswers.at(-1)?.attempt.completedAt,
     lastReviewResult: recentResults.at(-1)?.correct ? 'correct' : undefined,
     masteredAt:
       word.reviews * 12 + cardScore + quizScore >= 100
@@ -608,6 +781,11 @@ function normalizeMasteryProgress(progress: WordMasteryProgress): WordMasteryPro
     (legacyMastered
       ? addMinutes(new Date(), REVIEW_STAGE_INTERVAL_MINUTES[7]).toISOString()
       : undefined);
+  const legacyDirectRecallAt = [...(progress.recentResults ?? [])]
+    .reverse()
+    .find(
+      (result) => result.correct && result.difficulty === 'typed-recall',
+    )?.answeredAt;
 
   return {
     ...createWordMasteryProgress(),
@@ -621,6 +799,27 @@ function normalizeMasteryProgress(progress: WordMasteryProgress): WordMasteryPro
     reviewStage: Math.max(0, Math.min(7, Math.round(progress.reviewStage ?? 0))),
     successfulReviewCount: Math.max(0, progress.successfulReviewCount ?? progress.totalCorrect ?? 0),
     lapseCount: Math.max(0, progress.lapseCount ?? progress.totalIncorrect ?? 0),
+    directRecallCorrect: Math.max(
+      0,
+      progress.directRecallCorrect ??
+        (progress.highestQuestionDifficultyCompleted === 'typed-recall' ? 1 : 0),
+    ),
+    delayedDirectRecallCorrect: Math.max(
+      0,
+      progress.delayedDirectRecallCorrect ??
+        (progress.highestQuestionDifficultyCompleted === 'typed-recall' &&
+        (progress.reviewStage ?? 0) >= 6 &&
+        (progress.successfulReviewDays?.length ?? 0) >= 3
+          ? 1
+          : 0),
+    ),
+    lastDirectRecallAt: toValidIso(
+      progress.lastDirectRecallAt ??
+        legacyDirectRecallAt ??
+        (progress.highestQuestionDifficultyCompleted === 'typed-recall'
+          ? progress.lastCorrectAt
+          : undefined),
+    ),
     lastReviewedAt: toValidIso(progress.lastReviewedAt),
     lastCorrectAt: toValidIso(progress.lastCorrectAt),
     firstLearnedAt: toValidIso(progress.firstLearnedAt),
@@ -639,6 +838,14 @@ function updateMasteryFromQuizAnswer(
   const current = normalizeMasteryProgress(progress);
   const difficulty = answer.difficulty ?? 'multiple-choice';
   const reviewRating: ReviewRating = answer.reviewRating ?? 'correct';
+  const recallPace = answer.recallPace ??
+    (typeof answer.responseTimeSeconds === 'number'
+      ? getQuizRecallPaceSignal(answer)
+      : 'successful');
+  const scheduleRating: ReviewRating =
+    answer.correct && recallPace === 'reinforcement'
+      ? 'hard'
+      : reviewRating;
   const reviewedAtIso = reviewedAt.toISOString();
   const sameSession = isWithinHours(current.lastReviewedAt, reviewedAt, 4);
   const correctInSession = current.recentResults.filter(
@@ -659,7 +866,7 @@ function updateMasteryFromQuizAnswer(
   const earnedChange =
     answer.correct && sameSession && correctInSession >= 2
       ? Math.min(1, getCorrectMasteryChange(difficulty))
-      : baseChange + retentionBonus;
+      : baseChange + retentionBonus + (recallPace === 'fluent' ? 1 : 0);
   const recentResults = [
     ...current.recentResults,
     { correct: answer.correct, difficulty, answeredAt: reviewedAtIso },
@@ -670,11 +877,24 @@ function updateMasteryFromQuizAnswer(
   const nextMasteryPercent = clampMasteryPercent(
     current.masteryPercent + earnedChange,
   );
+  const isDirectRecall = isDirectRecallQuestion(
+    answer.questionMode,
+    answer.difficulty,
+  );
+  const previousDirectRecallAt = current.lastDirectRecallAt
+    ? new Date(current.lastDirectRecallAt)
+    : null;
+  const isDelayedDirectRecall =
+    answer.correct &&
+    isDirectRecall &&
+    previousDirectRecallAt &&
+    !Number.isNaN(previousDirectRecallAt.getTime()) &&
+    reviewedAt.getTime() - previousDirectRecallAt.getTime() >= 86_400_000;
   const scheduledReviewWasDue = isScheduledReviewDue(current, reviewedAt);
   const schedule = getNextReviewSchedule(
     current,
     answer.correct,
-    reviewRating,
+    scheduleRating,
     reviewedAt,
     scheduledReviewWasDue,
   );
@@ -695,7 +915,15 @@ function updateMasteryFromQuizAnswer(
     successfulReviewCount:
       (current.successfulReviewCount ?? 0) + (answer.correct ? 1 : 0),
     lapseCount: (current.lapseCount ?? 0) + (answer.correct ? 0 : 1),
-    lastReviewResult: answer.correct ? reviewRating : 'wrong',
+    directRecallCorrect:
+      (current.directRecallCorrect ?? 0) +
+      (answer.correct && isDirectRecall ? 1 : 0),
+    delayedDirectRecallCorrect:
+      (current.delayedDirectRecallCorrect ?? 0) +
+      (isDelayedDirectRecall ? 1 : 0),
+    lastDirectRecallAt:
+      answer.correct && isDirectRecall ? reviewedAtIso : current.lastDirectRecallAt,
+    lastReviewResult: answer.correct ? scheduleRating : 'wrong',
     lastSuccessfulReviewAt: answer.correct
       ? reviewedAtIso
       : current.lastSuccessfulReviewAt,

@@ -7,6 +7,7 @@ export type AnalyticsEventName =
   | 'card_review_recorded'
   | 'quiz_started'
   | 'quiz_completed'
+  | 'timed_learning_toggled'
   | 'reminder_updated'
   | 'cloud_sync_failed';
 

@@ -7,6 +7,7 @@ create table if not exists public.words (
   definition text not null,
   simple_definition text,
   example text not null,
+  context_examples jsonb not null default '[]'::jsonb,
   part_of_speech text,
   pronunciation text,
   origin text,
@@ -25,7 +26,8 @@ create table if not exists public.words (
 
 alter table public.words
   add column if not exists antonyms text[] not null default '{}',
-  add column if not exists mastery_data jsonb not null default '{}'::jsonb;
+  add column if not exists mastery_data jsonb not null default '{}'::jsonb,
+  add column if not exists context_examples jsonb not null default '[]'::jsonb;
 
 alter table public.words
   add column if not exists is_flagged boolean not null default false,

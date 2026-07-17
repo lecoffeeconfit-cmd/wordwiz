@@ -2,14 +2,19 @@ import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useMemo, useState } from 'react';
 import { FlatList, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { COLORS } from '../constants/theme';
-import type { AnalyticsData, LegalPage, QuizAnswer, QuizProgress, QuizQuestion, ReminderSettings, ReviewRating, SortMode, Word } from '../types';
+import type { AnalyticsData, LegalPage, QuizAnswer, QuizPreferences, QuizProgress, QuizQuestion, QuizSessionMode, ReminderSettings, ReviewRating, SortMode, TimeBasedLearningSettings, Word } from '../types';
 import { styles } from '../styles';
-import { buildCategoryPracticeQuiz, buildQuiz, calculateStreakStats, evaluateQuizAnswer, formatReminderTime, formatStudyTime, formatWordFlaggedDate, getCategoryPracticeQuizTarget, getDayKey, getNewStudyWords, getRecentDays, getStreakMessage, getStreakWeek, getTypedRecallHint, getWordMastery, getWordMasteryCategoryForWord, NEW_STUDY_GROUP, shuffle, WORD_MASTERY_CATEGORIES, type WordMasteryCategoryId } from '../utils';
+import { buildCategoryPracticeQuiz, buildQuiz, calculateStreakStats, evaluateQuizAnswer, formatReminderTime, formatStudyTime, formatWordFlaggedDate, getCategoryPracticeQuizTarget, getDayKey, getMistakeReviewWordIds, getNewStudyWords, getQuizRecallPaceSignal, getRecentDays, getStreakMessage, getStreakWeek, getTimeBasedLearningLimitSeconds, getTimedLearningBonusXp, getTypedRecallHint, getWordMastery, getWordMasteryCategoryForWord, NEW_STUDY_GROUP, normalizeTimeBasedLearningSettings, shuffle, TIMED_LEARNING_SECONDS, WORD_MASTERY_CATEGORIES, type WordMasteryCategoryId } from '../utils';
 import { DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 import { reportError, trackEvent } from '../services';
 
 const REVEALED_TYPED_ANSWER = '__wordwiz-revealed-answer__';
+const TIMED_OUT_ANSWER = '__wordwiz-timed-out__';
 type QuizStudyGroupId = WordMasteryCategoryId | 'new' | 'flagged';
+
+function getResponseTimeSeconds(questionStartedAt: number) {
+  return Math.max(1, Math.round((Date.now() - questionStartedAt) / 1000));
+}
 
 const FLAGGED_STUDY_GROUP = {
   id: 'flagged' as const,
@@ -20,12 +25,32 @@ const FLAGGED_STUDY_GROUP = {
   pale: COLORS.purplePale,
 };
 
+const QUIZ_SESSION_OPTIONS: {
+  id: QuizSessionMode;
+  label: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  description: string;
+}[] = [
+  { id: 'standard', label: 'Standard', icon: 'sparkles-outline', description: 'Adaptive mix' },
+  { id: 'quick', label: 'Quick', icon: 'flash-outline', description: '5–20 questions' },
+  { id: 'challenge', label: 'Challenge', icon: 'flame-outline', description: 'No hints · 3 misses ends it' },
+  { id: 'mistake-review', label: 'Mistake review', icon: 'refresh-outline', description: 'Missed and slow words' },
+  { id: 'mastery-test', label: 'Mastery test', icon: 'ribbon-outline', description: 'Recall, no hints' },
+];
+
+function getQuizSessionLabel(sessionMode: QuizSessionMode) {
+  return QUIZ_SESSION_OPTIONS.find((option) => option.id === sessionMode)?.label ?? 'Standard';
+}
+
 export function QuizScreen({
   words,
   analytics,
   progress,
   priorityWordIds = [],
   initialStudyGroup,
+  timedLearningEnabled,
+  timeBasedLearningSettings,
+  quizPreferences,
   onComplete,
   onReviewCards,
   onToggleFlag,
@@ -35,6 +60,9 @@ export function QuizScreen({
   progress: QuizProgress | null;
   priorityWordIds?: string[];
   initialStudyGroup?: 'flagged';
+  timedLearningEnabled: boolean;
+  timeBasedLearningSettings: TimeBasedLearningSettings;
+  quizPreferences: QuizPreferences;
   onComplete: (
     score: number,
     total: number,
@@ -54,7 +82,16 @@ export function QuizScreen({
   const [finishedScore, setFinishedScore] = useState<number | null>(null);
   const [answers, setAnswers] = useState<QuizAnswer[]>([]);
   const [quizStartedAt, setQuizStartedAt] = useState(Date.now());
+  const [questionStartedAt, setQuestionStartedAt] = useState(Date.now());
+  const [secondsRemaining, setSecondsRemaining] = useState(TIMED_LEARNING_SECONDS);
+  const [finishedBonusXp, setFinishedBonusXp] = useState(0);
+  const [isQuizSetupExpanded, setIsQuizSetupExpanded] = useState(false);
   const [isPracticeRound, setIsPracticeRound] = useState(false);
+  const [sessionMode, setSessionMode] = useState<QuizSessionMode>('standard');
+  const [quickQuestionCount, setQuickQuestionCount] = useState<5 | 10 | 20>(5);
+  const [challengeMistakes, setChallengeMistakes] = useState(0);
+  const [challengeCorrectStreak, setChallengeCorrectStreak] = useState(0);
+  const [finishedTotal, setFinishedTotal] = useState<number | null>(null);
   const [selectedCategory, setSelectedCategory] =
     useState<QuizStudyGroupId>(initialStudyGroup ?? 'all');
   const wordMastery = useMemo(
@@ -101,6 +138,28 @@ export function QuizScreen({
             .map((item) => item.word),
     [newWords, selectedCategory, wordMastery, words],
   );
+  const masteryTestWords = useMemo(
+    () =>
+      filteredQuizWords.filter(
+        (word) => getWordMastery(word, analytics) >= 70,
+      ),
+    [analytics, filteredQuizWords],
+  );
+  const mistakeReviewWordIds = useMemo(
+    () => getMistakeReviewWordIds(analytics, timeBasedLearningSettings),
+    [analytics, timeBasedLearningSettings],
+  );
+  const mistakeReviewWords = useMemo(
+    () =>
+      filteredQuizWords.filter((word) => mistakeReviewWordIds.includes(word.id)),
+    [filteredQuizWords, mistakeReviewWordIds],
+  );
+  const activeQuizWords =
+    sessionMode === 'mastery-test'
+      ? masteryTestWords
+      : sessionMode === 'mistake-review'
+        ? mistakeReviewWords
+        : filteredQuizWords;
   const studyGroups = [
     WORD_MASTERY_CATEGORIES[0],
     NEW_STUDY_GROUP,
@@ -112,10 +171,29 @@ export function QuizScreen({
       (category) => category.id === selectedCategory,
     ) ?? WORD_MASTERY_CATEGORIES[0];
   const categoryQuizQuestionCount =
-    selectedCategory === 'all'
-      ? Math.min(filteredQuizWords.length, 10)
-      : getCategoryPracticeQuizTarget(filteredQuizWords.length);
+    sessionMode === 'quick'
+      ? quickQuestionCount
+      : sessionMode === 'mastery-test'
+        ? Math.min(activeQuizWords.length, 10)
+        : selectedCategory === 'all'
+          ? Math.min(activeQuizWords.length, 10)
+          : getCategoryPracticeQuizTarget(activeQuizWords.length);
   const canChangeCategory = quiz.length === 0 || finishedScore !== null;
+  const activeQuestion = quiz[questionIndex];
+  const normalizedTimeSettings = normalizeTimeBasedLearningSettings(
+    timeBasedLearningSettings,
+  );
+  const activeTimeLimitSeconds = activeQuestion
+    ? getTimeBasedLearningLimitSeconds(
+        activeQuestion.difficulty,
+        normalizedTimeSettings,
+      )
+    : TIMED_LEARNING_SECONDS;
+  const timedQuestionActive = Boolean(
+    activeQuestion &&
+      timedLearningEnabled &&
+      getWordMastery(activeQuestion.word, analytics) >= 80,
+  );
 
   useEffect(() => {
     if (initialStudyGroup === 'flagged' && canChangeCategory) {
@@ -187,29 +265,49 @@ export function QuizScreen({
   );
 
   function startQuiz() {
-    if (filteredQuizWords.length === 0) {
+    if (!quizPreferences.enabled || activeQuizWords.length === 0) {
       return;
     }
 
     const masteryByWordId = Object.fromEntries(
-      filteredQuizWords.map((word) => [
+      activeQuizWords.map((word) => [
         word.id,
         getWordMastery(word, analytics),
       ]),
     );
+    const sessionOptions = {
+      difficulty: quizPreferences.difficulty,
+      sessionMode,
+      questionLimit:
+        sessionMode === 'quick'
+          ? quickQuestionCount
+          : sessionMode === 'mistake-review'
+            ? Math.min(10, Math.max(activeQuizWords.length, activeQuizWords.length * 2))
+            : undefined,
+    };
+    const sessionPriorityWordIds = sessionMode === 'mistake-review'
+      ? [
+          ...mistakeReviewWordIds.filter((wordId) =>
+            activeQuizWords.some((word) => word.id === wordId),
+          ),
+          ...priorityWordIds,
+        ]
+      : priorityWordIds;
     const nextQuiz =
       selectedCategory === 'all'
         ? buildQuiz(
-            filteredQuizWords,
+            activeQuizWords,
             analytics.quizHistory,
             masteryByWordId,
-            priorityWordIds,
+            sessionPriorityWordIds,
+            sessionOptions,
           )
         : buildCategoryPracticeQuiz(
-            filteredQuizWords,
+            activeQuizWords,
             analytics.quizHistory,
             masteryByWordId,
-            priorityWordIds,
+            sessionPriorityWordIds,
+            sessionOptions,
           );
 
     setQuiz(nextQuiz);
@@ -220,11 +318,24 @@ export function QuizScreen({
     setReviewRating('correct');
     setScore(0);
     setFinishedScore(null);
+    setFinishedTotal(null);
     setAnswers([]);
+    setChallengeMistakes(0);
+    setChallengeCorrectStreak(0);
     setQuizStartedAt(Date.now());
+    setQuestionStartedAt(Date.now());
+    setSecondsRemaining(
+      getTimeBasedLearningLimitSeconds(
+        nextQuiz[0]?.difficulty,
+        normalizedTimeSettings,
+      ),
+    );
+    setFinishedBonusXp(0);
     setIsPracticeRound(Boolean(progress));
     trackEvent('quiz_started', {
       category: selectedCategory,
+      mode: sessionMode,
+      difficulty: quizPreferences.difficulty,
       questions: nextQuiz.length,
     });
   }
@@ -237,7 +348,22 @@ export function QuizScreen({
       question.answer,
       option,
       question.mode,
+      question.strictSpelling,
     ).correct;
+    const responseTimeSeconds = getResponseTimeSeconds(questionStartedAt);
+    const speedBonusXp =
+      correct && timedQuestionActive
+        ? getTimedLearningBonusXp(secondsRemaining, activeTimeLimitSeconds)
+        : 0;
+    const nextChallengeCorrectStreak = correct ? challengeCorrectStreak + 1 : 0;
+    const challengeStreakBonusXp =
+      sessionMode === 'challenge' &&
+      correct &&
+      nextChallengeCorrectStreak >= 3 &&
+      nextChallengeCorrectStreak % 3 === 0
+        ? 2
+        : 0;
+    setChallengeCorrectStreak(nextChallengeCorrectStreak);
     if (correct) setScore((current) => current + 1);
     setAnswers((current) => [
       ...current,
@@ -245,8 +371,37 @@ export function QuizScreen({
         wordId: question.word.id,
         correct,
         difficulty: question.difficulty,
+        questionMode: question.mode,
         answeredAt: new Date().toISOString(),
+        responseTimeSeconds,
+        recallPace: getQuizRecallPaceSignal({
+          correct,
+          responseTimeSeconds,
+          difficulty: question.difficulty,
+          settings: normalizedTimeSettings,
+        }),
         reviewRating: correct ? 'correct' : undefined,
+        speedBonusXp: speedBonusXp + challengeStreakBonusXp || undefined,
+      },
+    ]);
+  }
+
+  function timeOutQuestion() {
+    if (selected || !timedQuestionActive || !activeQuestion) return;
+
+    setSecondsRemaining(0);
+    setSelected(TIMED_OUT_ANSWER);
+    setAnswers((current) => [
+      ...current,
+      {
+        wordId: activeQuestion.word.id,
+        correct: false,
+        timedOut: true,
+        difficulty: activeQuestion.difficulty,
+        questionMode: activeQuestion.mode,
+        answeredAt: new Date().toISOString(),
+        responseTimeSeconds: activeTimeLimitSeconds,
+        recallPace: 'incorrect',
       },
     ]);
   }
@@ -273,32 +428,53 @@ export function QuizScreen({
       question.answer,
       selected,
       question.mode,
+      question.strictSpelling,
     );
-    const currentAnswer = {
+    const responseTimeSeconds = getResponseTimeSeconds(questionStartedAt);
+    const currentAnswer: QuizAnswer = {
       wordId: question.word.id,
       correct: evaluation.correct,
       difficulty: question.difficulty,
+      questionMode: question.mode,
       answeredAt: new Date().toISOString(),
+      responseTimeSeconds,
+      recallPace: getQuizRecallPaceSignal({
+        correct: evaluation.correct,
+        responseTimeSeconds,
+        difficulty: question.difficulty,
+        settings: normalizedTimeSettings,
+      }),
       reviewRating: evaluation.correct ? reviewRating : undefined,
     };
-    const completedAnswers = answers.some(
-      (answer) => answer.wordId === currentAnswer.wordId,
-    )
-      ? answers.map((answer) =>
-          answer.wordId === currentAnswer.wordId && answer.correct
+    const completedAnswers = answers.length > questionIndex
+      ? answers.map((answer, index) =>
+          index === questionIndex && answer.correct
             ? { ...answer, reviewRating }
             : answer,
         )
       : [...answers, currentAnswer];
     const finalScore = completedAnswers.filter((answer) => answer.correct).length;
-    if (questionIndex === quiz.length - 1) {
+    const nextChallengeMistakes = evaluation.correct
+      ? 0
+      : challengeMistakes + 1;
+    const challengeEnded =
+      sessionMode === 'challenge' && nextChallengeMistakes >= 3;
+    setChallengeMistakes(nextChallengeMistakes);
+    if (questionIndex === quiz.length - 1 || challengeEnded) {
       const durationSeconds = Math.max(
         1,
         Math.round((Date.now() - quizStartedAt) / 1000),
       );
       setFinishedScore(finalScore);
+      setFinishedTotal(completedAnswers.length);
+      setFinishedBonusXp(
+        completedAnswers.reduce(
+          (total, answer) => total + (answer.speedBonusXp ?? 0),
+          0,
+        ),
+      );
       try {
-        await onComplete(finalScore, quiz.length, durationSeconds, completedAnswers);
+        await onComplete(finalScore, completedAnswers.length, durationSeconds, completedAnswers);
       } catch (error) {
         reportError(error, { area: 'complete_quiz' });
       }
@@ -309,7 +485,116 @@ export function QuizScreen({
     setTypedResponse('');
     setHintStep(0);
     setReviewRating('correct');
+    setQuestionStartedAt(Date.now());
+    setSecondsRemaining(
+      getTimeBasedLearningLimitSeconds(
+        quiz[questionIndex + 1]?.difficulty,
+        normalizedTimeSettings,
+      ),
+    );
   }
+
+  useEffect(() => {
+    if (!timedQuestionActive || selected) return;
+
+    const endsAt = questionStartedAt + activeTimeLimitSeconds * 1000;
+    const intervalId = setInterval(() => {
+      const nextSeconds = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000));
+      setSecondsRemaining(nextSeconds);
+      if (nextSeconds === 0) {
+        clearInterval(intervalId);
+        timeOutQuestion();
+      }
+    }, 250);
+
+    return () => clearInterval(intervalId);
+  }, [activeTimeLimitSeconds, questionStartedAt, selected, timedQuestionActive]);
+
+  const quizSetupControls = (
+    <View style={styles.quizSetupCard}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ expanded: isQuizSetupExpanded }}
+        accessibilityLabel="Quiz setup"
+        accessibilityHint="Choose a quiz type and difficulty"
+        onPress={() => setIsQuizSetupExpanded((expanded) => !expanded)}
+        style={({ pressed }) => [styles.quizSetupHeader, pressed && styles.pressed]}
+      >
+        <View style={styles.quizSetupIcon}>
+          <Ionicons name="options-outline" size={18} color={COLORS.purpleDark} />
+        </View>
+        <View style={styles.quizSetupToggleCopy}>
+          <Text style={styles.quizSetupTitle}>Quiz setup</Text>
+          <Text style={styles.quizSetupText}>
+            {quizPreferences.enabled
+              ? `${getQuizSessionLabel(sessionMode)} session`
+              : 'Quizzes paused · manage in Stats'}
+          </Text>
+        </View>
+        <Ionicons
+          name={isQuizSetupExpanded ? 'chevron-up' : 'chevron-down'}
+          size={20}
+          color={COLORS.purpleDark}
+        />
+      </Pressable>
+
+      {isQuizSetupExpanded ? (
+        <>
+      {quizPreferences.enabled ? (
+        <>
+          <Text style={styles.quizSetupLabel}>SESSION TYPE</Text>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.quizSessionScroller}
+            contentContainerStyle={styles.quizSessionOptionRow}
+          >
+            {QUIZ_SESSION_OPTIONS.map((option) => {
+              const active = sessionMode === option.id;
+              return (
+                <Pressable
+                  key={option.id}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: active }}
+                  onPress={() => setSessionMode(option.id)}
+                  style={({ pressed }) => [
+                    styles.quizSessionOption,
+                    active && styles.quizSessionOptionActive,
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <Ionicons name={option.icon} size={16} color={active ? COLORS.purpleDark : COLORS.muted} />
+                  <Text style={[styles.quizSessionOptionLabel, active && styles.quizSessionOptionLabelActive]}>{option.label}</Text>
+                  <Text style={styles.quizSessionOptionDetail}>{option.description}</Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+
+          {sessionMode === 'quick' ? (
+            <View style={styles.quickLengthRow}>
+              <Text style={styles.quizSetupLabel}>QUICK PRACTICE</Text>
+              <View style={styles.quickLengthOptions}>
+                {([5, 10, 20] as const).map((count) => (
+                  <Pressable
+                    key={count}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: quickQuestionCount === count }}
+                    onPress={() => setQuickQuestionCount(count)}
+                    style={({ pressed }) => [styles.quickLengthButton, quickQuestionCount === count && styles.quickLengthButtonActive, pressed && styles.pressed]}
+                  >
+                    <Text style={[styles.quickLengthText, quickQuestionCount === count && styles.quickLengthTextActive]}>{count}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+          ) : null}
+        </>
+      ) : null}
+        </>
+      ) : null}
+    </View>
+  );
 
   if (progress && quiz.length === 0) {
     return (
@@ -321,12 +606,13 @@ export function QuizScreen({
         />
         <QuizComplete score={progress.score} total={progress.total} />
         {categorySelector}
+        {quizSetupControls}
         <Pressable
-          disabled={filteredQuizWords.length === 0}
+          disabled={!quizPreferences.enabled || activeQuizWords.length === 0}
           onPress={startQuiz}
           style={({ pressed }) => [
             styles.quizPracticeButton,
-            filteredQuizWords.length === 0 && styles.practiceButtonDisabled,
+            (!quizPreferences.enabled || activeQuizWords.length === 0) && styles.practiceButtonDisabled,
             pressed && styles.pressed,
           ]}
         >
@@ -377,8 +663,9 @@ export function QuizScreen({
         />
         <QuizComplete
           score={finishedScore}
-          total={quiz.length}
+          total={finishedTotal ?? quiz.length}
           mode={isPracticeRound ? 'practice' : 'daily'}
+          bonusXp={finishedBonusXp}
         />
         <Text style={styles.quizPracticeNote}>
           {isPracticeRound
@@ -386,12 +673,13 @@ export function QuizScreen({
             : 'Practice again anytime to keep learning.'}
         </Text>
         {categorySelector}
+        {quizSetupControls}
         <Pressable
-          disabled={filteredQuizWords.length === 0}
+          disabled={!quizPreferences.enabled || activeQuizWords.length === 0}
           onPress={startQuiz}
           style={({ pressed }) => [
             styles.quizPracticeButton,
-            filteredQuizWords.length === 0 && styles.practiceButtonDisabled,
+            (!quizPreferences.enabled || activeQuizWords.length === 0) && styles.practiceButtonDisabled,
             pressed && styles.pressed,
           ]}
         >
@@ -436,9 +724,15 @@ export function QuizScreen({
           </View>
           <Text style={styles.quizIntroTitle}>Ready for today’s challenge?</Text>
           <Text style={styles.quizIntroText}>
-            {selectedCategory === 'new'
+            {!quizPreferences.enabled
+              ? 'Quizzes are paused. Turn Quiz learning back on whenever you want a focused retrieval session.'
+              : sessionMode === 'mastery-test' && activeQuizWords.length === 0
+                ? 'Build a few strong words first. Mastery Tests are for words that are ready for direct recall.'
+              : sessionMode === 'mistake-review' && activeQuizWords.length === 0
+                ? 'No missed or slow answers need a focused review right now. Try a Standard or Quick session instead.'
+              : selectedCategory === 'new'
               ? 'Start with your newest words. They will move into Learning after this completed practice.'
-              : 'You’ll answer a fresh mix of meanings, synonyms, sentence context, and recall questions. It only takes a minute.'}
+              : 'Choose a session, then WordWiz builds a fresh mix that matches your difficulty.'}
           </Text>
           <View style={styles.quizFacts}>
             <QuizFact icon="time-outline" text="About 1 minute" />
@@ -448,6 +742,7 @@ export function QuizScreen({
             />
           </View>
           {categorySelector}
+          {quizSetupControls}
           <View
             style={[
               styles.practiceCategoryBanner,
@@ -465,19 +760,21 @@ export function QuizScreen({
                 { color: selectedCategoryDetails.color },
               ]}
             >
-              {filteredQuizWords.length} {selectedCategoryDetails.shortLabel.toLowerCase()} words ready
+              {activeQuizWords.length} {sessionMode === 'mastery-test' ? 'strong words ready for recall' : `${selectedCategoryDetails.shortLabel.toLowerCase()} words ready`}
             </Text>
           </View>
           <Pressable
-            disabled={filteredQuizWords.length === 0}
+            disabled={!quizPreferences.enabled || activeQuizWords.length === 0}
             onPress={startQuiz}
             style={({ pressed }) => [
               styles.primaryButton,
-              filteredQuizWords.length === 0 && styles.primaryButtonDisabled,
+              (!quizPreferences.enabled || activeQuizWords.length === 0) && styles.primaryButtonDisabled,
               pressed && styles.primaryButtonPressed,
             ]}
           >
-            <Text style={styles.primaryButtonText}>START QUIZ</Text>
+            <Text style={styles.primaryButtonText}>
+              {quizPreferences.enabled ? 'START QUIZ' : 'QUIZZES PAUSED'}
+            </Text>
             <Ionicons name="arrow-forward" size={21} color={COLORS.white} />
           </Pressable>
         </View>
@@ -492,13 +789,19 @@ export function QuizScreen({
     question.answer,
     selected,
     question.mode,
+    question.strictSpelling,
   );
   const selectedIsCorrect = selectedEvaluation.correct;
   const selectedHasSpellingNote = selectedEvaluation.hasSpellingNote;
+  const selectedTimedOut = selected === TIMED_OUT_ANSWER;
   const typedHint =
     question.mode === 'typed-word'
       ? getTypedRecallHint(question.word, hintStep)
       : null;
+  const allowsHints =
+    sessionMode !== 'challenge' &&
+    sessionMode !== 'mastery-test' &&
+    quizPreferences.difficulty !== 'ultra';
   return (
     <ScrollView
       style={styles.screen}
@@ -518,6 +821,30 @@ export function QuizScreen({
           ]}
         />
       </View>
+
+      {timedQuestionActive ? (
+        <View
+          style={[
+            styles.timedQuestionTimer,
+            secondsRemaining <= 5 && styles.timedQuestionTimerUrgent,
+          ]}
+        >
+          <View style={styles.timedQuestionTimerCopy}>
+            <Ionicons name="timer-outline" size={17} color={COLORS.purpleDark} />
+            <Text style={styles.timedQuestionTimerLabel}>FLUENCY TIMER</Text>
+            <Text style={styles.timedQuestionTimerXp}>UP TO +5 XP</Text>
+          </View>
+          <Text style={styles.timedQuestionTimerValue}>{secondsRemaining}s</Text>
+          <View style={styles.timedQuestionTimerTrack}>
+            <View
+              style={[
+                styles.timedQuestionTimerFill,
+                { width: `${(secondsRemaining / activeTimeLimitSeconds) * 100}%` },
+              ]}
+            />
+          </View>
+        </View>
+      ) : null}
 
       <View style={styles.questionCard}>
         <Text style={styles.questionPrompt}>{question.prompt}</Text>
@@ -615,13 +942,14 @@ export function QuizScreen({
           />
           {!selected ? (
             <>
-              {typedHint ? (
+              {allowsHints && typedHint ? (
                 <View style={styles.typedHintCard}>
                   <Ionicons name="bulb" size={16} color={COLORS.orange} />
                   <Text style={styles.typedHintText}>{typedHint}</Text>
                 </View>
               ) : null}
               <View style={styles.typedActionRow}>
+                {allowsHints ? (
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel={hintStep >= 3 ? 'Show answer' : 'Show hint'}
@@ -650,6 +978,7 @@ export function QuizScreen({
                         : 'HINT'}
                   </Text>
                 </Pressable>
+                ) : null}
                 <Pressable
                   disabled={!typedResponse.trim()}
                   onPress={submitTypedAnswer}
@@ -737,14 +1066,18 @@ export function QuizScreen({
           />
           <View style={styles.feedbackCopy}>
             <Text style={styles.feedbackTitle}>
-              {selectedIsCorrect
+              {selectedTimedOut
+                ? 'Time’s up!'
+                : selectedIsCorrect
                 ? selectedHasSpellingNote
                   ? 'Almost perfect!'
                   : 'Nicely done!'
                 : 'Keep learning!'}
             </Text>
             <Text style={styles.feedbackText}>
-              {selectedIsCorrect
+              {selectedTimedOut
+                ? 'No mastery penalty — timed learning is a fun fluency challenge.'
+                : selectedIsCorrect
                 ? selectedHasSpellingNote
                   ? 'You recalled the word — here is its spelling to remember.'
                   : 'You matched it perfectly.'

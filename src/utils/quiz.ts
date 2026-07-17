@@ -1,9 +1,241 @@
-import type { QuizAttempt, QuizQuestion, QuizQuestionDifficulty, QuizQuestionMode, Word } from '../types';
+import type { AnalyticsData, QuizAnswer, QuizAttempt, QuizDifficultyPreference, QuizQuestion, QuizQuestionDifficulty, QuizQuestionMode, QuizRecallPaceSignal, QuizSessionMode, TimeBasedLearningSettings, Word } from '../types';
 import { FALLBACK_DEFINITIONS } from '../constants/data';
-import { getCompleteFlashcardDefinition } from './dictionary';
+import { getCompleteFlashcardDefinition, getWordLearningContexts } from './dictionary';
 
 const MAX_QUIZ_QUESTIONS = 10;
+export const MAX_QUICK_PRACTICE_QUESTIONS = 20;
 const RECENT_ATTEMPTS_TO_AVOID = 3;
+export const TIMED_LEARNING_SECONDS = 15;
+export const FLUENT_RECALL_SECONDS = 6;
+export const DEFAULT_TIME_BASED_LEARNING_SETTINGS: TimeBasedLearningSettings = {
+  multipleChoiceSeconds: 15,
+  fillInSeconds: 25,
+  typedRecallSeconds: 30,
+};
+
+export type QuizResponseSignalSummary = {
+  fluent: number;
+  successful: number;
+  reinforcement: number;
+  incorrect: number;
+  total: number;
+};
+
+export type QuizRetrievalProfile = {
+  recognitionPercent: number;
+  recallPercent: number;
+  recognitionEvidence: number;
+  recallEvidence: number;
+  totalAnswers: number;
+  directRecallCorrect: number;
+  delayedDirectRecallCorrect: number;
+};
+
+export type QuizBuildOptions = {
+  difficulty?: QuizDifficultyPreference;
+  sessionMode?: QuizSessionMode;
+  questionLimit?: number;
+};
+
+export function isDirectRecallQuestion(
+  mode: QuizQuestionMode | undefined,
+  difficulty: QuizQuestionDifficulty | undefined,
+) {
+  return mode === 'typed-word' || (!mode && difficulty === 'typed-recall');
+}
+
+export function getQuizRetrievalProfile(
+  analytics: AnalyticsData,
+  settings: TimeBasedLearningSettings = DEFAULT_TIME_BASED_LEARNING_SETTINGS,
+): QuizRetrievalProfile {
+  const answers = analytics.quizHistory
+    .flatMap((attempt) =>
+      attempt.answers.map((answer) => ({
+        answer,
+        answeredAt: answer.answeredAt ?? attempt.completedAt,
+      })),
+    )
+    .sort((first, second) => first.answeredAt.localeCompare(second.answeredAt));
+  const lastDirectRecallAtByWord = new Map<string, Date>();
+  let recognitionEvidence = 0;
+  let recallEvidence = 0;
+  let directRecallCorrect = 0;
+  let delayedDirectRecallCorrect = 0;
+
+  answers.forEach(({ answer, answeredAt }) => {
+    const recallWeight = getRecallWeight(answer.questionMode, answer.difficulty);
+    const signal = answer.recallPace ??
+      (typeof answer.responseTimeSeconds === 'number'
+        ? getQuizRecallPaceSignal({
+            correct: answer.correct,
+            responseTimeSeconds: answer.responseTimeSeconds,
+            difficulty: answer.difficulty,
+            settings,
+          })
+        : answer.correct
+          ? 'successful'
+          : 'incorrect');
+    const evidenceMultiplier = answer.correct
+      ? signal === 'fluent'
+        ? 1
+        : signal === 'successful'
+          ? 0.9
+          : 0.65
+      : 0.2;
+    recognitionEvidence += (1 - recallWeight) * evidenceMultiplier;
+    recallEvidence += recallWeight * evidenceMultiplier;
+
+    if (!answer.correct || !isDirectRecallQuestion(answer.questionMode, answer.difficulty)) {
+      return;
+    }
+
+    directRecallCorrect += 1;
+    const answeredAtDate = new Date(answeredAt);
+    const previousDirectRecallAt = lastDirectRecallAtByWord.get(answer.wordId);
+    if (
+      previousDirectRecallAt &&
+      !Number.isNaN(answeredAtDate.getTime()) &&
+      answeredAtDate.getTime() - previousDirectRecallAt.getTime() >= 86_400_000
+    ) {
+      delayedDirectRecallCorrect += 1;
+    }
+    if (!Number.isNaN(answeredAtDate.getTime())) {
+      lastDirectRecallAtByWord.set(answer.wordId, answeredAtDate);
+    }
+  });
+
+  const totalEvidence = recognitionEvidence + recallEvidence;
+  return {
+    recognitionPercent: totalEvidence
+      ? Math.round((recognitionEvidence / totalEvidence) * 100)
+      : 0,
+    recallPercent: totalEvidence
+      ? Math.round((recallEvidence / totalEvidence) * 100)
+      : 0,
+    recognitionEvidence,
+    recallEvidence,
+    totalAnswers: answers.length,
+    directRecallCorrect,
+    delayedDirectRecallCorrect,
+  };
+}
+
+function getRecallWeight(
+  mode: QuizQuestionMode | undefined,
+  difficulty: QuizQuestionDifficulty | undefined,
+) {
+  const weights: Partial<Record<QuizQuestionMode, number>> = {
+    'word-to-definition': 0.05,
+    'true-false': 0.1,
+    'sentence-usage': 0.25,
+    'closest-synonym': 0.35,
+    'definition-to-word': 0.55,
+    'sentence-completion': 0.7,
+    'typed-word': 1,
+  };
+  if (mode) return weights[mode] ?? 0.25;
+  if (difficulty === 'typed-recall') return 1;
+  if (difficulty === 'fill-in-options') return 0.6;
+  if (difficulty === 'multiple-choice') return 0.25;
+  return 0.1;
+}
+
+export function normalizeTimeBasedLearningSettings(
+  settings: Partial<TimeBasedLearningSettings> | undefined,
+): TimeBasedLearningSettings {
+  return {
+    multipleChoiceSeconds: clampTimeSetting(
+      settings?.multipleChoiceSeconds,
+      DEFAULT_TIME_BASED_LEARNING_SETTINGS.multipleChoiceSeconds,
+      8,
+      30,
+    ),
+    fillInSeconds: clampTimeSetting(
+      settings?.fillInSeconds,
+      DEFAULT_TIME_BASED_LEARNING_SETTINGS.fillInSeconds,
+      12,
+      45,
+    ),
+    typedRecallSeconds: clampTimeSetting(
+      settings?.typedRecallSeconds,
+      DEFAULT_TIME_BASED_LEARNING_SETTINGS.typedRecallSeconds,
+      15,
+      60,
+    ),
+  };
+}
+
+export function getTimeBasedLearningLimitSeconds(
+  difficulty: QuizQuestionDifficulty | undefined,
+  settings: TimeBasedLearningSettings = DEFAULT_TIME_BASED_LEARNING_SETTINGS,
+) {
+  const normalizedSettings = normalizeTimeBasedLearningSettings(settings);
+  if (difficulty === 'typed-recall') return normalizedSettings.typedRecallSeconds;
+  if (difficulty === 'fill-in-options') return normalizedSettings.fillInSeconds;
+  return normalizedSettings.multipleChoiceSeconds;
+}
+
+export function getQuizRecallPaceSignal({
+  correct,
+  responseTimeSeconds,
+  difficulty,
+  settings,
+}: Pick<QuizAnswer, 'correct' | 'responseTimeSeconds' | 'difficulty'> & {
+  settings?: TimeBasedLearningSettings;
+}): QuizRecallPaceSignal {
+  if (!correct) return 'incorrect';
+  const responseTime = responseTimeSeconds ?? Number.POSITIVE_INFINITY;
+  if (responseTime < FLUENT_RECALL_SECONDS) return 'fluent';
+  return responseTime <= getTimeBasedLearningLimitSeconds(difficulty, settings)
+    ? 'successful'
+    : 'reinforcement';
+}
+
+export function getQuizResponseSignalSummary(
+  analytics: AnalyticsData,
+  settings: TimeBasedLearningSettings = DEFAULT_TIME_BASED_LEARNING_SETTINGS,
+): QuizResponseSignalSummary {
+  return analytics.quizHistory.reduce<QuizResponseSignalSummary>(
+    (summary, attempt) => {
+      attempt.answers.forEach((answer) => {
+        if (typeof answer.responseTimeSeconds !== 'number') return;
+        const signal = answer.recallPace ?? getQuizRecallPaceSignal({
+          correct: answer.correct,
+          responseTimeSeconds: answer.responseTimeSeconds,
+          difficulty: answer.difficulty,
+          settings,
+        });
+        summary[signal] += 1;
+        summary.total += 1;
+      });
+      return summary;
+    },
+    { fluent: 0, successful: 0, reinforcement: 0, incorrect: 0, total: 0 },
+  );
+}
+
+function clampTimeSetting(
+  value: number | undefined,
+  fallback: number,
+  minimum: number,
+  maximum: number,
+) {
+  const numericValue = Number(value);
+  return Number.isFinite(numericValue)
+    ? Math.max(minimum, Math.min(maximum, Math.round(numericValue)))
+    : fallback;
+}
+
+export function getTimedLearningBonusXp(
+  secondsRemaining: number,
+  timeLimitSeconds = TIMED_LEARNING_SECONDS,
+) {
+  if (secondsRemaining <= 0) return 0;
+  return Math.max(
+    1,
+    Math.min(5, Math.ceil((secondsRemaining / Math.max(1, timeLimitSeconds)) * 5)),
+  );
+}
 
 export function shuffle<T>(items: T[]) {
   const copy = [...items];
@@ -19,12 +251,40 @@ export function buildQuiz(
   recentAttempts: QuizAttempt[] = [],
   masteryByWordId: Record<string, number> = {},
   priorityWordIds: string[] = [],
+  options: QuizBuildOptions = {},
 ): QuizQuestion[] {
-  const quizWords = pickQuizWords(words, recentAttempts, priorityWordIds);
-  const modes = getBalancedQuestionModes(quizWords, masteryByWordId);
+  const questionLimit = clampQuestionLimit(options.questionLimit);
+  const quizWords = pickQuizWords(
+    words,
+    recentAttempts,
+    priorityWordIds,
+    questionLimit,
+  );
+  const planWords = options.questionLimit
+    ? expandQuizWords(quizWords, questionLimit)
+    : quizWords;
+  const modes = getQuestionModesForSession(
+    planWords,
+    quizWords,
+    masteryByWordId,
+    options,
+  );
 
-  return quizWords.map((word, index) => {
-    return buildQuestionForMode(word, quizWords, index, modes[index]);
+  return planWords.map((word, index) => {
+    const mode = modes[index];
+    const question = buildQuestionForMode(
+      word,
+      quizWords,
+      index,
+      mode,
+      getContextOffset(word, recentAttempts, index),
+    );
+    return {
+      ...question,
+      strictSpelling:
+        (options.difficulty === 'ultra' || options.sessionMode === 'mastery-test') &&
+        mode === 'typed-word',
+    };
   });
 }
 
@@ -38,7 +298,14 @@ export function buildCategoryPracticeQuiz(
   recentAttempts: QuizAttempt[] = [],
   masteryByWordId: Record<string, number> = {},
   priorityWordIds: string[] = [],
+  options: QuizBuildOptions = {},
 ): QuizQuestion[] {
+  if (
+    (options.difficulty && options.difficulty !== 'automatic') ||
+    (options.sessionMode && options.sessionMode !== 'standard')
+  ) {
+    return buildQuiz(words, recentAttempts, masteryByWordId, priorityWordIds, options);
+  }
   if (words.length >= 4) {
     return buildQuiz(words, recentAttempts, masteryByWordId, priorityWordIds);
   }
@@ -53,7 +320,7 @@ export function buildCategoryPracticeQuiz(
   const questionKeys = new Set<string>();
 
   return plan.flatMap(({ word, mode }, index) => {
-    const question = buildQuestionForMode(word, quizWords, index, mode);
+    const question = buildQuestionForMode(word, quizWords, index, mode, index);
     const key = `${question.prompt}\u0000${question.displayText}\u0000${question.answer}`;
     if (questionKeys.has(key)) return [];
     questionKeys.add(key);
@@ -67,6 +334,120 @@ export function getCategoryPracticeQuizTarget(wordCount: number) {
   if (wordCount === 2) return 4;
   if (wordCount === 3) return 6;
   return Math.min(wordCount, MAX_QUIZ_QUESTIONS);
+}
+
+function clampQuestionLimit(limit: number | undefined) {
+  if (!limit) return MAX_QUIZ_QUESTIONS;
+  return Math.max(1, Math.min(MAX_QUICK_PRACTICE_QUESTIONS, Math.round(limit)));
+}
+
+function expandQuizWords(words: Word[], questionLimit: number) {
+  if (words.length === 0) return [];
+  const expanded = [...words];
+  while (expanded.length < questionLimit) {
+    expanded.push(...shuffle(words));
+  }
+  return expanded.slice(0, questionLimit);
+}
+
+function getQuestionModesForSession(
+  planWords: Word[],
+  quizWords: Word[],
+  masteryByWordId: Record<string, number>,
+  options: QuizBuildOptions,
+) {
+  const difficulty = options.sessionMode === 'mastery-test'
+    ? 'ultra'
+    : options.sessionMode === 'challenge'
+      ? options.difficulty === 'ultra' ? 'ultra' : 'hard'
+      : options.difficulty ?? 'automatic';
+
+  if (difficulty === 'automatic' && planWords.length === quizWords.length) {
+    return getBalancedQuestionModes(planWords, masteryByWordId);
+  }
+
+  const counts = new Map<QuizQuestionMode, number>();
+  const modes: QuizQuestionMode[] = [];
+  planWords.forEach((word, index) => {
+    const candidates = getDifficultyModeCandidates(
+      word,
+      quizWords,
+      masteryByWordId[word.id] ?? word.reviews * 12,
+      difficulty,
+    );
+    const lastMode = modes.at(-1);
+    const contextualCandidates = candidates.filter((mode) => mode !== lastMode);
+    const pool = contextualCandidates.length ? contextualCandidates : candidates;
+    const typedTarget = difficulty === 'hard'
+      ? Math.ceil((index + 1) * 0.55)
+      : 0;
+    const typedCount = counts.get('typed-word') ?? 0;
+    const mode =
+      difficulty === 'ultra'
+        ? 'typed-word'
+        : difficulty === 'hard' && pool.includes('typed-word') && typedCount < typedTarget
+          ? 'typed-word'
+          : pickLeastUsedMode(pool, counts, lastMode);
+    modes.push(mode);
+    counts.set(mode, (counts.get(mode) ?? 0) + 1);
+  });
+  return modes;
+}
+
+function getDifficultyModeCandidates(
+  word: Word,
+  words: Word[],
+  masteryScore: number,
+  difficulty: QuizDifficultyPreference,
+): QuizQuestionMode[] {
+  const adaptive = getModeCandidates(word, masteryScore, words);
+  if (difficulty === 'automatic' || difficulty === 'standard') return adaptive;
+  if (difficulty === 'ultra') return ['typed-word' as const];
+  if (difficulty === 'easy') {
+    const easy = adaptive.filter(
+      (mode) => mode === 'word-to-definition' || mode === 'true-false' || mode === 'definition-to-word',
+    );
+    return easy.length ? easy : ['word-to-definition', 'true-false'];
+  }
+
+  const hard = adaptive.filter(
+    (mode) =>
+      mode === 'typed-word' ||
+      mode === 'sentence-usage' ||
+      mode === 'sentence-completion' ||
+      mode === 'closest-synonym' ||
+      mode === 'definition-to-word',
+  );
+  return hard.length ? ['typed-word', ...hard] : ['typed-word'];
+}
+
+export function getMistakeReviewWordIds(
+  analytics: AnalyticsData,
+  settings: TimeBasedLearningSettings = DEFAULT_TIME_BASED_LEARNING_SETTINGS,
+) {
+  const priority = new Map<string, number>();
+  analytics.quizHistory.forEach((attempt) => {
+    attempt.answers.forEach((answer) => {
+      const signal = answer.recallPace ??
+        (typeof answer.responseTimeSeconds === 'number'
+          ? getQuizRecallPaceSignal({
+              correct: answer.correct,
+              responseTimeSeconds: answer.responseTimeSeconds,
+              difficulty: answer.difficulty,
+              settings,
+            })
+          : answer.correct ? 'successful' : 'incorrect');
+      const weight = !answer.correct || signal === 'incorrect'
+        ? 3
+        : signal === 'reinforcement' || answer.reviewRating === 'hard'
+          ? 2
+          : 0;
+      if (weight) priority.set(answer.wordId, (priority.get(answer.wordId) ?? 0) + weight);
+    });
+  });
+  return [...priority.entries()]
+    .sort((first, second) => second[1] - first[1])
+    .map(([wordId]) => wordId);
 }
 
 function getCategoryPracticeQuestionPlan(
@@ -130,6 +511,9 @@ function getSupportedCategoryPracticeModes(words: Word[]) {
   if (words.some((word) => canBuildSentenceUsageQuestion(word, words))) {
     contextualModes.push('sentence-usage');
   }
+  if (words.some((word) => canBuildSentenceCompletionQuestion(word, words))) {
+    contextualModes.push('sentence-completion');
+  }
   if (words.some((word) => canBuildClosestSynonymQuestion(word, words))) {
     contextualModes.push('closest-synonym');
   }
@@ -153,7 +537,11 @@ function getCategoryPracticeModeCandidates(
 }
 
 function isContextualMode(mode: QuizQuestionMode) {
-  return mode === 'sentence-usage' || mode === 'closest-synonym';
+  return (
+    mode === 'sentence-usage' ||
+    mode === 'sentence-completion' ||
+    mode === 'closest-synonym'
+  );
 }
 
 function pickLeastUsedMode(
@@ -174,6 +562,7 @@ function buildQuestionForMode(
   words: Word[],
   index: number,
   mode: QuizQuestionMode,
+  contextOffset = index,
 ) {
   if (mode === 'definition-to-word') {
     return buildDefinitionToWordQuestion(word, words, index);
@@ -188,7 +577,11 @@ function buildQuestionForMode(
   }
 
   if (mode === 'sentence-usage') {
-    return buildSentenceUsageQuestion(word, words, index);
+    return buildSentenceUsageQuestion(word, words, index, contextOffset);
+  }
+
+  if (mode === 'sentence-completion') {
+    return buildSentenceCompletionQuestion(word, words, index, contextOffset);
   }
 
   if (mode === 'closest-synonym') {
@@ -203,6 +596,9 @@ function getBalancedQuestionModes(
   masteryByWordId: Record<string, number>,
 ) {
   const maxTypedRecall = Math.max(1, Math.round(words.length * 0.35));
+  const includesEarlyLearningWord = words.some(
+    (word) => (masteryByWordId[word.id] ?? word.reviews * 12) < 70,
+  );
   const counts = new Map<QuizQuestionMode, number>();
   const modes: QuizQuestionMode[] = [];
 
@@ -210,23 +606,68 @@ function getBalancedQuestionModes(
     const masteryScore = masteryByWordId[word.id] ?? word.reviews * 12;
     const candidates = getModeCandidates(word, masteryScore, words);
     const lastMode = modes.at(-1);
-    const mode =
-      candidates.find(
-        (candidate) =>
-          (candidate !== 'typed-word' ||
-            (counts.get('typed-word') ?? 0) < maxTypedRecall) &&
-          candidate !== lastMode,
-      ) ??
-      candidates.find(
-        (candidate) =>
-          candidate !== 'typed-word' ||
-          (counts.get('typed-word') ?? 0) < maxTypedRecall,
-      ) ??
-      candidates[0];
+    const available = candidates.filter(
+      (candidate) =>
+        candidate !== 'typed-word' ||
+        (counts.get('typed-word') ?? 0) < maxTypedRecall,
+    );
+    const nonRepeating = available.filter((candidate) => candidate !== lastMode);
+    const pool = nonRepeating.length ? nonRepeating : available;
+    const mode = pool.reduce(
+      (leastUsed, candidate) =>
+        (counts.get(candidate) ?? 0) < (counts.get(leastUsed) ?? 0)
+          ? candidate
+          : leastUsed,
+      pool[0] ?? candidates[0],
+    );
 
     modes.push(mode);
     counts.set(mode, (counts.get(mode) ?? 0) + 1);
   });
+
+  // Keep one quick recognition check in a normal mixed quiz. Contextual modes
+  // are valuable, but they should complement rather than crowd out the core
+  // recall formats learners expect to see.
+  if (
+    includesEarlyLearningWord &&
+    words.length >= 3 &&
+    !modes.includes('true-false')
+  ) {
+    const replacementIndex = modes.findIndex(
+      (mode) => mode !== 'typed-word',
+    );
+    if (replacementIndex >= 0) {
+      modes[replacementIndex] = 'true-false';
+    }
+  }
+  if (
+    includesEarlyLearningWord &&
+    words.length >= 2 &&
+    !modes.includes('definition-to-word')
+  ) {
+    const replacementIndex = modes.findIndex(
+      (mode) => mode !== 'typed-word' && mode !== 'true-false',
+    );
+    if (replacementIndex >= 0) {
+      modes[replacementIndex] = 'definition-to-word';
+    }
+  }
+  if (
+    words.length >= 4 &&
+    words.some((word) => canBuildClosestSynonymQuestion(word, words)) &&
+    !modes.includes('closest-synonym')
+  ) {
+    const replacementIndex = modes.findIndex(
+      (mode, index) =>
+        canBuildClosestSynonymQuestion(words[index], words) &&
+        mode !== 'typed-word' &&
+        mode !== 'sentence-usage' &&
+        mode !== 'sentence-completion',
+    );
+    if (replacementIndex >= 0) {
+      modes[replacementIndex] = 'closest-synonym';
+    }
+  }
 
   return modes;
 }
@@ -237,37 +678,60 @@ function getModeCandidates(
   words: Word[] = [],
 ): QuizQuestionMode[] {
   const canUseSentence = canBuildSentenceUsageQuestion(word, words);
+  const canUseSentenceCompletion = canBuildSentenceCompletionQuestion(word, words);
   const canUseSynonym = canBuildClosestSynonymQuestion(word, words);
+  const directRecallCorrect = word.mastery?.directRecallCorrect ?? 0;
+  const delayedDirectRecallCorrect = word.mastery?.delayedDirectRecallCorrect ?? 0;
   const contextualModes: QuizQuestionMode[] = [
     ...(canUseSentence ? ['sentence-usage' as const] : []),
+    ...(canUseSentenceCompletion ? ['sentence-completion' as const] : []),
     ...(canUseSynonym ? ['closest-synonym' as const] : []),
   ];
 
   if (word.mastery?.lastReviewResult === 'wrong') {
     return ['word-to-definition', 'true-false', 'definition-to-word', ...contextualModes];
   }
-  if (masteryScore >= 85) {
-    return ['typed-word', ...contextualModes, 'definition-to-word', 'true-false'];
+  if (masteryScore < 25) {
+    return ['word-to-definition', 'true-false', 'definition-to-word'];
   }
-  if (masteryScore >= 70) {
-    return [...contextualModes, 'definition-to-word', 'typed-word', 'true-false'];
+  if (masteryScore < 40) {
+    return ['definition-to-word', 'true-false', 'word-to-definition', ...contextualModes];
   }
-  if (masteryScore >= 25) {
+  if (masteryScore < 70) {
     return [
       ...(canUseSentence ? ['sentence-usage' as const] : []),
-      'true-false',
-      'word-to-definition',
       'definition-to-word',
+      ...(canUseSentenceCompletion ? ['sentence-completion' as const] : []),
+      'true-false',
       ...(canUseSynonym ? ['closest-synonym' as const] : []),
     ];
   }
-  return ['word-to-definition', 'true-false', 'definition-to-word'];
+  if (directRecallCorrect < 2) {
+    return [
+      'typed-word',
+      ...(canUseSentenceCompletion ? ['sentence-completion' as const] : []),
+      'definition-to-word',
+      ...contextualModes,
+      'true-false',
+    ];
+  }
+  if (delayedDirectRecallCorrect < 1) {
+    return [
+      'typed-word',
+      ...(canUseSynonym ? ['closest-synonym' as const] : []),
+      ...(canUseSentenceCompletion ? ['sentence-completion' as const] : []),
+      ...contextualModes,
+      'definition-to-word',
+    ];
+  }
+  return ['typed-word', ...contextualModes, 'definition-to-word', 'true-false'];
 }
 
 function pickQuizWords(
   words: Word[],
   recentAttempts: QuizAttempt[],
   priorityWordIds: string[],
+  questionLimit = MAX_QUIZ_QUESTIONS,
 ) {
   const wordsById = new Map(words.map((word) => [word.id, word]));
   const scheduledPriorityWords = Array.from(new Set(priorityWordIds))
@@ -289,7 +753,7 @@ function pickQuizWords(
     lessRecentWords.length >=
     Math.min(
       remainingWords.length,
-      MAX_QUIZ_QUESTIONS - scheduledPriorityWords.length,
+      questionLimit - scheduledPriorityWords.length,
     )
       ? lessRecentWords
       : remainingWords;
@@ -299,7 +763,7 @@ function pickQuizWords(
     ...shuffle(fillWords).filter(
       (word) => !priorityWordIdsSet.has(word.id),
     ),
-  ].slice(0, MAX_QUIZ_QUESTIONS);
+  ].slice(0, questionLimit);
 }
 
 /**
@@ -328,6 +792,7 @@ export function getQuestionDifficulty(
     return 'multiple-choice';
   }
   if (mode === 'definition-to-word') return 'fill-in-options';
+  if (mode === 'sentence-completion') return 'fill-in-options';
   return 'typed-recall';
 }
 
@@ -335,6 +800,7 @@ export function evaluateQuizAnswer(
   answer: string,
   response: string | null,
   mode: QuizQuestionMode,
+  strictSpelling = false,
 ) {
   if (response === null) {
     return { correct: false, hasSpellingNote: false };
@@ -349,7 +815,7 @@ export function evaluateQuizAnswer(
     return { correct: true, hasSpellingNote: false };
   }
 
-  const hasSpellingNote = isCloseTypedAnswer(
+  const hasSpellingNote = !strictSpelling && isCloseTypedAnswer(
     normalizedAnswer,
     normalizedResponse,
   );
@@ -464,8 +930,9 @@ function buildSentenceUsageQuestion(
   word: Word,
   words: Word[],
   index: number,
+  contextOffset: number,
 ): QuizQuestion {
-  const answer = getCorrectExample(word);
+  const answer = getCorrectExample(word, contextOffset);
   const distractors = getSentenceDistractors(word, words, answer, index);
 
   return {
@@ -478,6 +945,29 @@ function buildSentenceUsageQuestion(
     difficulty: getQuestionDifficulty('sentence-usage'),
     helperText: 'Look for the context that best matches the word’s meaning.',
     feedback: `“${word.term}” means ${getMeaning(word).toLowerCase()}`,
+  };
+}
+
+function buildSentenceCompletionQuestion(
+  word: Word,
+  words: Word[],
+  index: number,
+  contextOffset: number,
+): QuizQuestion {
+  const context = getCorrectExample(word, contextOffset);
+  const blankedContext = hideWordInExample(context, word.term) ?? context;
+  const distractors = getWordDistractors(word, words, index);
+
+  return {
+    word,
+    prompt: 'COMPLETE THE CONTEXT',
+    displayText: blankedContext,
+    answer: word.term,
+    options: shuffle([word.term, ...distractors]),
+    mode: 'sentence-completion',
+    difficulty: getQuestionDifficulty('sentence-completion'),
+    helperText: 'Choose the saved word that makes the context make sense.',
+    feedback: `“${word.term}” fits because it means ${getMeaning(word).toLowerCase()}`,
   };
 }
 
@@ -542,9 +1032,28 @@ function canBuildSentenceUsageQuestion(word: Word, words: Word[]) {
   return Boolean(answer) && getSentenceDistractors(word, words, answer, 0).length >= 2;
 }
 
-function getCorrectExample(word: Word) {
-  const examples = [word.example, ...(word.wordnik_examples ?? [])];
-  return examples.find((example) => includesWholeTerm(example, word.term))?.trim() ?? '';
+function canBuildSentenceCompletionQuestion(word: Word, words: Word[]) {
+  return Boolean(getCorrectExample(word)) && getWordDistractors(word, words, 0).length >= 2;
+}
+
+function getCorrectExample(word: Word, contextOffset = 0) {
+  const examples = getWordLearningContexts(word)
+    .map((context) => context.text)
+    .filter((example) => includesWholeTerm(example, word.term));
+  return examples.length ? examples[contextOffset % examples.length] : '';
+}
+
+function getContextOffset(
+  word: Word,
+  recentAttempts: QuizAttempt[],
+  index: number,
+) {
+  const priorAnswers = recentAttempts.reduce(
+    (total, attempt) =>
+      total + attempt.answers.filter((answer) => answer.wordId === word.id).length,
+    0,
+  );
+  return priorAnswers + index;
 }
 
 function getSentenceDistractors(

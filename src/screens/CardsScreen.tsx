@@ -4,7 +4,7 @@ import { AppState, FlatList, Pressable, ScrollView, Text, View } from 'react-nat
 import { COLORS } from '../constants/theme';
 import type { AnalyticsData, LegalPage, QuizAnswer, QuizProgress, QuizQuestion, ReminderSettings, SortMode, Word } from '../types';
 import { styles } from '../styles';
-import { buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, formatWordAddedDate, formatWordFlaggedDate, getCompleteFlashcardDefinition, getDayKey, getNewStudyWords, getRecentDays, getStreakMessage, getStreakWeek, getWordMastery, getWordMasteryCategoryForWord, NEW_STUDY_GROUP, shuffle, sortWordsAlphabetically, WORD_MASTERY_CATEGORIES, type WordMasteryCategoryId } from '../utils';
+import { buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, formatWordAddedDate, formatWordFlaggedDate, getCompleteFlashcardDefinition, getDayKey, getNewStudyWords, getRecentDays, getStreakMessage, getStreakWeek, getWordLearningContexts, getWordMastery, getWordMasteryCategoryForWord, NEW_STUDY_GROUP, shuffle, sortWordsAlphabetically, WORD_MASTERY_CATEGORIES, type WordMasteryCategoryId } from '../utils';
 import { DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, SpeakButton, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 
 type CardsStudyGroupId = WordMasteryCategoryId | 'new' | 'flagged';
@@ -122,6 +122,7 @@ export function CardsScreen({
   const cardDefinition = current
     ? getCompleteFlashcardDefinition(current.definition, current.simpleDefinition)
     : '';
+  const learningContexts = current ? getWordLearningContexts(current) : [];
   const showsSimplifiedDefinition = Boolean(
     current && cardDefinition !== current.definition.trim(),
   );
@@ -565,7 +566,15 @@ export function CardsScreen({
                   size={19}
                   color={COLORS.purple}
                 />
-                <Text style={styles.exampleText}>“{current.example}”</Text>
+                <View style={styles.contextExampleCopy}>
+                  <Text style={styles.contextExampleTitle}>CONTEXT CLUES</Text>
+                  {learningContexts.map((context) => (
+                    <View key={context.text} style={styles.contextExampleRow}>
+                      <Text style={styles.contextExampleLabel}>{context.label}</Text>
+                      <Text style={styles.exampleText}>“{context.text}”</Text>
+                    </View>
+                  ))}
+                </View>
               </View>
             </>
           ) : (

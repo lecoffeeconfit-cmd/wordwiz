@@ -59,9 +59,11 @@ import type {
   QuizAnswer,
   QuizAttempt,
   QuizProgress,
+  QuizPreferences,
   ReminderSettings,
   SortMode,
   Tab,
+  TimeBasedLearningSettings,
   Word,
   WordDetails,
 } from '../types';
@@ -73,6 +75,7 @@ import {
   buildQuizCompletion,
   buildWordFromInput,
   calculateStreakStats,
+  DEFAULT_TIME_BASED_LEARNING_SETTINGS,
   getDayKey,
   getDueReviewWords,
   getNextMasteryLevel,
@@ -90,6 +93,10 @@ const LEGAL_PAGE_URLS: Record<LegalPage, string> = {
 const CLOUD_SYNC_LOGS_ENABLED =
   (typeof __DEV__ !== 'undefined' && __DEV__) ||
   process.env.EXPO_PUBLIC_WORDWIZ_EGRESS_LOGS === 'true';
+const DEFAULT_QUIZ_PREFERENCES: QuizPreferences = {
+  enabled: true,
+  difficulty: 'automatic',
+};
 
 export default function AppContent() {
   const insets = useSafeAreaInsets();
@@ -110,6 +117,11 @@ export default function AppContent() {
   const [reminderSettings, setReminderSettings] =
     useState<ReminderSettings>(DEFAULT_REMINDER);
   const [dailyQuizGoal, setDailyQuizGoal] = useState(1);
+  const [timedLearningEnabled, setTimedLearningEnabled] = useState(false);
+  const [timeBasedLearningSettings, setTimeBasedLearningSettings] =
+    useState<TimeBasedLearningSettings>(DEFAULT_TIME_BASED_LEARNING_SETTINGS);
+  const [quizPreferences, setQuizPreferences] =
+    useState<QuizPreferences>(DEFAULT_QUIZ_PREFERENCES);
   const [isReady, setIsReady] = useState(false);
   const [isCloudLoading, setIsCloudLoading] = useState(false);
   const [appNotice, setAppNotice] = useState<string | null>(null);
@@ -168,6 +180,9 @@ export default function AppContent() {
           setAnalytics(EMPTY_ANALYTICS);
           setReminderSettings(DEFAULT_REMINDER);
           setDailyQuizGoal(1);
+          setTimedLearningEnabled(false);
+          setTimeBasedLearningSettings(DEFAULT_TIME_BASED_LEARNING_SETTINGS);
+          setQuizPreferences(DEFAULT_QUIZ_PREFERENCES);
           return;
         }
 
@@ -194,6 +209,9 @@ export default function AppContent() {
           setAnalytics(EMPTY_ANALYTICS);
           setReminderSettings(DEFAULT_REMINDER);
           setDailyQuizGoal(1);
+          setTimedLearningEnabled(false);
+          setTimeBasedLearningSettings(DEFAULT_TIME_BASED_LEARNING_SETTINGS);
+          setQuizPreferences(DEFAULT_QUIZ_PREFERENCES);
         }
       } catch (error) {
         reportError(error, { area: 'app_boot' });
@@ -201,6 +219,9 @@ export default function AppContent() {
         setAnalytics(EMPTY_ANALYTICS);
         setReminderSettings(DEFAULT_REMINDER);
         setDailyQuizGoal(1);
+        setTimedLearningEnabled(false);
+        setTimeBasedLearningSettings(DEFAULT_TIME_BASED_LEARNING_SETTINGS);
+        setQuizPreferences(DEFAULT_QUIZ_PREFERENCES);
         setAppNotice('WordWiz had trouble loading saved data, so it opened with starter words.');
       } finally {
         await clearLegacyLearningData();
@@ -286,6 +307,9 @@ export default function AppContent() {
       setAnalytics(EMPTY_ANALYTICS);
       setReminderSettings(DEFAULT_REMINDER);
       setDailyQuizGoal(1);
+      setTimedLearningEnabled(false);
+      setTimeBasedLearningSettings(DEFAULT_TIME_BASED_LEARNING_SETTINGS);
+      setQuizPreferences(DEFAULT_QUIZ_PREFERENCES);
       return;
     }
 
@@ -296,13 +320,16 @@ export default function AppContent() {
 
   async function loadUserCache(userId: string) {
     try {
-      const [savedWords, savedQuiz, savedAnalytics, savedReminder, savedDailyQuizGoal] =
+      const [savedWords, savedQuiz, savedAnalytics, savedReminder, savedDailyQuizGoal, savedTimedLearning, savedTimeBasedLearningSettings, savedQuizPreferences] =
         await Promise.all([
           AsyncStorage.getItem(getUserCacheKey(userId, 'words')),
           AsyncStorage.getItem(getUserCacheKey(userId, 'quiz-progress')),
           AsyncStorage.getItem(getUserCacheKey(userId, 'analytics')),
           AsyncStorage.getItem(getUserCacheKey(userId, 'reminder-settings')),
           AsyncStorage.getItem(getUserCacheKey(userId, 'daily-quiz-goal')),
+          AsyncStorage.getItem(getUserCacheKey(userId, 'timed-learning-enabled')),
+          AsyncStorage.getItem(getUserCacheKey(userId, 'time-based-learning-settings')),
+          AsyncStorage.getItem(getUserCacheKey(userId, 'quiz-preferences')),
         ]);
 
       setWords(savedWords ? JSON.parse(savedWords) : STARTER_WORDS);
@@ -314,6 +341,20 @@ export default function AppContent() {
           : DEFAULT_REMINDER,
       );
       setDailyQuizGoal(clampDailyQuizGoal(Number(savedDailyQuizGoal) || 1));
+      setTimedLearningEnabled(savedTimedLearning === 'true');
+      setTimeBasedLearningSettings(
+        savedTimeBasedLearningSettings
+          ? {
+              ...DEFAULT_TIME_BASED_LEARNING_SETTINGS,
+              ...JSON.parse(savedTimeBasedLearningSettings),
+            }
+          : DEFAULT_TIME_BASED_LEARNING_SETTINGS,
+      );
+      setQuizPreferences(
+        savedQuizPreferences
+          ? { ...DEFAULT_QUIZ_PREFERENCES, ...JSON.parse(savedQuizPreferences) }
+          : DEFAULT_QUIZ_PREFERENCES,
+      );
     } catch (error) {
       reportError(error, { area: 'load_user_cache' });
       setWords(STARTER_WORDS);
@@ -321,6 +362,9 @@ export default function AppContent() {
       setAnalytics(EMPTY_ANALYTICS);
       setReminderSettings(DEFAULT_REMINDER);
       setDailyQuizGoal(1);
+      setTimedLearningEnabled(false);
+      setTimeBasedLearningSettings(DEFAULT_TIME_BASED_LEARNING_SETTINGS);
+      setQuizPreferences(DEFAULT_QUIZ_PREFERENCES);
       setAppNotice('Saved data on this device could not be read. You can keep learning with starter words.');
     }
   }
@@ -580,6 +624,33 @@ export default function AppContent() {
       );
     }
   }, [currentUser, dailyQuizGoal, isReady]);
+
+  useEffect(() => {
+    if (isReady && currentUser) {
+      AsyncStorage.setItem(
+        getUserCacheKey(currentUser.id, 'timed-learning-enabled'),
+        String(timedLearningEnabled),
+      );
+    }
+  }, [currentUser, isReady, timedLearningEnabled]);
+
+  useEffect(() => {
+    if (isReady && currentUser) {
+      AsyncStorage.setItem(
+        getUserCacheKey(currentUser.id, 'time-based-learning-settings'),
+        JSON.stringify(timeBasedLearningSettings),
+      );
+    }
+  }, [currentUser, isReady, timeBasedLearningSettings]);
+
+  useEffect(() => {
+    if (isReady && currentUser) {
+      AsyncStorage.setItem(
+        getUserCacheKey(currentUser.id, 'quiz-preferences'),
+        JSON.stringify(quizPreferences),
+      );
+    }
+  }, [currentUser, isReady, quizPreferences]);
 
   const sortedWords = useMemo(() => {
     return [...words].sort((first, second) => {
@@ -1212,6 +1283,9 @@ export default function AppContent() {
           progress={todayQuizProgress}
           priorityWordIds={quizPriorityWordIds}
           initialStudyGroup={initialQuizStudyGroup}
+          timedLearningEnabled={timedLearningEnabled}
+          timeBasedLearningSettings={timeBasedLearningSettings}
+          quizPreferences={quizPreferences}
           onComplete={completeQuiz}
           onReviewCards={() => openCards()}
           onToggleFlag={toggleWordFlag}
@@ -1223,6 +1297,9 @@ export default function AppContent() {
       <DashboardScreen
         words={words}
         analytics={analytics}
+        timedLearningEnabled={timedLearningEnabled}
+        timeBasedLearningSettings={timeBasedLearningSettings}
+        quizPreferences={quizPreferences}
         currentUser={currentUser}
         reminderSettings={reminderSettings}
         dailyQuizGoal={dailyQuizGoal}
@@ -1231,6 +1308,9 @@ export default function AppContent() {
         onStudyFlaggedQuiz={openFlaggedQuiz}
         onUpdateReminder={updateReminder}
         onUpdateDailyQuizGoal={(goal) => setDailyQuizGoal(clampDailyQuizGoal(goal))}
+        onTimedLearningChange={setTimedLearningEnabled}
+        onTimeBasedLearningSettingsChange={setTimeBasedLearningSettings}
+        onQuizPreferencesChange={setQuizPreferences}
         onOpenLegal={openLegalPage}
         onLogout={logout}
         onDeleteAccount={deleteAccount}
@@ -1446,6 +1526,9 @@ async function clearLocalLearningData(userId: string) {
     getUserCacheKey(userId, 'analytics'),
     getUserCacheKey(userId, 'reminder-settings'),
     getUserCacheKey(userId, 'daily-quiz-goal'),
+    getUserCacheKey(userId, 'timed-learning-enabled'),
+    getUserCacheKey(userId, 'time-based-learning-settings'),
+    getUserCacheKey(userId, 'quiz-preferences'),
     getUserCacheKey(userId, 'cloud-hydrated-at'),
   ]);
 }

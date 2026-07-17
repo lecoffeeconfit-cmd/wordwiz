@@ -16,6 +16,7 @@ type WordRow = {
   definition: string;
   simple_definition: string | null;
   example: string;
+  context_examples?: string[] | null;
   part_of_speech: string | null;
   pronunciation: string | null;
   origin: string | null;
@@ -72,6 +73,7 @@ const WORD_COLUMNS = [
   'definition',
   'simple_definition',
   'example',
+  'context_examples',
   'part_of_speech',
   'pronunciation',
   'origin',
@@ -465,6 +467,7 @@ function mapWordRow(row: WordRow): Word {
     definition: row.definition,
     simpleDefinition: row.simple_definition ?? undefined,
     example: row.example,
+    contextExamples: row.context_examples ?? [],
     partOfSpeech: row.part_of_speech ?? undefined,
     pronunciation: row.pronunciation ?? undefined,
     origin: row.origin ?? undefined,
@@ -519,6 +522,7 @@ function toWordPayload(userId: string, word: Word) {
     definition: word.definition,
     simple_definition: word.simpleDefinition ?? null,
     example: word.example,
+    context_examples: word.contextExamples ?? [],
     part_of_speech: word.partOfSpeech ?? null,
     pronunciation: word.pronunciation ?? null,
     origin: word.origin ?? null,
@@ -549,6 +553,10 @@ function omitAntonymColumn(columns: string) {
   return columns.replace('antonyms,', '');
 }
 
+function omitContextExamplesColumn(columns: string) {
+  return columns.replace('context_examples,', '');
+}
+
 function omitFlagFields<
   T extends { is_flagged?: unknown; flagged_at?: unknown },
 >(payload: T) {
@@ -562,6 +570,13 @@ function omitAntonymField<T extends { antonyms?: unknown }>(payload: T) {
   return legacyPayload;
 }
 
+function omitContextExamplesField<T extends { context_examples?: unknown }>(
+  payload: T,
+) {
+  const { context_examples: _contextExamples, ...legacyPayload } = payload;
+  return legacyPayload;
+}
+
 async function fetchCloudWords(userId: string) {
   let columns = WORD_COLUMNS;
   let result = await selectCloudWords(userId, columns);
@@ -569,7 +584,7 @@ async function fetchCloudWords(userId: string) {
   // Existing WordWiz databases may predate one or more of these optional
   // columns. Retry with every supported combination instead of preventing the
   // rest of the learner's cloud data from loading.
-  for (let attempt = 0; result.error && attempt < 3; attempt += 1) {
+  for (let attempt = 0; result.error && attempt < 4; attempt += 1) {
     const nextColumns = omitUnsupportedWordColumns(columns, result.error);
     if (nextColumns === columns) {
       break;
@@ -609,6 +624,10 @@ function omitUnsupportedWordColumns(
     compatibleColumns = omitAntonymColumn(compatibleColumns);
   }
 
+  if (isMissingContextExamplesColumn(error)) {
+    compatibleColumns = omitContextExamplesColumn(compatibleColumns);
+  }
+
   return compatibleColumns;
 }
 
@@ -622,17 +641,20 @@ async function writeCloudWordsWithCompatibility<
   let canOmitFlagFields = true;
   let canOmitMasteryData = true;
   let canOmitAntonyms = true;
+  let canOmitContextExamples = true;
   let result = await write(compatiblePayload);
 
-  for (let attempt = 0; result.error && attempt < 3; attempt += 1) {
+  for (let attempt = 0; result.error && attempt < 4; attempt += 1) {
     const omitFlags =
       canOmitFlagFields && isMissingFlagColumns(result.error);
     const omitMastery =
       canOmitMasteryData && isMissingMasteryDataColumn(result.error);
     const omitAntonyms =
       canOmitAntonyms && isMissingAntonymColumn(result.error);
+    const omitContextExamples =
+      canOmitContextExamples && isMissingContextExamplesColumn(result.error);
 
-    if (!omitFlags && !omitMastery && !omitAntonyms) {
+    if (!omitFlags && !omitMastery && !omitAntonyms && !omitContextExamples) {
       break;
     }
 
@@ -649,6 +671,11 @@ async function writeCloudWordsWithCompatibility<
     if (omitAntonyms) {
       compatiblePayload = removeAntonymFields(compatiblePayload) as T;
       canOmitAntonyms = false;
+    }
+
+    if (omitContextExamples) {
+      compatiblePayload = removeContextExamplesFields(compatiblePayload) as T;
+      canOmitContextExamples = false;
     }
 
     result = await write(compatiblePayload);
@@ -681,6 +708,14 @@ function removeAntonymFields(
     : omitAntonymField(payload);
 }
 
+function removeContextExamplesFields(
+  payload: Record<string, unknown> | Record<string, unknown>[],
+) {
+  return Array.isArray(payload)
+    ? payload.map(omitContextExamplesField)
+    : omitContextExamplesField(payload);
+}
+
 function isMissingMasteryDataColumn(error: { message?: string } | null) {
   return Boolean(error?.message?.toLowerCase().includes('mastery_data'));
 }
@@ -692,6 +727,10 @@ function isMissingFlagColumns(error: { message?: string } | null) {
 
 function isMissingAntonymColumn(error: { message?: string } | null) {
   return Boolean(error?.message?.toLowerCase().includes('antonyms'));
+}
+
+function isMissingContextExamplesColumn(error: { message?: string } | null) {
+  return Boolean(error?.message?.toLowerCase().includes('context_examples'));
 }
 
 function parseMasteryProgress(value: unknown): Word['mastery'] {
