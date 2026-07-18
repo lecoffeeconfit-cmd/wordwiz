@@ -230,6 +230,28 @@ test('free word limit is enforced atomically in Supabase and cannot be bypassed 
   assert.match(migration, /Words are created through the allowance RPC/);
 });
 
+test('the automatic trial starts server-side and grants full access for thirty days', () => {
+  const migration = fs.readFileSync(
+    path.join(projectRoot, 'supabase/automatic_trial_migration.sql'),
+    'utf8',
+  );
+  const appContent = fs.readFileSync(
+    path.join(projectRoot, 'src/application/AppContent.tsx'),
+    'utf8',
+  );
+  const homeScreen = fs.readFileSync(
+    path.join(projectRoot, 'src/screens/HomeScreen.tsx'),
+    'utf8',
+  );
+
+  assert.match(migration, /get_trial_access\(\)/);
+  assert.match(migration, /now\(\) \+ interval '30 days'/);
+  assert.match(migration, /if not \(v_is_plus or v_is_trial\)/);
+  assert.match(appContent, /getFreeTrialAccess/);
+  assert.match(appContent, /hasFullLearningAccess/);
+  assert.match(homeScreen, /30-DAY FREE TRIAL/);
+});
+
 test('word saving trims input and creates a new saved word', () => {
   const savedWord = learning.buildWordFromInput({
     term: '  Luminous ',

@@ -265,6 +265,48 @@ export const styles = StyleSheet.create({
     backgroundColor: '#DDE9FF',
     ...FLOATING_SHADOW,
   },
+  homeTrialCard: {
+    marginTop: 14,
+    padding: 14,
+    borderRadius: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 11,
+    backgroundColor: COLORS.purplePale,
+    borderWidth: 1.5,
+    borderColor: '#DDD5FF',
+    ...SOFT_SHADOW,
+  },
+  homeTrialIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.white,
+  },
+  homeTrialCopy: {
+    flex: 1,
+  },
+  homeTrialLabel: {
+    color: COLORS.purpleDark,
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 0.8,
+  },
+  homeTrialTitle: {
+    marginTop: 2,
+    color: COLORS.ink,
+    fontSize: 15,
+    fontWeight: '900',
+  },
+  homeTrialSubtitle: {
+    marginTop: 2,
+    color: COLORS.muted,
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '700',
+  },
   heroCloudOne: {
     position: 'absolute',
     width: 215,
@@ -550,7 +592,7 @@ export const styles = StyleSheet.create({
     marginTop: 14,
     marginRight: 68,
     borderRadius: 4,
-    overflow: 'hidden',
+    overflow: 'visible',
     backgroundColor: '#EDE8F7',
   },
   homeSkillFill: {
@@ -1326,7 +1368,7 @@ export const styles = StyleSheet.create({
   progressTrack: {
     height: 9,
     borderRadius: 5,
-    overflow: 'hidden',
+    overflow: 'visible',
     backgroundColor: '#EDE8F7',
   },
   progressFill: {
@@ -2310,7 +2352,7 @@ export const styles = StyleSheet.create({
     height: 10,
     marginBottom: 20,
     borderRadius: 6,
-    overflow: 'hidden',
+    overflow: 'visible',
     backgroundColor: '#EDE8F7',
   },
   quizProgressFill: {
@@ -2360,7 +2402,7 @@ export const styles = StyleSheet.create({
     height: 5,
     marginTop: 7,
     borderRadius: 4,
-    overflow: 'hidden',
+    overflow: 'visible',
     backgroundColor: '#DED7F7',
   },
   timedQuestionTimerFill: {
@@ -2995,7 +3037,7 @@ export const styles = StyleSheet.create({
     height: 8,
     marginTop: 11,
     borderRadius: 4,
-    overflow: 'hidden',
+    overflow: 'visible',
     backgroundColor: 'rgba(255,255,255,0.28)',
   },
   heroLevelFill: {
@@ -3178,15 +3220,36 @@ export const styles = StyleSheet.create({
     fontWeight: '900',
     letterSpacing: -0.4,
   },
-  longestStreak: {
+  streakSummary: {
+    minWidth: 82,
     paddingHorizontal: 10,
     paddingVertical: 7,
-    borderRadius: 10,
-    overflow: 'hidden',
-    color: '#9A7800',
+    borderRadius: 13,
+    alignItems: 'center',
     backgroundColor: COLORS.white,
-    fontSize: 11,
+  },
+  streakCurrentValue: {
+    color: '#9A7800',
+    fontSize: 18,
     fontWeight: '900',
+    letterSpacing: -0.4,
+  },
+  streakCurrentLabel: {
+    marginTop: -1,
+    color: '#9A7800',
+    fontSize: 9,
+    fontWeight: '900',
+  },
+  streakBestLabel: {
+    marginTop: 3,
+    paddingTop: 3,
+    alignSelf: 'stretch',
+    borderTopWidth: 1,
+    borderTopColor: '#FFE8C4',
+    color: COLORS.muted,
+    fontSize: 9,
+    fontWeight: '900',
+    textAlign: 'center',
   },
   streakMessage: {
     marginTop: 13,
@@ -3489,7 +3552,7 @@ export const styles = StyleSheet.create({
     width: 20,
     height: 92,
     borderRadius: 7,
-    overflow: 'hidden',
+    overflow: 'visible',
     justifyContent: 'flex-end',
     backgroundColor: '#EFEAF8',
   },
@@ -3499,6 +3562,20 @@ export const styles = StyleSheet.create({
     borderRadius: 7,
     overflow: 'hidden',
     justifyContent: 'flex-end',
+    position: 'relative',
+  },
+  barFillGlow: {
+    shadowOpacity: 0.52,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 3,
+  },
+  barGloss: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
   },
   barQuizSegment: {
     width: '100%',
@@ -3763,7 +3840,7 @@ export const styles = StyleSheet.create({
     height: 7,
     marginTop: 10,
     borderRadius: 4,
-    overflow: 'hidden',
+    overflow: 'visible',
     backgroundColor: 'rgba(255,255,255,0.78)',
   },
   achievementFill: {
@@ -3860,7 +3937,7 @@ export const styles = StyleSheet.create({
   masteryTrack: {
     height: 9,
     borderRadius: 5,
-    overflow: 'hidden',
+    overflow: 'visible',
     backgroundColor: '#EFEAF8',
   },
   masteryFill: {
@@ -3909,6 +3986,14 @@ export const styles = StyleSheet.create({
     borderColor: '#E7E0F4',
     backgroundColor: '#FFFCFF',
   },
+  dueReviewRowQueued: {
+    borderColor: '#CFC4FF',
+    backgroundColor: COLORS.purplePale,
+  },
+  dueReviewRowFocused: {
+    borderColor: '#F2CF76',
+    backgroundColor: '#FFFCF4',
+  },
   dueReviewIcon: {
     width: 31,
     height: 31,
@@ -3935,6 +4020,34 @@ export const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '900',
     textAlign: 'right',
+  },
+  dueReviewQueuedLabel: {
+    minWidth: 56,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 3,
+  },
+  dueReviewQueuedText: {
+    color: COLORS.purpleDark,
+    fontSize: 9,
+    letterSpacing: 0.4,
+    fontWeight: '900',
+  },
+  dueReviewFocusedTiming: {
+    alignItems: 'flex-end',
+    gap: 3,
+  },
+  dueReviewFocusedLabel: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+  },
+  dueReviewFocusedText: {
+    color: '#B78300',
+    fontSize: 9,
+    letterSpacing: 0.4,
+    fontWeight: '900',
   },
   compactPagination: {
     minHeight: 37,
@@ -4065,7 +4178,7 @@ export const styles = StyleSheet.create({
     marginTop: 8,
     height: 8,
     borderRadius: 5,
-    overflow: 'hidden',
+    overflow: 'visible',
     backgroundColor: '#EFEAF8',
   },
   trendFill: {
@@ -4556,6 +4669,13 @@ export const styles = StyleSheet.create({
     color: COLORS.ink,
     fontSize: 15,
     fontWeight: '900',
+  },
+  plusPlanPricePreview: {
+    maxWidth: 72,
+    color: COLORS.purpleDark,
+    fontSize: 10,
+    lineHeight: 13,
+    textAlign: 'right',
   },
   plusMessage: {
     marginTop: 12,
@@ -5624,7 +5744,7 @@ export const styles = StyleSheet.create({
   },
   recallPaceTrack: {
     height: 8,
-    overflow: 'hidden',
+    overflow: 'visible',
     borderRadius: 4,
     backgroundColor: '#EAF0FA',
   },
@@ -5688,7 +5808,7 @@ export const styles = StyleSheet.create({
   },
   retrievalEvidenceCard: {
     flex: 1,
-    minHeight: 100,
+    minHeight: 114,
     padding: 13,
     borderRadius: 17,
   },
@@ -5707,6 +5827,7 @@ export const styles = StyleSheet.create({
     marginTop: 2,
     color: COLORS.muted,
     fontSize: 10,
+    lineHeight: 14,
     fontWeight: '700',
   },
   retrievalEvidenceRow: {
@@ -5722,6 +5843,7 @@ export const styles = StyleSheet.create({
     flex: 1,
     color: COLORS.purpleDark,
     fontSize: 10,
+    lineHeight: 14,
     fontWeight: '800',
   },
   retrievalProgression: {
@@ -6430,6 +6552,24 @@ export const styles = StyleSheet.create({
   flaggedDashboardCopy: {
     flex: 1,
   },
+  flaggedDashboardCount: {
+    minWidth: 52,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  flaggedDashboardCountNumber: {
+    color: COLORS.purpleDark,
+    fontSize: 28,
+    lineHeight: 31,
+    fontWeight: '900',
+  },
+  flaggedDashboardCountLabel: {
+    marginTop: 1,
+    color: COLORS.purpleDark,
+    fontSize: 8,
+    letterSpacing: 0.7,
+    fontWeight: '900',
+  },
   flaggedDashboardTitle: {
     color: COLORS.ink,
     fontSize: 14,
@@ -6464,5 +6604,26 @@ export const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '900',
     letterSpacing: 0.5,
+  },
+  flaggedDashboardBulkButton: {
+    minHeight: 34,
+    marginTop: 8,
+    borderRadius: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    borderWidth: 1,
+    borderColor: '#DED7FF',
+    backgroundColor: '#FCFBFF',
+  },
+  flaggedDashboardBulkButtonUndo: {
+    backgroundColor: COLORS.purplePale,
+  },
+  flaggedDashboardBulkButtonText: {
+    color: COLORS.purpleDark,
+    fontSize: 10,
+    letterSpacing: 0.55,
+    fontWeight: '900',
   },
 });

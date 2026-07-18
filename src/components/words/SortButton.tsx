@@ -11,20 +11,31 @@ export function SortButton({
   onPress,
 }: {
   active: boolean;
-  icon: 'text' | 'time';
+  icon: 'text' | 'time' | 'bookmark';
   onPress: () => void;
 }) {
+  const labels = {
+    text: 'Sort alphabetically',
+    time: 'Sort by newest',
+    bookmark: active ? 'Show all words' : 'Show flagged words',
+  };
+
+  const icons = {
+    text: 'text-outline',
+    time: 'time-outline',
+    bookmark: active ? 'bookmark' : 'bookmark-outline',
+  } as const;
+
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={
-        icon === 'text' ? 'Sort alphabetically' : 'Sort by newest'
-      }
+      accessibilityLabel={labels[icon]}
+      accessibilityState={{ selected: active }}
       onPress={onPress}
       style={[styles.sortButton, active && styles.sortButtonActive]}
     >
       <Ionicons
-        name={icon === 'text' ? 'text-outline' : 'time-outline'}
+        name={icons[icon]}
         size={17}
         color={active ? COLORS.purpleDark : COLORS.muted}
       />

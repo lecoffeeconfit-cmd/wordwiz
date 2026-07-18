@@ -11,16 +11,18 @@ export function DashboardSection({
   children,
 }: {
   title: string;
-  badge: string;
+  badge?: string;
   children: ReactNode;
 }) {
   return (
     <View style={styles.dashboardSection}>
       <View style={styles.dashboardSectionHeader}>
         <Text style={styles.dashboardSectionTitle}>{title}</Text>
-        <View style={styles.dashboardBadge}>
-          <Text style={styles.dashboardBadgeText}>{badge}</Text>
-        </View>
+        {badge ? (
+          <View style={styles.dashboardBadge}>
+            <Text style={styles.dashboardBadgeText}>{badge}</Text>
+          </View>
+        ) : null}
       </View>
       {children}
     </View>

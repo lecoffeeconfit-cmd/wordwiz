@@ -9,6 +9,13 @@ export type FreeWordUsage = {
   limit: number;
 };
 
+export type FreeTrialAccess = {
+  isActive: boolean;
+  startedAt: string | null;
+  expiresAt: string | null;
+  daysRemaining: number;
+};
+
 export class FreeWordLimitError extends Error {
   constructor() {
     super('You’ve used your 10 free word additions for this month.');
@@ -29,6 +36,29 @@ export async function getFreeWordUsage(): Promise<FreeWordUsage> {
     monthKey: typeof usage?.month_key === 'string' ? usage.month_key : getUtcMonthKey(),
     wordsAdded: toSafeCount(usage?.words_added),
     limit: toSafeCount(usage?.limit) || FREE_WORD_LIMIT,
+  };
+}
+
+export async function getFreeTrialAccess(): Promise<FreeTrialAccess> {
+  const { data, error } = await supabase.rpc('get_trial_access');
+  if (error) throw new Error(`trial_access: ${error.message}`);
+
+  const trial = data as {
+    trial_active?: unknown;
+    trial_started_at?: unknown;
+    trial_expires_at?: unknown;
+    days_remaining?: unknown;
+  } | null;
+
+  return {
+    isActive: trial?.trial_active === true,
+    startedAt: typeof trial?.trial_started_at === 'string'
+      ? trial.trial_started_at
+      : null,
+    expiresAt: typeof trial?.trial_expires_at === 'string'
+      ? trial.trial_expires_at
+      : null,
+    daysRemaining: toSafeCount(trial?.days_remaining),
   };
 }
 

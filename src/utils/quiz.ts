@@ -741,27 +741,35 @@ function pickQuizWords(
     scheduledPriorityWords.map((word) => word.id),
   );
   const remainingWords = words.filter((word) => !priorityWordIdsSet.has(word.id));
+  const focusedWords = shuffle(
+    remainingWords.filter((word) => word.mastery?.focusMode === true),
+  );
+  const focusedWordIds = new Set(focusedWords.map((word) => word.id));
+  const nonFocusedWords = remainingWords.filter(
+    (word) => !focusedWordIds.has(word.id),
+  );
   const recentWordIds = new Set(
     recentAttempts
       .slice(0, RECENT_ATTEMPTS_TO_AVOID)
       .flatMap((attempt) => attempt.answers.map((answer) => answer.wordId)),
   );
-  const lessRecentWords = remainingWords.filter(
+  const lessRecentWords = nonFocusedWords.filter(
     (word) => !recentWordIds.has(word.id),
   );
   const fillWords =
     lessRecentWords.length >=
     Math.min(
-      remainingWords.length,
-      questionLimit - scheduledPriorityWords.length,
+      nonFocusedWords.length,
+      questionLimit - scheduledPriorityWords.length - focusedWords.length,
     )
       ? lessRecentWords
-      : remainingWords;
+      : nonFocusedWords;
 
   return [
     ...scheduledPriorityWords,
+    ...focusedWords,
     ...shuffle(fillWords).filter(
-      (word) => !priorityWordIdsSet.has(word.id),
+      (word) => !priorityWordIdsSet.has(word.id) && !focusedWordIds.has(word.id),
     ),
   ].slice(0, questionLimit);
 }

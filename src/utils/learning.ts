@@ -401,7 +401,7 @@ function chooseMoreCompleteWord(first: Word, second: Word) {
     return {
       ...second,
       reviews: Math.max(first.reviews, second.reviews),
-      mastery: second.mastery ?? first.mastery,
+      mastery: mergeFocusMastery(second.mastery, first.mastery),
       isFlagged: Boolean(first.isFlagged || second.isFlagged),
       flaggedAt: first.flaggedAt ?? second.flaggedAt,
       createdAt: first.createdAt < second.createdAt ? first.createdAt : second.createdAt,
@@ -411,10 +411,30 @@ function chooseMoreCompleteWord(first: Word, second: Word) {
   return {
     ...first,
     reviews: Math.max(first.reviews, second.reviews),
-    mastery: first.mastery ?? second.mastery,
+    mastery: mergeFocusMastery(first.mastery, second.mastery),
     isFlagged: Boolean(first.isFlagged || second.isFlagged),
     flaggedAt: first.flaggedAt ?? second.flaggedAt,
     createdAt: first.createdAt < second.createdAt ? first.createdAt : second.createdAt,
+  };
+}
+
+function mergeFocusMastery(
+  preferred?: WordMasteryProgress,
+  fallback?: WordMasteryProgress,
+): WordMasteryProgress | undefined {
+  const mastery = preferred ?? fallback;
+  if (!mastery) return undefined;
+
+  const focusMode = Boolean(preferred?.focusMode || fallback?.focusMode);
+  const focusedAt = preferred?.focusedAt ?? fallback?.focusedAt;
+  const reviewNext = Boolean(preferred?.reviewNext || fallback?.reviewNext);
+  const reviewNextAt = preferred?.reviewNextAt ?? fallback?.reviewNextAt;
+  return {
+    ...mastery,
+    focusMode,
+    focusedAt: focusMode ? focusedAt : undefined,
+    reviewNext,
+    reviewNextAt: reviewNext ? reviewNextAt : undefined,
   };
 }
 
@@ -582,6 +602,8 @@ export function applyQuizMastery(
         reviews: word.reviews + 1,
         mastery: {
           ...current,
+          reviewNext: false,
+          reviewNextAt: undefined,
           lastReviewedAt: reviewedAt.toISOString(),
           lastReviewResult: 'hard',
           // A time-out is not counted as an incorrect answer or a mastery
@@ -599,7 +621,11 @@ export function applyQuizMastery(
     return {
       ...word,
       reviews: word.reviews + 1,
-      mastery,
+      mastery: {
+        ...mastery,
+        reviewNext: false,
+        reviewNextAt: undefined,
+      },
     };
   });
 }
@@ -620,6 +646,8 @@ export function applyFlashcardReview(
       reviews: word.reviews + 1,
       mastery: {
         ...current,
+        reviewNext: false,
+        reviewNextAt: undefined,
         lastReviewedAt: reviewedAt.toISOString(),
       },
     };

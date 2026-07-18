@@ -41,6 +41,7 @@ import {
   deleteCloudWord,
   createCloudWordWithFreeLimit,
   FreeWordLimitError,
+  getFreeTrialAccess,
   getFreeWordUsage,
   syncRevenueCatEntitlement,
   fetchUserLearningData,
@@ -53,6 +54,7 @@ import {
   scheduleDailyReminder,
   setSentryUser,
   trackEvent,
+  type FreeTrialAccess,
 } from '../services';
 import { env } from '../config/env';
 import { useSubscription } from '../subscription/SubscriptionProvider';
@@ -85,6 +87,7 @@ import {
   getDueReviewWords,
   getNextMasteryLevel,
   getWordMastery,
+  getWordMasteryProgress,
   mergeWordLists,
   upsertSavedWord,
 } from '../utils';
@@ -140,6 +143,7 @@ export default function AppContent() {
     wordsAdded: number;
     limit: number;
   } | null>(null);
+  const [freeTrial, setFreeTrial] = useState<FreeTrialAccess | null>(null);
   const [showPlusPaywall, setShowPlusPaywall] = useState(false);
   const [plusPaywallReason, setPlusPaywallReason] = useState<
     'quiz' | 'word-limit' | 'premium-feature'
@@ -151,6 +155,8 @@ export default function AppContent() {
   const lastReminderRefreshKey = useRef<string | null>(null);
   const isSavingWord = useRef(false);
   const pendingPlusAction = useRef<(() => void) | null>(null);
+  const hasFullLearningAccess =
+    subscription.hasPlusAccess || freeTrial?.isActive === true;
   const smartReminderContext = useMemo(
     () => buildCurrentReminderContext(words, analytics, dailyQuizGoal),
     [analytics, currentDayKey, dailyQuizGoal, words],
@@ -271,8 +277,26 @@ export default function AppContent() {
     void subscription.syncUser(currentUser?.id ?? null);
   }, [currentUser?.id, subscription.syncUser]);
 
+  const refreshFreeTrial = useCallback(async () => {
+    if (!currentUser) {
+      setFreeTrial(null);
+      return;
+    }
+
+    try {
+      setFreeTrial(await getFreeTrialAccess());
+    } catch (error) {
+      reportError(error, { area: 'free_trial_access' });
+      setFreeTrial(null);
+    }
+  }, [currentUser]);
+
+  useEffect(() => {
+    void refreshFreeTrial();
+  }, [refreshFreeTrial]);
+
   const refreshFreeWordUsage = useCallback(async () => {
-    if (!currentUser || subscription.hasPlusAccess) {
+    if (!currentUser || hasFullLearningAccess) {
       setFreeWordUsage(null);
       return;
     }
@@ -285,7 +309,7 @@ export default function AppContent() {
       // the authoritative enforcement point, so this never grants extra words.
       setFreeWordUsage(null);
     }
-  }, [currentUser, subscription.hasPlusAccess]);
+  }, [currentUser, hasFullLearningAccess]);
 
   useEffect(() => {
     void refreshFreeWordUsage();
@@ -565,7 +589,7 @@ export default function AppContent() {
     reason: 'quiz' | 'word-limit' | 'premium-feature',
     action?: () => void,
   ) {
-    if (subscription.hasPlusAccess) {
+    if (hasFullLearningAccess) {
       action?.();
       return;
     }
@@ -575,7 +599,7 @@ export default function AppContent() {
   }
 
   function openQuiz(studyGroup?: 'flagged') {
-    if (!subscription.canUseQuizzes) {
+    if (!hasFullLearningAccess) {
       presentPlusPaywall('quiz', () => openQuiz(studyGroup));
       return;
     }
@@ -591,21 +615,35 @@ export default function AppContent() {
     const previousWord = words.find((word) => word.id === wordId);
     if (!previousWord) return;
 
-    const nextWord: Word = {
-      ...previousWord,
-      isFlagged: !previousWord.isFlagged,
-      flaggedAt: previousWord.isFlagged ? undefined : new Date().toISOString(),
-    };
-    setWords((currentWords) =>
-      currentWords.map((word) => (word.id === wordId ? nextWord : word)),
+    setWordFlagState([wordId], !previousWord.isFlagged);
+  }
+
+  function setWordFlagState(wordIds: string[], isFlagged: boolean) {
+    const wordIdSet = new Set(wordIds);
+    const previousWords = words.filter(
+      (word) => wordIdSet.has(word.id) && word.isFlagged !== isFlagged,
     );
-    trackEvent('word_flag_toggled', { flagged: nextWord.isFlagged });
+    if (previousWords.length === 0) return;
+
+    const flaggedAt = isFlagged ? new Date().toISOString() : undefined;
+    const nextWords = previousWords.map((word) => ({
+      ...word,
+      isFlagged,
+      flaggedAt,
+    }));
+    const nextWordsById = new Map(nextWords.map((word) => [word.id, word]));
+    const previousWordsById = new Map(previousWords.map((word) => [word.id, word]));
+
+    setWords((currentWords) =>
+      currentWords.map((word) => nextWordsById.get(word.id) ?? word),
+    );
+    trackEvent('word_flag_toggled', { flagged: isFlagged, count: nextWords.length });
 
     if (currentUser && cloudHydratedUserId.current === currentUser.id) {
-      saveCloudWord(
+      saveCloudWords(
         currentUser.id,
-        nextWord,
-        getScreenContext(activeTab, 'toggle_word_flag'),
+        nextWords,
+        getScreenContext(activeTab, 'set_word_flag_state'),
       )
         .then(() => {
           markCloudCacheFresh(currentUser.id);
@@ -615,9 +653,101 @@ export default function AppContent() {
           trackEvent('cloud_sync_failed', { operation: 'save_word_flag' });
           setWords((currentWords) =>
             currentWords.map((word) =>
+              nextWordsById.has(word.id) &&
+              word.isFlagged === isFlagged &&
+              word.flaggedAt === flaggedAt
+                ? previousWordsById.get(word.id) ?? word
+                : word,
+            ),
+          );
+          deferCloudSync();
+        });
+    }
+  }
+
+  function toggleWordFocus(wordId: string) {
+    const previousWord = words.find((word) => word.id === wordId);
+    if (!previousWord) return;
+
+    const wasFocused = previousWord.mastery?.focusMode === true;
+    const focusedAt = wasFocused ? undefined : new Date().toISOString();
+    const nextWord: Word = {
+      ...previousWord,
+      mastery: {
+        ...getWordMasteryProgress(previousWord, analytics),
+        focusMode: !wasFocused,
+        focusedAt,
+      },
+    };
+
+    setWords((currentWords) =>
+      currentWords.map((word) => (word.id === wordId ? nextWord : word)),
+    );
+    trackEvent('word_focus_toggled', { focused: !wasFocused });
+
+    if (currentUser && cloudHydratedUserId.current === currentUser.id) {
+      saveCloudWord(
+        currentUser.id,
+        nextWord,
+        getScreenContext(activeTab, 'toggle_word_focus'),
+      )
+        .then(() => {
+          markCloudCacheFresh(currentUser.id);
+        })
+        .catch((error) => {
+          reportError(error, { area: 'save_word_focus' });
+          trackEvent('cloud_sync_failed', { operation: 'save_word_focus' });
+          setWords((currentWords) =>
+            currentWords.map((word) =>
               word.id === wordId &&
-              word.isFlagged === nextWord.isFlagged &&
-              word.flaggedAt === nextWord.flaggedAt
+              word.mastery?.focusMode === !wasFocused &&
+              word.mastery?.focusedAt === focusedAt
+                ? previousWord
+                : word,
+            ),
+          );
+          deferCloudSync();
+        });
+    }
+  }
+
+  function toggleWordReviewNext(wordId: string) {
+    const previousWord = words.find((word) => word.id === wordId);
+    if (!previousWord) return;
+
+    const wasQueued = previousWord.mastery?.reviewNext === true;
+    const reviewNextAt = wasQueued ? undefined : new Date().toISOString();
+    const nextWord: Word = {
+      ...previousWord,
+      mastery: {
+        ...getWordMasteryProgress(previousWord, analytics),
+        reviewNext: !wasQueued,
+        reviewNextAt,
+      },
+    };
+
+    setWords((currentWords) =>
+      currentWords.map((word) => (word.id === wordId ? nextWord : word)),
+    );
+    trackEvent('word_review_next_toggled', { queued: !wasQueued });
+
+    if (currentUser && cloudHydratedUserId.current === currentUser.id) {
+      saveCloudWord(
+        currentUser.id,
+        nextWord,
+        getScreenContext(activeTab, 'toggle_word_review_next'),
+      )
+        .then(() => {
+          markCloudCacheFresh(currentUser.id);
+        })
+        .catch((error) => {
+          reportError(error, { area: 'save_word_review_next' });
+          trackEvent('cloud_sync_failed', { operation: 'save_word_review_next' });
+          setWords((currentWords) =>
+            currentWords.map((word) =>
+              word.id === wordId &&
+              word.mastery?.reviewNext === !wasQueued &&
+              word.mastery?.reviewNextAt === reviewNextAt
                 ? previousWord
                 : word,
             ),
@@ -628,7 +758,7 @@ export default function AppContent() {
   }
 
   function openAddWord() {
-    if (!subscription.canAddWord(freeWordUsage?.wordsAdded ?? null)) {
+    if (!hasFullLearningAccess && !subscription.canAddWord(freeWordUsage?.wordsAdded ?? null)) {
       presentPlusPaywall('word-limit', openAddWord);
       return;
     }
@@ -1020,7 +1150,7 @@ export default function AppContent() {
     isSavingWord.current = true;
     try {
       if (!isEditingExistingWord) {
-        if (!subscription.canAddWord(freeWordUsage?.wordsAdded ?? null)) {
+        if (!hasFullLearningAccess && !subscription.canAddWord(freeWordUsage?.wordsAdded ?? null)) {
           presentPlusPaywall('word-limit', openAddWord);
           return false;
         }
@@ -1071,12 +1201,12 @@ export default function AppContent() {
       activeTab === 'quiz' &&
       currentUser &&
       !subscription.isLoading &&
-      !subscription.canUseQuizzes
+      !hasFullLearningAccess
     ) {
       setActiveTab('home');
       presentPlusPaywall('quiz', () => openQuiz());
     }
-  }, [activeTab, currentUser, subscription.canUseQuizzes, subscription.isLoading]);
+  }, [activeTab, currentUser, hasFullLearningAccess, subscription.isLoading]);
 
   function removeWord(wordToRemove: Word) {
     setWords((currentWords) =>
@@ -1185,7 +1315,7 @@ export default function AppContent() {
     durationSeconds: number,
     answers: QuizAnswer[],
   ) {
-    if (!subscription.canUseQuizzes) {
+    if (!hasFullLearningAccess) {
       presentPlusPaywall('quiz');
       return;
     }
@@ -1241,15 +1371,32 @@ export default function AppContent() {
     }
   }
 
-  function openDueReview() {
-    if (!subscription.canUseQuizzes) {
-      presentPlusPaywall('quiz', openDueReview);
+  function openDueReview(priorityWordIds: string[] = []) {
+    if (!hasFullLearningAccess) {
+      presentPlusPaywall('quiz', () => openDueReview(priorityWordIds));
       return;
     }
     setInitialQuizStudyGroup(undefined);
-    setQuizPriorityWordIds(
-      getDueReviewWords(words, analytics).map((item) => item.word.id),
+    const dueReviews = getDueReviewWords(words, analytics);
+    const dueWordIds = dueReviews.map((item) => item.word.id);
+    const dueWordIdSet = new Set(dueWordIds);
+    const queuedDueWordIds = Array.from(new Set(priorityWordIds)).filter(
+      (wordId) => dueWordIdSet.has(wordId),
     );
+    const queuedWordIdSet = new Set(queuedDueWordIds);
+    const focusedDueWordIds = dueReviews
+      .filter((item) => item.word.mastery?.focusMode === true)
+      .map((item) => item.word.id)
+      .filter((wordId) => !queuedWordIdSet.has(wordId));
+    const focusedDueWordIdSet = new Set(focusedDueWordIds);
+    setQuizPriorityWordIds([
+      ...queuedDueWordIds,
+      ...focusedDueWordIds,
+      ...dueWordIds.filter(
+        (wordId) =>
+          !queuedWordIdSet.has(wordId) && !focusedDueWordIdSet.has(wordId),
+      ),
+    ]);
     setActiveTab('quiz');
   }
 
@@ -1359,6 +1506,7 @@ export default function AppContent() {
           onReviewWord={(wordId) => openCards(wordId)}
           onQuiz={() => openQuiz()}
           onStats={() => setActiveTab('dashboard')}
+          freeTrial={freeTrial?.isActive ? freeTrial : null}
         />
       );
     }
@@ -1372,11 +1520,10 @@ export default function AppContent() {
           onAdd={openAddWord}
           onRemove={confirmRemoveWord}
           onStudy={() => openCards()}
-          onStudyFlaggedCards={() => openCards(undefined, 'flagged')}
-          onStudyFlaggedQuiz={openFlaggedQuiz}
+          onOpenPlus={() => presentPlusPaywall('word-limit')}
           onToggleFlag={toggleWordFlag}
           onSelectWord={(word) => openCards(word.id)}
-          freeWordUsage={subscription.hasPlusAccess ? null : freeWordUsage}
+          freeWordUsage={hasFullLearningAccess ? null : freeWordUsage}
         />
       );
     }
@@ -1426,6 +1573,9 @@ export default function AppContent() {
         onReviewDue={openDueReview}
         onStudyFlaggedCards={() => openCards(undefined, 'flagged')}
         onStudyFlaggedQuiz={openFlaggedQuiz}
+        onSetWordFlagState={setWordFlagState}
+        onToggleWordFocus={toggleWordFocus}
+        onToggleWordReviewNext={toggleWordReviewNext}
         onUpdateReminder={updateReminder}
         onUpdateDailyQuizGoal={(goal) => setDailyQuizGoal(clampDailyQuizGoal(goal))}
         onTimedLearningChange={setTimedLearningEnabled}

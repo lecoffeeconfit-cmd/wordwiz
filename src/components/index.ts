@@ -2,6 +2,7 @@ export * from './shared/ScreenHeader';
 export * from './shared/EmptyPractice';
 export * from './shared/SpeakButton';
 export * from './shared/CompactPagination';
+export * from './shared/ProgressFill';
 export * from './home/HomeMiniCard';
 export * from './home/HomeAction';
 export * from './words/SortButton';

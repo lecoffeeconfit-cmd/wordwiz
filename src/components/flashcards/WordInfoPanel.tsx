@@ -8,7 +8,6 @@ import {
   formatTimePeriodSnapshot,
   formatWordHistoryNarrative,
 } from '../../utils';
-import { SpeakButton } from '../shared/SpeakButton';
 
 export function WordInfoPanel({
   word,
@@ -52,7 +51,6 @@ export function WordInfoPanel({
             {word.pronunciation && (
               <InfoChip icon="volume-medium-outline" text={word.pronunciation} />
             )}
-            <SpeakButton term={word.term} />
           </View>
           {word.basicInfo && (
             <Text style={styles.wordInfoText}>{word.basicInfo}</Text>

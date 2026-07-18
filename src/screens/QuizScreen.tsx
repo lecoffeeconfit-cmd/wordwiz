@@ -5,7 +5,7 @@ import { COLORS } from '../constants/theme';
 import type { AnalyticsData, LegalPage, QuizAnswer, QuizPreferences, QuizProgress, QuizQuestion, QuizSessionMode, ReminderSettings, ReviewRating, SortMode, TimeBasedLearningSettings, Word } from '../types';
 import { styles } from '../styles';
 import { buildCategoryPracticeQuiz, buildQuiz, calculateStreakStats, evaluateQuizAnswer, formatReminderTime, formatStudyTime, formatWordFlaggedDate, getCategoryPracticeQuizTarget, getDayKey, getMistakeReviewWordIds, getNewStudyWords, getQuizRecallPaceSignal, getRecentDays, getStreakMessage, getStreakWeek, getTimeBasedLearningLimitSeconds, getTimedLearningBonusXp, getTypedRecallHint, getWordMastery, getWordMasteryCategoryForWord, NEW_STUDY_GROUP, normalizeTimeBasedLearningSettings, shuffle, TIMED_LEARNING_SECONDS, WORD_MASTERY_CATEGORIES, type WordMasteryCategoryId } from '../utils';
-import { DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
+import { DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, ProgressFill, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 import { reportError, trackEvent } from '../services';
 
 const REVEALED_TYPED_ANSWER = '__wordwiz-revealed-answer__';
@@ -815,11 +815,11 @@ export function QuizScreen({
         subtitle={`Question ${questionIndex + 1} of ${quiz.length}`}
       />
       <View style={styles.quizProgressTrack}>
-        <View
-          style={[
-            styles.quizProgressFill,
-            { width: `${((questionIndex + 1) / quiz.length) * 100}%` },
-          ]}
+        <ProgressFill
+          color={COLORS.orange}
+          progress={((questionIndex + 1) / quiz.length) * 100}
+          radius={6}
+          style={{ width: `${((questionIndex + 1) / quiz.length) * 100}%` }}
         />
       </View>
 
@@ -837,11 +837,11 @@ export function QuizScreen({
           </View>
           <Text style={styles.timedQuestionTimerValue}>{secondsRemaining}s</Text>
           <View style={styles.timedQuestionTimerTrack}>
-            <View
-              style={[
-                styles.timedQuestionTimerFill,
-                { width: `${(secondsRemaining / activeTimeLimitSeconds) * 100}%` },
-              ]}
+            <ProgressFill
+              color={COLORS.purple}
+              progress={(secondsRemaining / activeTimeLimitSeconds) * 100}
+              radius={4}
+              style={{ width: `${(secondsRemaining / activeTimeLimitSeconds) * 100}%` }}
             />
           </View>
         </View>

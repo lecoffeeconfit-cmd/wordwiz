@@ -5,7 +5,7 @@ import { COLORS } from '../constants/theme';
 import type { AnalyticsData, LegalPage, QuizAnswer, QuizProgress, QuizQuestion, ReminderSettings, SortMode, Word } from '../types';
 import { styles } from '../styles';
 import { buildAchievements, buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, getDayKey, getProgressColor, getProgressPaleColor, getRecentDays, getStreakMessage, getStreakMilestone, getStreakWeek, getWordMastery, sortWordsForReview, shuffle } from '../utils';
-import { CompactPagination, DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
+import { CompactPagination, DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, ProgressFill, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 
 const EXPANDED_REVIEW_WORD_PAGE_SIZE = 8;
 
@@ -31,6 +31,7 @@ export function HomeScreen({
   onReviewWord,
   onQuiz,
   onStats,
+  freeTrial,
 }: {
   words: Word[];
   analytics: AnalyticsData;
@@ -41,6 +42,7 @@ export function HomeScreen({
   onReviewWord: (wordId: string) => void;
   onQuiz: () => void;
   onStats: () => void;
+  freeTrial: { daysRemaining: number; expiresAt: string | null } | null;
 }) {
   const [achievementCarouselWidth, setAchievementCarouselWidth] = useState(0);
   const [showAllReviewWords, setShowAllReviewWords] = useState(false);
@@ -183,6 +185,28 @@ export function HomeScreen({
         </View>
       </View>
 
+      {freeTrial ? (
+        <View
+          accessible
+          accessibilityLabel={`Your 30-day WordWiz trial has ${freeTrial.daysRemaining} days left`}
+          style={styles.homeTrialCard}
+        >
+          <View style={styles.homeTrialIcon}>
+            <Ionicons name="sparkles" size={19} color={COLORS.purpleDark} />
+          </View>
+          <View style={styles.homeTrialCopy}>
+            <Text style={styles.homeTrialLabel}>30-DAY FREE TRIAL</Text>
+            <Text style={styles.homeTrialTitle}>
+              {freeTrial.daysRemaining} {freeTrial.daysRemaining === 1 ? 'day' : 'days'} of full access left
+            </Text>
+            <Text style={styles.homeTrialSubtitle}>
+              Enjoy every learning tool — no card required.
+            </Text>
+          </View>
+          <Ionicons name="checkmark-circle" size={19} color={COLORS.purpleDark} />
+        </View>
+      ) : null}
+
       <View style={styles.homeOverviewCard}>
         <View style={styles.overviewHeader}>
           <Text style={styles.homeSectionTitle}>Today’s learning</Text>
@@ -250,14 +274,11 @@ export function HomeScreen({
           </Text>
         </View>
         <View style={styles.homeSkillTrack}>
-          <View
-            style={[
-              styles.homeSkillFill,
-              {
-                width: `${Math.max(overallMastery, words.length ? 6 : 0)}%`,
-                backgroundColor: getProgressColor(overallMastery),
-              },
-            ]}
+          <ProgressFill
+            color={getProgressColor(overallMastery)}
+            progress={Math.max(overallMastery, words.length ? 6 : 0)}
+            radius={4}
+            style={{ width: `${Math.max(overallMastery, words.length ? 6 : 0)}%` }}
           />
         </View>
         <Pressable onPress={onStats} style={styles.homeStartButton}>

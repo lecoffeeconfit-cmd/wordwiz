@@ -23,8 +23,7 @@ export function WordsScreen({
   onAdd,
   onRemove,
   onStudy,
-  onStudyFlaggedCards,
-  onStudyFlaggedQuiz,
+  onOpenPlus,
   onToggleFlag,
   onSelectWord,
   freeWordUsage,
@@ -35,8 +34,7 @@ export function WordsScreen({
   onAdd: () => void;
   onRemove: (word: Word) => void;
   onStudy: () => void;
-  onStudyFlaggedCards: () => void;
-  onStudyFlaggedQuiz: () => void;
+  onOpenPlus: () => void;
   onToggleFlag: (wordId: string) => void;
   onSelectWord: (word: Word) => void;
   freeWordUsage: { wordsAdded: number; limit: number } | null;
@@ -70,10 +68,6 @@ export function WordsScreen({
         .includes(normalizedSearchQuery),
     );
   }, [normalizedSearchQuery, showFlaggedOnly, words]);
-  const flaggedCount = useMemo(
-    () => words.filter((word) => word.isFlagged).length,
-    [words],
-  );
   const isSampleCollection =
     words.length > 0 &&
     words.every((word) =>
@@ -139,58 +133,18 @@ export function WordsScreen({
             </View>
 
             {freeWordUsage ? (
-              <View style={styles.freeWordUsageCard}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="View WordWiz Plus plans"
+                onPress={onOpenPlus}
+                style={({ pressed }) => [styles.freeWordUsageCard, pressed && styles.pressed]}
+              >
                 <Ionicons name="sparkles-outline" size={19} color={COLORS.purpleDark} />
                 <Text style={styles.freeWordUsageText}>
                   {freeWordUsage.wordsAdded} of {freeWordUsage.limit} free words added this month
                 </Text>
-              </View>
-            ) : null}
-
-            <View style={styles.flaggedWordsCard}>
-              <View style={styles.flaggedWordsIcon}>
-                <Ionicons name="bookmark" size={20} color={COLORS.purpleDark} />
-              </View>
-              <View style={styles.flaggedWordsCopy}>
-                <Text style={styles.flaggedWordsTitle}>Flagged Words</Text>
-                <Text style={styles.flaggedWordsText}>
-                  {flaggedCount
-                    ? `${flaggedCount} saved · tap a purple bookmark to unflag.`
-                    : 'Flag words while studying to review them here.'}
-                </Text>
-              </View>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={showFlaggedOnly ? 'Show all words' : 'View flagged words'}
-                accessibilityState={{ selected: showFlaggedOnly }}
-                onPress={() => setShowFlaggedOnly((shown) => !shown)}
-                style={styles.flaggedWordsViewButton}
-              >
-                <Text style={styles.flaggedWordsViewButtonText}>
-                  {showFlaggedOnly ? 'ALL' : 'VIEW'}
-                </Text>
+                <Ionicons name="chevron-forward" size={16} color={COLORS.purpleDark} />
               </Pressable>
-            </View>
-
-            {showFlaggedOnly && flaggedCount > 0 ? (
-              <View style={styles.flaggedWordsStudyRow}>
-                <Pressable
-                  accessibilityRole="button"
-                  onPress={onStudyFlaggedCards}
-                  style={styles.flaggedWordsStudyButton}
-                >
-                  <Ionicons name="albums-outline" size={15} color={COLORS.purpleDark} />
-                  <Text style={styles.flaggedWordsStudyButtonText}>CARDS</Text>
-                </Pressable>
-                <Pressable
-                  accessibilityRole="button"
-                  onPress={onStudyFlaggedQuiz}
-                  style={styles.flaggedWordsStudyButton}
-                >
-                  <Ionicons name="help-circle-outline" size={15} color={COLORS.purpleDark} />
-                  <Text style={styles.flaggedWordsStudyButtonText}>QUIZ</Text>
-                </Pressable>
-              </View>
             ) : null}
 
             <Pressable onPress={onAdd} style={styles.addButton}>
@@ -242,6 +196,11 @@ export function WordsScreen({
                   active={sortMode === 'recent'}
                   icon="time"
                   onPress={() => onChangeSort('recent')}
+                />
+                <SortButton
+                  active={showFlaggedOnly}
+                  icon="bookmark"
+                  onPress={() => setShowFlaggedOnly((shown) => !shown)}
                 />
               </View>
             </View>

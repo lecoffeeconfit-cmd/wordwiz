@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Alert, Modal, Pressable, ScrollView, Text, View } from 'react-native';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Alert, Animated, Modal, Pressable, ScrollView, Text, View } from 'react-native';
 import type { PurchasesPackage } from 'react-native-purchases';
 import { COLORS } from '../constants/theme';
 import { styles } from '../styles';
@@ -31,6 +31,7 @@ export function WordWizPlusModal({
     ? subscription.annualPackage
     : subscription.monthlyPackage ?? subscription.annualPackage;
   const hasPurchasablePlan = Boolean(subscription.monthlyPackage || subscription.annualPackage);
+  const isPlanPreview = !subscription.isSupported;
   const annualSelected = selected?.identifier === subscription.annualPackage?.identifier;
   const monthlySelected = selected?.identifier === subscription.monthlyPackage?.identifier;
   const annualSavingsPercent = useMemo(() => getAnnualSavingsPercent(
@@ -170,10 +171,32 @@ export function WordWizPlusModal({
               </Text>
             </>
           ) : (
-            <View style={styles.plusMessage}>
-              <Ionicons name="phone-portrait-outline" size={18} color={COLORS.purpleDark} />
-              <Text style={styles.plusMessageText}>{subscription.statusMessage ?? 'Purchases are available in the WordWiz iOS app.'}</Text>
-            </View>
+            <>
+              <PlanOption
+                title="Annual"
+                caption="Best value · billed yearly"
+                price="Live price in build"
+                selected={selectedPackage === 'annual'}
+                badge="BEST VALUE"
+                onPress={() => setSelectedPackage('annual')}
+                preview={isPlanPreview}
+              />
+              <PlanOption
+                title="Monthly"
+                caption="Flexible monthly access"
+                price="Live price in build"
+                selected={selectedPackage === 'monthly'}
+                onPress={() => setSelectedPackage('monthly')}
+                preview={isPlanPreview}
+              />
+              <View style={styles.plusMessage}>
+                <Ionicons name="phone-portrait-outline" size={18} color={COLORS.purpleDark} />
+                <Text style={styles.plusMessageText}>Preview the plans here. Live App Store prices and purchases appear in an EAS development build or TestFlight.</Text>
+              </View>
+              <Pressable accessibilityRole="button" disabled style={[styles.plusSubscribeButton, styles.plusButtonDisabled]}>
+                <Text style={styles.plusSubscribeButtonText}>AVAILABLE IN TEST BUILD</Text>
+              </Pressable>
+            </>
           )}
 
           <View style={styles.plusSecondaryActions}>
@@ -202,12 +225,25 @@ function Benefit({ icon, text }: { icon: keyof typeof Ionicons.glyphMap; text: s
   return <View style={styles.plusBenefit}><Ionicons name={icon} size={18} color={COLORS.teal} /><Text style={styles.plusBenefitText}>{text}</Text></View>;
 }
 
-function PlanOption({ title, caption, price, selected, disabled = false, badge, onPress }: { title: string; caption: string; price: string; selected: boolean; disabled?: boolean; badge?: string; onPress: () => void }) {
-  return <Pressable accessibilityRole="radio" accessibilityState={{ selected, disabled }} disabled={disabled} onPress={onPress} style={({ pressed }) => [styles.plusPlan, selected && styles.plusPlanSelected, disabled && styles.plusButtonDisabled, pressed && styles.pressed]}>
-    <View style={[styles.plusPlanRadio, selected && styles.plusPlanRadioSelected]}>{selected ? <View style={styles.plusPlanRadioDot} /> : null}</View>
-    <View style={styles.plusPlanCopy}><View style={styles.plusPlanTitleRow}><Text style={styles.plusPlanTitle}>{title}</Text>{badge ? <Text style={styles.plusPlanBadge}>{badge}</Text> : null}</View><Text style={styles.plusPlanCaption}>{caption}</Text></View>
-    <Text style={styles.plusPlanPrice}>{price}</Text>
-  </Pressable>;
+function PlanOption({ title, caption, price, selected, disabled = false, badge, onPress, preview = false }: { title: string; caption: string; price: string; selected: boolean; disabled?: boolean; badge?: string; onPress: () => void; preview?: boolean }) {
+  const selectionScale = useRef(new Animated.Value(selected ? 1 : 0.985)).current;
+
+  useEffect(() => {
+    Animated.spring(selectionScale, {
+      toValue: selected ? 1 : 0.985,
+      friction: 8,
+      tension: 95,
+      useNativeDriver: true,
+    }).start();
+  }, [selected, selectionScale]);
+
+  return <Animated.View style={{ transform: [{ scale: selectionScale }] }}>
+    <Pressable accessibilityRole="radio" accessibilityState={{ selected, disabled }} disabled={disabled} onPress={onPress} style={({ pressed }) => [styles.plusPlan, selected && styles.plusPlanSelected, disabled && styles.plusButtonDisabled, pressed && styles.pressed]}>
+      <View style={[styles.plusPlanRadio, selected && styles.plusPlanRadioSelected]}>{selected ? <View style={styles.plusPlanRadioDot} /> : null}</View>
+      <View style={styles.plusPlanCopy}><View style={styles.plusPlanTitleRow}><Text style={styles.plusPlanTitle}>{title}</Text>{badge ? <Text style={styles.plusPlanBadge}>{badge}</Text> : null}</View><Text style={styles.plusPlanCaption}>{caption}</Text></View>
+      <Text style={[styles.plusPlanPrice, preview && styles.plusPlanPricePreview]}>{price}</Text>
+    </Pressable>
+  </Animated.View>;
 }
 
 function getAnnualSavingsPercent(monthly: PurchasesPackage | null, annual: PurchasesPackage | null) {

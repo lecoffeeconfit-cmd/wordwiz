@@ -427,17 +427,31 @@ function SegmentArc({
       segment.startScore,
       segment.endScore,
     );
-    const shineProgress = clampUnit((segmentProgress - 0.48) / 0.22);
-    const glowProgress = clampUnit((segmentProgress - 0.75) / 0.25);
+    const glossProgress = clampUnit((animatedScore.value - 75) / 25);
     const visibleLength = Math.max(0.01, segment.arcLength * segmentProgress);
     const shineLength = Math.max(10, Math.min(23, segment.arcLength * 0.36));
     const travelLength = Math.max(0, visibleLength - shineLength);
     const localOffset = travelLength * shimmerTravel.value;
 
     return {
-      opacity: shineProgress * (0.2 + glowProgress * 0.14),
+      opacity: glossProgress * 0.42,
       strokeDasharray: `${shineLength} ${CIRCUMFERENCE - shineLength}`,
       strokeDashoffset: -(segment.startLength + localOffset),
+    };
+  });
+
+  const glowAnimatedProps = useAnimatedProps(() => {
+    const segmentProgress = getSegmentProgress(
+      animatedScore.value,
+      segment.startScore,
+      segment.endScore,
+    );
+    const glowProgress = clampUnit((animatedScore.value - 50) / 20);
+    const fillLength = Math.max(0.01, segment.arcLength * segmentProgress);
+
+    return {
+      opacity: glowProgress * (segmentProgress > 0.002 ? 0.32 : 0),
+      strokeDasharray: `${fillLength} ${CIRCUMFERENCE - fillLength}`,
     };
   });
 
@@ -453,6 +467,18 @@ function SegmentArc({
         fill="transparent"
         strokeDasharray={trackDasharray}
         strokeDashoffset={strokeDashoffset}
+        transform={rotateToTop}
+      />
+      <AnimatedCircle
+        cx={CENTER}
+        cy={CENTER}
+        r={RADIUS}
+        stroke={segment.color}
+        strokeWidth={STROKE_WIDTH + 8}
+        strokeLinecap="butt"
+        fill="transparent"
+        strokeDashoffset={strokeDashoffset}
+        animatedProps={glowAnimatedProps}
         transform={rotateToTop}
       />
       <AnimatedCircle
@@ -521,13 +547,8 @@ function SegmentSparkle({
   const y = CENTER + Math.sin(radians) * SEGMENT_SPARKLE_RADIUS - size / 2;
 
   const sparkleStyle = useAnimatedStyle(() => {
-    const segmentProgress = getSegmentProgress(
-      animatedScore.value,
-      segment.startScore,
-      segment.endScore,
-    );
-    const shineProgress = clampUnit((segmentProgress - 0.48) / 0.22);
-    const glowProgress = clampUnit((segmentProgress - 0.75) / 0.25);
+    const glowProgress = clampUnit((animatedScore.value - 50) / 20);
+    const glossProgress = clampUnit((animatedScore.value - 75) / 25);
     const twinkle =
       0.55 + Math.sin((shimmerTravel.value + phase) * Math.PI * 2) * 0.28;
     const orbit = shimmerTravel.value * Math.PI * 2 + phase;
@@ -535,7 +556,7 @@ function SegmentSparkle({
     return {
       opacity: Math.max(
         0,
-        glowProgress * (0.42 + shineProgress * 0.1) * twinkle + burst.value * 0.32,
+        glowProgress * (0.42 + glossProgress * 0.1) * twinkle + burst.value * 0.32,
       ),
       transform: [
         { translateX: Math.cos(orbit) * 1.6 },

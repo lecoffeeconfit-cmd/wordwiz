@@ -1,4 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, FlatList, Pressable, ScrollView, Text, View } from 'react-native';
 import { COLORS } from '../constants/theme';
@@ -7,13 +8,15 @@ import type { QuizFeedbackSummary } from '../utils';
 import type { AuthUser } from '../types';
 import { styles } from '../styles';
 import { DEFAULT_TIME_BASED_LEARNING_SETTINGS, MASTERY_LEVELS, buildAchievements, buildQuiz, calculateStreakStats, FLUENT_RECALL_SECONDS, formatReminderTime, formatStudyTime, getDayKey, getDueReviewWords, getHeroProgressColor, getMasteryLevel, getMasteryLevelProgress, getNextMasteryLevel, getProgressColor, getProgressPaleColor, getQuizAttemptKind, getQuizFeedbackByWord, getQuizFeedbackSummary, getQuizRecallPaceByQuestionType, getQuizRecallPaceByWord, getQuizResponseSignalSummary, getQuizRetrievalProfile, getRecentDays, getStreakMessage, getStreakMilestone, getStreakWeek, getWordMastery, getWordMasteryCategory, getWordMasteryCategoryForWord, normalizeTimeBasedLearningSettings, shuffle } from '../utils';
-import { CompactPagination, DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
+import { CompactPagination, DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, ProgressFill, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 import { LessonProgressRing } from '../components/dashboard/LessonProgressRing';
 import { useSubscription } from '../subscription/SubscriptionProvider';
 
 const EXPANDED_LIST_PAGE_SIZE = 8;
 const QUIZ_TREND_PAGE_SIZE = 6;
 const DUE_REVIEW_PREVIEW_SIZE = 6;
+const ACHIEVEMENT_PAGE_SIZE = 4;
+const DAILY_ACTIVITY_TARGET_STUDY_SECONDS = 10 * 60;
 const QUIZ_DIFFICULTY_OPTIONS: { id: QuizDifficultyPreference; label: string }[] = [
   { id: 'automatic', label: 'Auto' },
   { id: 'easy', label: 'Easy' },
@@ -34,6 +37,9 @@ export function DashboardScreen({
   onReviewDue,
   onStudyFlaggedCards,
   onStudyFlaggedQuiz,
+  onSetWordFlagState,
+  onToggleWordFocus,
+  onToggleWordReviewNext,
   onUpdateReminder,
   onUpdateDailyQuizGoal,
   onTimedLearningChange,
@@ -51,9 +57,12 @@ export function DashboardScreen({
   currentUser: AuthUser | null;
   reminderSettings: ReminderSettings;
   dailyQuizGoal: number;
-  onReviewDue: () => void;
+  onReviewDue: (priorityWordIds?: string[]) => void;
   onStudyFlaggedCards: () => void;
   onStudyFlaggedQuiz: () => void;
+  onSetWordFlagState: (wordIds: string[], isFlagged: boolean) => void;
+  onToggleWordFocus: (wordId: string) => void;
+  onToggleWordReviewNext: (wordId: string) => void;
   onUpdateReminder: (settings: ReminderSettings) => void;
   onUpdateDailyQuizGoal: (goal: number) => void;
   onTimedLearningChange: (enabled: boolean) => void;
@@ -65,11 +74,16 @@ export function DashboardScreen({
 }) {
   const subscription = useSubscription();
   const [achievementsExpanded, setAchievementsExpanded] = useState(false);
+  const [achievementPage, setAchievementPage] = useState(0);
   const [masteryExpanded, setMasteryExpanded] = useState(false);
   const [quizTrendExpanded, setQuizTrendExpanded] = useState(false);
   const [practiceEstimateExpanded, setPracticeEstimateExpanded] = useState(false);
   const [dueReviewsExpanded, setDueReviewsExpanded] = useState(false);
   const [dueReviewPage, setDueReviewPage] = useState(0);
+  const pendingDueReviewTap = useRef<{
+    wordId: string;
+    timeout: ReturnType<typeof setTimeout>;
+  } | null>(null);
   const [masteryPage, setMasteryPage] = useState(0);
   const [quizTrendPage, setQuizTrendPage] = useState(0);
   const [feedbackView, setFeedbackView] = useState<'overall' | 'words'>('overall');
@@ -80,6 +94,8 @@ export function DashboardScreen({
     timeBasedLearningSettings,
   );
   const masterSparkleScale = useRef(new Animated.Value(1)).current;
+  const flaggedCountScale = useRef(new Animated.Value(1)).current;
+  const [recentlyUnflaggedWordIds, setRecentlyUnflaggedWordIds] = useState<string[]>([]);
   const lastMasteryRowTapAt = useRef(0);
   const lastAchievementTapAt = useRef(0);
   const lastQuizTrendTapAt = useRef(0);
@@ -97,6 +113,36 @@ export function DashboardScreen({
   const accuracy = totalQuizQuestions
     ? Math.round((totalCorrect / totalQuizQuestions) * 100)
     : 0;
+  const flaggedWordIds = words.filter((word) => word.isFlagged).map((word) => word.id);
+  const flaggedCount = flaggedWordIds.length;
+
+  useEffect(() => {
+    Animated.sequence([
+      Animated.timing(flaggedCountScale, {
+        toValue: 1.12,
+        duration: 150,
+        useNativeDriver: true,
+      }),
+      Animated.spring(flaggedCountScale, {
+        toValue: 1,
+        friction: 5,
+        tension: 120,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [flaggedCount, flaggedCountScale]);
+
+  function toggleAllFlags() {
+    if (recentlyUnflaggedWordIds.length > 0) {
+      onSetWordFlagState(recentlyUnflaggedWordIds, true);
+      setRecentlyUnflaggedWordIds([]);
+      return;
+    }
+
+    if (flaggedWordIds.length === 0) return;
+    onSetWordFlagState(flaggedWordIds, false);
+    setRecentlyUnflaggedWordIds(flaggedWordIds);
+  }
   const quizAccuracySegments = buildQuizAccuracySegments(
     totalCorrect,
     totalWrong,
@@ -152,9 +198,12 @@ export function DashboardScreen({
         first.word.term.localeCompare(second.word.term, undefined, {
           sensitivity: 'base',
         }),
-    );
+  );
   const dueReviews = getDueReviewWords(words, analytics);
-  const flaggedCount = words.filter((word) => word.isFlagged).length;
+  const queuedDueReviewWordIds = dueReviews
+    .filter((item) => item.word.mastery?.reviewNext === true)
+    .map((item) => item.word.id);
+  const queuedDueReviewWordIdSet = new Set(queuedDueReviewWordIds);
   const dueReviewPageCount = Math.max(
     1,
     Math.ceil(dueReviews.length / EXPANDED_LIST_PAGE_SIZE),
@@ -170,6 +219,42 @@ export function DashboardScreen({
         dueReviewStartIndex + EXPANDED_LIST_PAGE_SIZE,
       )
     : dueReviews.slice(0, DUE_REVIEW_PREVIEW_SIZE);
+
+  function handleDueReviewPress(wordId: string) {
+    const pendingTap = pendingDueReviewTap.current;
+    if (pendingTap?.wordId === wordId) {
+      clearTimeout(pendingTap.timeout);
+      pendingDueReviewTap.current = null;
+      onToggleWordFocus(wordId);
+      return;
+    }
+
+    if (pendingTap) {
+      clearTimeout(pendingTap.timeout);
+      onToggleWordReviewNext(pendingTap.wordId);
+    }
+
+    pendingDueReviewTap.current = {
+      wordId,
+      timeout: setTimeout(() => {
+        onToggleWordReviewNext(wordId);
+        pendingDueReviewTap.current = null;
+      }, 250),
+    };
+  }
+
+  useEffect(
+    () => () => {
+      if (pendingDueReviewTap.current) {
+        clearTimeout(pendingDueReviewTap.current.timeout);
+      }
+    },
+    [],
+  );
+
+  function startDueReview() {
+    onReviewDue(queuedDueReviewWordIds);
+  }
   const masteryPageCount = Math.max(
     1,
     Math.ceil(mastery.length / EXPANDED_LIST_PAGE_SIZE),
@@ -240,22 +325,15 @@ export function DashboardScreen({
 
     return {
       ...day,
-      activityScore: Math.max(
-        activityCount,
-        Math.ceil(studySeconds / 60),
-      ),
       activityCount,
       quizCount: dayQuizAttempts.length,
       studySeconds,
+      dailyProgress: getDailyActivityProgress(studySeconds, dayQuizAttempts.length),
     };
   });
   const weeklyActivityTotal = weeklyActivity.reduce(
     (total, day) => total + day.activityCount,
     0,
-  );
-  const maxActivity = Math.max(
-    1,
-    ...weeklyActivity.map((day) => day.activityScore),
   );
   const recentQuizzes = analytics.quizHistory.slice(0, 5);
   const quizTrendPageCount = Math.max(
@@ -277,6 +355,18 @@ export function DashboardScreen({
   const streakMilestone = getStreakMilestone(streakStats);
   const streakWeek = getStreakWeek(streakStats);
   const achievements = buildAchievements({ words, analytics, streakStats });
+  const achievementPageCount = Math.max(
+    1,
+    Math.ceil(achievements.length / ACHIEVEMENT_PAGE_SIZE),
+  );
+  const currentAchievementPage = Math.min(
+    achievementPage,
+    achievementPageCount - 1,
+  );
+  const pagedAchievements = achievements.slice(
+    currentAchievementPage * ACHIEVEMENT_PAGE_SIZE,
+    (currentAchievementPage + 1) * ACHIEVEMENT_PAGE_SIZE,
+  );
   const unlockedAchievements = achievements.filter(
     (achievement) => achievement.unlocked,
   ).length;
@@ -438,14 +528,11 @@ export function DashboardScreen({
             {masteryLevel.encouragement}
           </Text>
           <View style={styles.heroLevelTrack}>
-            <View
-              style={[
-                styles.heroLevelFill,
-                {
-                  width: `${Math.max(masteryLevelProgress, words.length ? 6 : 0)}%`,
-                  backgroundColor: getHeroProgressColor(masteryLevelProgress),
-                },
-              ]}
+            <ProgressFill
+              color={getHeroProgressColor(masteryLevelProgress)}
+              progress={Math.max(masteryLevelProgress, words.length ? 6 : 0)}
+              radius={4}
+              style={{ width: `${Math.max(masteryLevelProgress, words.length ? 6 : 0)}%` }}
             />
           </View>
           <Text style={styles.heroLevelNext}>
@@ -528,9 +615,15 @@ export function DashboardScreen({
               <Text style={styles.streakLabel}>STREAKS</Text>
               <Text style={styles.streakTitle}>{streakMilestone.title}</Text>
             </View>
-            <Text style={styles.longestStreak}>
-              Best {streakStats.longest}d
-            </Text>
+            <View style={styles.streakSummary}>
+              <Text style={styles.streakCurrentValue}>
+                {streakStats.current}d
+              </Text>
+              <Text style={styles.streakCurrentLabel}>Current streak</Text>
+              <Text style={styles.streakBestLabel}>
+                Best {streakStats.longest}d
+              </Text>
+            </View>
           </View>
           <Text style={styles.streakMessage}>
             {getStreakMessage(streakStats)} {streakMilestone.description}
@@ -581,127 +674,29 @@ export function DashboardScreen({
             contentContainerStyle={[styles.barChart, styles.barChartWide]}
           >
             {weeklyActivity.map((day) => {
-              const isActive = day.activityCount > 0 || day.studySeconds > 0;
               const isToday = day.key === todayKey;
-              const quizShare = day.quizCount
-                ? Math.max(
-                    22,
-                    Math.min(
-                      58,
-                      (day.quizCount / Math.max(1, day.activityCount)) * 100,
-                    ),
-                  )
-                : 0;
 
               return (
-                <View
+                <DailyActivityBar
                   key={day.key}
-                  style={[styles.barColumn, styles.barColumnCompact]}
-                >
-                  <Text style={styles.barValue}>
-                    {isActive ? formatStudyTime(day.studySeconds) : ''}
-                  </Text>
-                  <View style={styles.barTrack}>
-                    <View
-                      style={[
-                        styles.barFill,
-                        {
-                          height: `${Math.max(
-                            isActive ? 12 : 18,
-                            (day.activityScore / maxActivity) * 100,
-                          )}%`,
-                          backgroundColor: isToday
-                            ? COLORS.green
-                            : isActive
-                              ? COLORS.blue
-                              : COLORS.blue,
-                        },
-                      ]}
-                    >
-                      {quizShare ? (
-                        <View
-                          style={[
-                            styles.barQuizSegment,
-                            { height: `${quizShare}%` },
-                          ]}
-                        />
-                      ) : null}
-                    </View>
-                  </View>
-                  <Text
-                    style={[
-                      styles.barLabel,
-                      isToday && styles.barLabelToday,
-                    ]}
-                  >
-                    {new Date(`${day.key}T12:00:00`).getDate()}
-                  </Text>
-                  <Text style={styles.practiceBarQuizText}>
-                    {isActive ? `${day.quizCount}q` : ''}
-                  </Text>
-                </View>
+                  compact
+                  day={day}
+                  isToday={isToday}
+                />
               );
             })}
           </ScrollView>
         ) : (
           <View style={styles.barChart}>
             {weeklyActivity.map((day) => {
-              const isActive = day.activityCount > 0 || day.studySeconds > 0;
               const isToday = day.key === todayKey;
-              const quizShare = day.quizCount
-                ? Math.max(
-                    22,
-                    Math.min(
-                      58,
-                      (day.quizCount / Math.max(1, day.activityCount)) * 100,
-                    ),
-                  )
-                : 0;
 
               return (
-                <View key={day.key} style={styles.barColumn}>
-                  <Text style={styles.barValue}>
-                    {isActive ? formatStudyTime(day.studySeconds) : ''}
-                  </Text>
-                  <View style={styles.barTrack}>
-                    <View
-                      style={[
-                        styles.barFill,
-                        {
-                          height: `${Math.max(
-                            isActive ? 12 : 18,
-                            (day.activityScore / maxActivity) * 100,
-                          )}%`,
-                          backgroundColor: isToday
-                            ? COLORS.green
-                            : isActive
-                              ? COLORS.blue
-                              : COLORS.blue,
-                        },
-                      ]}
-                    >
-                      {quizShare ? (
-                        <View
-                          style={[
-                            styles.barQuizSegment,
-                            { height: `${quizShare}%` },
-                          ]}
-                        />
-                      ) : null}
-                    </View>
-                  </View>
-                  <Text
-                    style={[
-                      styles.barLabel,
-                      isToday && styles.barLabelToday,
-                    ]}
-                  >
-                    {day.label}
-                  </Text>
-                  <Text style={styles.practiceBarQuizText}>
-                    {isActive ? `${day.quizCount}q` : ''}
-                  </Text>
-                </View>
+                <DailyActivityBar
+                  key={day.key}
+                  day={day}
+                  isToday={isToday}
+                />
               );
             })}
           </View>
@@ -831,6 +826,66 @@ export function DashboardScreen({
       </View>
 
       <DashboardSection
+        title="RETRIEVAL PROFILE"
+        badge={retrievalProfile.totalAnswers ? `${retrievalProfile.recallPercent}% recall` : 'New'}
+      >
+        <Text style={styles.retrievalProfileIntro}>
+          Recognition builds familiarity, but recall is the stronger sign that a word is becoming part of your memory.
+        </Text>
+        {retrievalProfile.totalAnswers === 0 ? (
+          <View style={styles.feedbackEmpty}>
+            <Ionicons name="bulb-outline" size={21} color={COLORS.purpleDark} />
+            <Text style={styles.feedbackEmptyText}>
+              Complete a few quiz questions to see how much of your evidence comes from recognition versus recall.
+            </Text>
+          </View>
+        ) : (
+          <>
+            <View style={styles.retrievalProfileSplit}>
+              <RetrievalEvidenceCard
+                label="Recognition"
+                value={retrievalProfile.recognitionPercent}
+                detail="Familiarity · may use cues or quiz patterns"
+                color={COLORS.blue}
+                pale="#EAF3FF"
+              />
+              <RetrievalEvidenceCard
+                label="Recall"
+                value={retrievalProfile.recallPercent}
+                detail="Retrieval · bring the meaning back from memory"
+                color={COLORS.greenDark}
+                pale="#E8FBF4"
+              />
+            </View>
+            <View style={styles.retrievalEvidenceRow}>
+              <Ionicons name="key-outline" size={17} color={COLORS.purpleDark} />
+              <Text style={styles.retrievalEvidenceText}>
+                {retrievalProfile.directRecallCorrect} answers recalled without choices · {retrievalProfile.delayedDirectRecallCorrect} still recalled a day later
+              </Text>
+            </View>
+          </>
+        )}
+        <View style={styles.retrievalProgression}>
+          <Text style={styles.retrievalProgressionTitle}>HOW WORDWIZ BUILDS RETRIEVAL</Text>
+          {[
+            'See the word and meaning',
+            'Choose the definition',
+            'Choose the word from its meaning',
+            'Use context and distinguish close meanings',
+            'Type the word from its definition',
+            'Recall it again after a longer delay',
+          ].map((step, index) => (
+            <View key={step} style={styles.retrievalProgressionStep}>
+              <View style={styles.retrievalProgressionNumber}>
+                <Text style={styles.retrievalProgressionNumberText}>{index + 1}</Text>
+              </View>
+              <Text style={styles.retrievalProgressionText}>{step}</Text>
+            </View>
+          ))}
+        </View>
+      </DashboardSection>
+
+      <DashboardSection
         title="RECALL FEEDBACK"
         badge={feedbackSummary.total ? `${feedbackSummary.total} check-ins` : 'New'}
       >
@@ -948,66 +1003,6 @@ export function DashboardScreen({
         )}
       </DashboardSection>
 
-      <DashboardSection
-        title="RETRIEVAL PROFILE"
-        badge={retrievalProfile.totalAnswers ? `${retrievalProfile.recallPercent}% recall` : 'New'}
-      >
-        <Text style={styles.retrievalProfileIntro}>
-          An estimate from question format, accuracy, and pace—not a direct reading of memory.
-        </Text>
-        {retrievalProfile.totalAnswers === 0 ? (
-          <View style={styles.feedbackEmpty}>
-            <Ionicons name="bulb-outline" size={21} color={COLORS.purpleDark} />
-            <Text style={styles.feedbackEmptyText}>
-              Complete a few quiz questions to see how much of your evidence comes from recognition versus recall.
-            </Text>
-          </View>
-        ) : (
-          <>
-            <View style={styles.retrievalProfileSplit}>
-              <RetrievalEvidenceCard
-                label="Recognition"
-                value={retrievalProfile.recognitionPercent}
-                detail="Cued choices"
-                color={COLORS.blue}
-                pale="#EAF3FF"
-              />
-              <RetrievalEvidenceCard
-                label="Recall"
-                value={retrievalProfile.recallPercent}
-                detail="Bring it to mind"
-                color={COLORS.greenDark}
-                pale="#E8FBF4"
-              />
-            </View>
-            <View style={styles.retrievalEvidenceRow}>
-              <Ionicons name="key-outline" size={17} color={COLORS.purpleDark} />
-              <Text style={styles.retrievalEvidenceText}>
-                {retrievalProfile.directRecallCorrect} direct recalls · {retrievalProfile.delayedDirectRecallCorrect} after a day or more
-              </Text>
-            </View>
-          </>
-        )}
-        <View style={styles.retrievalProgression}>
-          <Text style={styles.retrievalProgressionTitle}>HOW WORDWIZ BUILDS RETRIEVAL</Text>
-          {[
-            'See the word and meaning',
-            'Choose the definition',
-            'Choose the word from its meaning',
-            'Use context and distinguish close meanings',
-            'Type the word from its definition',
-            'Recall it again after a longer delay',
-          ].map((step, index) => (
-            <View key={step} style={styles.retrievalProgressionStep}>
-              <View style={styles.retrievalProgressionNumber}>
-                <Text style={styles.retrievalProgressionNumberText}>{index + 1}</Text>
-              </View>
-              <Text style={styles.retrievalProgressionText}>{step}</Text>
-            </View>
-          ))}
-        </View>
-      </DashboardSection>
-
       <DashboardSection title="WORD MASTERY" badge={`${words.length} words`}>
         {mastery.length === 0 ? (
           <Text style={styles.dashboardEmptyText}>
@@ -1087,14 +1082,11 @@ export function DashboardScreen({
                       isMasterWord && { backgroundColor: wordCategory.pale },
                     ]}
                   >
-                    <View
-                      style={[
-                        styles.masteryFill,
-                        {
-                          width: `${Math.max(item.score, 3)}%`,
-                          backgroundColor: wordCategory.color,
-                        },
-                      ]}
+                    <ProgressFill
+                      color={wordCategory.color}
+                      progress={Math.max(item.score, 3)}
+                      radius={5}
+                      style={{ width: `${Math.max(item.score, 3)}%` }}
                     />
                   </View>
                 </Pressable>
@@ -1177,7 +1169,7 @@ export function DashboardScreen({
         ) : (
           <>
             <Text style={styles.dueReviewIntro}>
-              Research-backed, time-based retention learning schedules proven for stronger word retention.
+              Research-backed, time-based retention learning schedules proven for stronger word retention.{"\n"}Tap for next up · Double-tap to focus
             </Text>
             {dueReviewPreview.map((item) => {
               const category = getWordMasteryCategoryForWord(
@@ -1187,9 +1179,27 @@ export function DashboardScreen({
               const lastReviewedLabel = formatLastReviewed(
                 item.progress.lastReviewedAt,
               );
+              const isQueued = queuedDueReviewWordIdSet.has(item.word.id);
+              const isFocused = item.word.mastery?.focusMode === true;
 
               return (
-                <View key={item.word.id} style={styles.dueReviewRow}>
+                <Pressable
+                  key={item.word.id}
+                  accessibilityRole="button"
+                  accessibilityLabel={
+                    isQueued
+                      ? `Remove ${item.word.term} from the next review queue`
+                      : `Move ${item.word.term} to the front of the next review. Double-tap to focus on it.`
+                  }
+                  accessibilityState={{ selected: isQueued }}
+                  onPress={() => handleDueReviewPress(item.word.id)}
+                  style={({ pressed }) => [
+                    styles.dueReviewRow,
+                    isQueued && styles.dueReviewRowQueued,
+                    isFocused && styles.dueReviewRowFocused,
+                    pressed && styles.pressed,
+                  ]}
+                >
                   <View
                     style={[
                       styles.dueReviewIcon,
@@ -1206,8 +1216,25 @@ export function DashboardScreen({
                       {category.shortLabel} · {lastReviewedLabel}
                     </Text>
                   </View>
-                  <Text style={styles.dueReviewTiming}>{item.timingLabel}</Text>
-                </View>
+                  {isFocused ? (
+                    <View style={styles.dueReviewFocusedTiming}>
+                      <View style={styles.dueReviewFocusedLabel}>
+                        <Ionicons name="flame" size={11} color="#B78300" />
+                        <Text style={styles.dueReviewFocusedText}>FOCUS</Text>
+                      </View>
+                      <Text style={styles.dueReviewTiming}>
+                        {isQueued ? 'NEXT UP' : item.timingLabel}
+                      </Text>
+                    </View>
+                  ) : isQueued ? (
+                    <View style={styles.dueReviewQueuedLabel}>
+                      <Ionicons name="arrow-up" size={12} color={COLORS.purpleDark} />
+                      <Text style={styles.dueReviewQueuedText}>NEXT UP</Text>
+                    </View>
+                  ) : (
+                    <Text style={styles.dueReviewTiming}>{item.timingLabel}</Text>
+                  )}
+                </Pressable>
               );
             })}
             {dueReviewsExpanded && dueReviewPageCount > 1 ? (
@@ -1257,14 +1284,18 @@ export function DashboardScreen({
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Review due words now"
-                onPress={onReviewDue}
+                onPress={startDueReview}
                 style={({ pressed }) => [
                   styles.dueReviewButton,
                   pressed && styles.primaryButtonPressed,
                 ]}
               >
                 <Ionicons name="play" size={14} color={COLORS.white} />
-                <Text style={styles.dueReviewButtonText}>REVIEW NOW</Text>
+                <Text style={styles.dueReviewButtonText}>
+                  {queuedDueReviewWordIds.length > 0
+                    ? `REVIEW ${queuedDueReviewWordIds.length} NEXT`
+                    : 'REVIEW NOW'}
+                </Text>
               </Pressable>
             </View>
           </>
@@ -1273,7 +1304,6 @@ export function DashboardScreen({
 
       <DashboardSection
         title="FLAGGED WORDS"
-        badge={flaggedCount ? `${flaggedCount} saved` : 'None yet'}
       >
         <View style={styles.flaggedDashboardRow}>
           <View style={styles.flaggedDashboardIcon}>
@@ -1289,6 +1319,15 @@ export function DashboardScreen({
                 : 'Flag a flashcard or quiz word to collect it here.'}
             </Text>
           </View>
+          <Animated.View
+            style={[
+              styles.flaggedDashboardCount,
+              { transform: [{ scale: flaggedCountScale }] },
+            ]}
+          >
+            <Text style={styles.flaggedDashboardCountNumber}>{flaggedCount}</Text>
+            <Text style={styles.flaggedDashboardCountLabel}>SAVED</Text>
+          </Animated.View>
         </View>
         <View style={styles.flaggedDashboardActions}>
           <Pressable
@@ -1318,6 +1357,27 @@ export function DashboardScreen({
             <Text style={styles.flaggedDashboardButtonText}>QUIZ</Text>
           </Pressable>
         </View>
+        {(flaggedCount > 0 || recentlyUnflaggedWordIds.length > 0) ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={recentlyUnflaggedWordIds.length > 0 ? 'Undo unflag all words' : 'Unflag all saved words'}
+            onPress={toggleAllFlags}
+            style={({ pressed }) => [
+              styles.flaggedDashboardBulkButton,
+              recentlyUnflaggedWordIds.length > 0 && styles.flaggedDashboardBulkButtonUndo,
+              pressed && styles.pressed,
+            ]}
+          >
+            <Ionicons
+              name={recentlyUnflaggedWordIds.length > 0 ? 'arrow-undo-outline' : 'bookmark-outline'}
+              size={15}
+              color={COLORS.purpleDark}
+            />
+            <Text style={styles.flaggedDashboardBulkButtonText}>
+              {recentlyUnflaggedWordIds.length > 0 ? 'UNDO' : 'UNFLAG ALL'}
+            </Text>
+          </Pressable>
+        ) : null}
       </DashboardSection>
 
       <DashboardSection
@@ -1332,7 +1392,14 @@ export function DashboardScreen({
               : 'Expand achievements'
           }
           accessibilityState={{ expanded: achievementsExpanded }}
-          onPress={() => setAchievementsExpanded((expanded) => !expanded)}
+          onPress={() => {
+            if (achievementsExpanded) {
+              setAchievementsExpanded(false);
+              return;
+            }
+            setAchievementPage(0);
+            setAchievementsExpanded(true);
+          }}
           style={({ pressed }) => [
             styles.achievementSummary,
             pressed && styles.pressed,
@@ -1380,7 +1447,7 @@ export function DashboardScreen({
               Double-tap any achievement to show fewer
             </Text>
             <View style={styles.achievementGrid}>
-            {achievements.map((achievement) => {
+            {pagedAchievements.map((achievement) => {
             const percent = Math.round(
               (achievement.progress / achievement.target) * 100,
             );
@@ -1430,20 +1497,34 @@ export function DashboardScreen({
                   {achievement.description}
                 </Text>
                 <View style={styles.achievementTrack}>
-                  <View
-                    style={[
-                      styles.achievementFill,
-                      {
-                        width: `${Math.max(percent, achievement.progress ? 8 : 0)}%`,
-                        backgroundColor: fillColor,
-                      },
-                  ]}
-                />
+                  <ProgressFill
+                    color={fillColor}
+                    progress={Math.max(percent, achievement.progress ? 8 : 0)}
+                    radius={4}
+                    style={{ width: `${Math.max(percent, achievement.progress ? 8 : 0)}%` }}
+                  />
                 </View>
               </Pressable>
             );
           })}
             </View>
+            {achievementPageCount > 1 ? (
+              <CompactPagination
+                page={currentAchievementPage}
+                pageCount={achievementPageCount}
+                pageSize={ACHIEVEMENT_PAGE_SIZE}
+                total={achievements.length}
+                itemLabel="achievements"
+                onPrevious={() =>
+                  setAchievementPage(Math.max(0, currentAchievementPage - 1))
+                }
+                onNext={() =>
+                  setAchievementPage(
+                    Math.min(achievementPageCount - 1, currentAchievementPage + 1),
+                  )
+                }
+              />
+            ) : null}
           </>
         ) : null}
       </DashboardSection>
@@ -1873,14 +1954,11 @@ export function DashboardScreen({
                     { backgroundColor: tone.track },
                   ]}
                 >
-                  <View
-                    style={[
-                      styles.trendFill,
-                      {
-                        width: `${percent}%`,
-                        backgroundColor: tone.fill,
-                      },
-                    ]}
+                  <ProgressFill
+                    color={tone.fill}
+                    progress={percent}
+                    radius={5}
+                    style={{ width: `${percent}%` }}
                   />
                 </View>
                 <View style={styles.trendFooter}>
@@ -2137,7 +2215,12 @@ function RecallPaceList({
               </View>
             </View>
             <View style={styles.recallPaceTrack}>
-              <View style={[styles.recallPaceFill, { width: `${width}%` }]} />
+              <ProgressFill
+                color={COLORS.blue}
+                progress={width}
+                radius={4}
+                style={{ width: `${width}%` }}
+              />
             </View>
             <Text style={styles.recallPaceMeta}>
               {item.answerCount} {item.answerCount === 1 ? 'response' : 'responses'}
@@ -2307,6 +2390,97 @@ function ReminderTimeStepper({
       </View>
     </View>
   );
+}
+
+function DailyActivityBar({
+  day,
+  isToday,
+  compact = false,
+}: {
+  day: {
+    key: string;
+    label: string;
+    activityCount: number;
+    quizCount: number;
+    studySeconds: number;
+    dailyProgress: number;
+  };
+  isToday: boolean;
+  compact?: boolean;
+}) {
+  const isActive = day.activityCount > 0 || day.studySeconds > 0;
+  const quizShare = day.quizCount
+    ? Math.max(
+        22,
+        Math.min(
+          58,
+          (day.quizCount / Math.max(1, day.activityCount)) * 100,
+        ),
+      )
+    : 0;
+  const fillColor = isToday ? COLORS.green : COLORS.blue;
+  const hasGlow = isActive && day.dailyProgress >= 50;
+  const isGlossy = isActive && day.dailyProgress >= 75;
+  const glossOpacity = 0.14 + ((Math.max(75, day.dailyProgress) - 75) / 25) * 0.16;
+
+  return (
+    <View style={[styles.barColumn, compact && styles.barColumnCompact]}>
+      <Text style={styles.barValue}>
+        {isActive ? formatStudyTime(day.studySeconds) : ''}
+      </Text>
+      <View style={styles.barTrack}>
+        <View
+          style={[
+            styles.barFill,
+            hasGlow && styles.barFillGlow,
+            {
+              height: `${Math.max(isActive ? 12 : 18, day.dailyProgress)}%`,
+              backgroundColor: fillColor,
+              shadowColor: fillColor,
+            },
+          ]}
+        >
+          {quizShare ? (
+            <View
+              style={[
+                styles.barQuizSegment,
+                { height: `${quizShare}%` },
+              ]}
+            />
+          ) : null}
+          {isGlossy ? (
+            <LinearGradient
+              colors={[
+                'rgba(255,255,255,0.3)',
+                'rgba(255,255,255,0.08)',
+                'rgba(255,255,255,0)',
+              ]}
+              end={{ x: 1, y: 1 }}
+              pointerEvents="none"
+              start={{ x: 0, y: 0 }}
+              style={[styles.barGloss, { opacity: glossOpacity }]}
+            />
+          ) : null}
+        </View>
+      </View>
+      <Text style={[styles.barLabel, isToday && styles.barLabelToday]}>
+        {compact ? new Date(`${day.key}T12:00:00`).getDate() : day.label}
+      </Text>
+      <Text style={styles.practiceBarQuizText}>
+        {isActive ? `${day.quizCount}q` : ''}
+      </Text>
+    </View>
+  );
+}
+
+function getDailyActivityProgress(studySeconds: number, quizCount: number) {
+  const studyProgress = Math.min(
+    70,
+    (Math.max(0, studySeconds) / DAILY_ACTIVITY_TARGET_STUDY_SECONDS) * 70,
+  );
+  const quizProgress = Math.min(30, Math.max(0, quizCount) * 15);
+
+  return Math.round(studyProgress + quizProgress);
 }
 
 function normalizeReminderTime(hour: number, minute: number) {

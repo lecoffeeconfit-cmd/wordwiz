@@ -5,7 +5,7 @@ import { COLORS } from '../constants/theme';
 import type { AnalyticsData, LegalPage, QuizAnswer, QuizProgress, QuizQuestion, ReminderSettings, SortMode, Word } from '../types';
 import { styles } from '../styles';
 import { buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, formatWordAddedDate, formatWordFlaggedDate, getCompleteFlashcardDefinition, getDayKey, getNewStudyWords, getRecentDays, getStreakMessage, getStreakWeek, getWordLearningContexts, getWordMastery, getWordMasteryCategoryForWord, NEW_STUDY_GROUP, shuffle, sortWordsAlphabetically, WORD_MASTERY_CATEGORIES, type WordMasteryCategoryId } from '../utils';
-import { DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, SpeakButton, SpeakDefinitionButton, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
+import { DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, ProgressFill, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, SpeakButton, SpeakDefinitionButton, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 
 type CardsStudyGroupId = WordMasteryCategoryId | 'new' | 'flagged';
 
@@ -457,13 +457,11 @@ export function CardsScreen({
                   {studyWords.length}
                 </Text>
                 <View style={styles.progressTrack}>
-                  <View
-                    style={[
-                      styles.progressFill,
-                      {
-                        width: `${cardProgress}%`,
-                      },
-                    ]}
+                  <ProgressFill
+                    color={COLORS.teal}
+                    progress={cardProgress}
+                    radius={5}
+                    style={{ width: `${cardProgress}%` }}
                   />
                 </View>
               </>
@@ -558,7 +556,6 @@ export function CardsScreen({
                 <SpeakDefinitionButton
                   definition={cardDefinition}
                   term={current.term}
-                  showLabel
                 />
               </View>
               {showsSimplifiedDefinition && (

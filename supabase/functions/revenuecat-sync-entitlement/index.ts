@@ -1,6 +1,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
-const PLUS_ENTITLEMENT_ID = 'plus';
+// RevenueCat entitlement identifiers are case-sensitive.
+const PLUS_ENTITLEMENT_ID = 'Plus';
 
 Deno.serve(async (request) => {
   if (request.method !== 'POST') return new Response('Method not allowed', { status: 405 });

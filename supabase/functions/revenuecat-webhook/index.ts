@@ -1,6 +1,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
-const PLUS_ENTITLEMENT_ID = 'plus';
+// RevenueCat entitlement identifiers are case-sensitive.
+const PLUS_ENTITLEMENT_ID = 'Plus';
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 type RevenueCatEvent = {

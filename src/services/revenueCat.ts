@@ -7,7 +7,8 @@ import { AppState, NativeModules, Platform } from 'react-native';
 import { env } from '../config/env';
 import { reportError } from './errorReporting';
 
-export const PLUS_ENTITLEMENT_ID = 'plus';
+// This is case-sensitive and must exactly match the RevenueCat entitlement.
+export const PLUS_ENTITLEMENT_ID = 'Plus';
 
 export type RevenueCatSnapshot = {
   userId: string | null;

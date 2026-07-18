@@ -70,6 +70,10 @@ export type WordMasteryProgress = {
   masteredAt?: string;
   lastSuccessfulReviewAt?: string;
   legacyMastered?: boolean;
+  focusMode?: boolean;
+  focusedAt?: string;
+  reviewNext?: boolean;
+  reviewNextAt?: string;
 };
 
 export type Word = {
