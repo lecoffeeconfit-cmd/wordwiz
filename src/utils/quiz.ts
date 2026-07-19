@@ -1,4 +1,4 @@
-import type { AnalyticsData, QuizAnswer, QuizAttempt, QuizDifficultyPreference, QuizQuestion, QuizQuestionDifficulty, QuizQuestionMode, QuizRecallPaceSignal, QuizSessionMode, TimeBasedLearningSettings, Word } from '../types';
+import type { AnalyticsData, QuizAnswer, QuizAttempt, QuizDifficultyPreference, QuizQuestion, QuizQuestionDifficulty, QuizQuestionMode, QuizQuestionTypePreference, QuizQuestionTypePreferences, QuizRecallPaceSignal, QuizSessionMode, TimeBasedLearningSettings, Word } from '../types';
 import { FALLBACK_DEFINITIONS } from '../constants/data';
 import { getCompleteFlashcardDefinition, getWordLearningContexts } from './dictionary';
 
@@ -12,6 +12,36 @@ export const DEFAULT_TIME_BASED_LEARNING_SETTINGS: TimeBasedLearningSettings = {
   fillInSeconds: 25,
   typedRecallSeconds: 30,
 };
+
+export const QUIZ_QUESTION_MODES: QuizQuestionMode[] = [
+  'word-to-definition',
+  'definition-to-word',
+  'true-false',
+  'typed-word',
+  'sentence-usage',
+  'sentence-completion',
+  'closest-synonym',
+];
+
+export function normalizeQuestionTypePreferences(
+  preferences: QuizQuestionTypePreferences | undefined,
+): Record<QuizQuestionMode, QuizQuestionTypePreference> {
+  const normalized = {} as Record<QuizQuestionMode, QuizQuestionTypePreference>;
+
+  QUIZ_QUESTION_MODES.forEach((mode) => {
+    const saved = preferences?.[mode];
+    normalized[mode] = {
+      enabled: saved?.enabled !== false,
+      frequency: saved?.frequency === 'more' ? 'more' : 'normal',
+    };
+  });
+
+  if (!QUIZ_QUESTION_MODES.some((mode) => normalized[mode].enabled)) {
+    normalized['word-to-definition'] = { enabled: true, frequency: 'normal' };
+  }
+
+  return normalized;
+}
 
 export type QuizResponseSignalSummary = {
   fluent: number;
@@ -35,6 +65,7 @@ export type QuizBuildOptions = {
   difficulty?: QuizDifficultyPreference;
   sessionMode?: QuizSessionMode;
   questionLimit?: number;
+  questionTypePreferences?: QuizQuestionTypePreferences;
 };
 
 export function isDirectRecallQuestion(
@@ -316,6 +347,7 @@ export function buildCategoryPracticeQuiz(
     quizWords,
     masteryByWordId,
     target,
+    normalizeQuestionTypePreferences(options.questionTypePreferences),
   );
   const questionKeys = new Set<string>();
 
@@ -356,6 +388,9 @@ function getQuestionModesForSession(
   masteryByWordId: Record<string, number>,
   options: QuizBuildOptions,
 ) {
+  const questionTypePreferences = normalizeQuestionTypePreferences(
+    options.questionTypePreferences,
+  );
   const difficulty = options.sessionMode === 'mastery-test'
     ? 'ultra'
     : options.sessionMode === 'challenge'
@@ -363,17 +398,22 @@ function getQuestionModesForSession(
       : options.difficulty ?? 'automatic';
 
   if (difficulty === 'automatic' && planWords.length === quizWords.length) {
-    return getBalancedQuestionModes(planWords, masteryByWordId);
+    return getBalancedQuestionModes(
+      planWords,
+      masteryByWordId,
+      questionTypePreferences,
+    );
   }
 
   const counts = new Map<QuizQuestionMode, number>();
   const modes: QuizQuestionMode[] = [];
   planWords.forEach((word, index) => {
-    const candidates = getDifficultyModeCandidates(
+    const candidates = getEnabledModeCandidates(
       word,
       quizWords,
       masteryByWordId[word.id] ?? word.reviews * 12,
       difficulty,
+      questionTypePreferences,
     );
     const lastMode = modes.at(-1);
     const contextualCandidates = candidates.filter((mode) => mode !== lastMode);
@@ -387,7 +427,7 @@ function getQuestionModesForSession(
         ? 'typed-word'
         : difficulty === 'hard' && pool.includes('typed-word') && typedCount < typedTarget
           ? 'typed-word'
-          : pickLeastUsedMode(pool, counts, lastMode);
+          : pickLeastUsedMode(pool, counts, lastMode, questionTypePreferences);
     modes.push(mode);
     counts.set(mode, (counts.get(mode) ?? 0) + 1);
   });
@@ -419,6 +459,27 @@ function getDifficultyModeCandidates(
       mode === 'definition-to-word',
   );
   return hard.length ? ['typed-word', ...hard] : ['typed-word'];
+}
+
+function getEnabledModeCandidates(
+  word: Word,
+  words: Word[],
+  masteryScore: number,
+  difficulty: QuizDifficultyPreference,
+  preferences: Record<QuizQuestionMode, QuizQuestionTypePreference>,
+) {
+  const adaptiveCandidates = getDifficultyModeCandidates(
+    word,
+    words,
+    masteryScore,
+    difficulty,
+  );
+  const enabledAdaptive = adaptiveCandidates.filter((mode) => preferences[mode].enabled);
+  if (enabledAdaptive.length) return enabledAdaptive;
+
+  const enabledSupported = getSupportedQuestionModesForWord(word, words)
+    .filter((mode) => preferences[mode].enabled);
+  return enabledSupported.length ? enabledSupported : adaptiveCandidates;
 }
 
 export function getMistakeReviewWordIds(
@@ -454,8 +515,13 @@ function getCategoryPracticeQuestionPlan(
   words: Word[],
   masteryByWordId: Record<string, number>,
   target: number,
+  preferences = normalizeQuestionTypePreferences(undefined),
 ) {
-  const supportedModes = getSupportedCategoryPracticeModes(words);
+  const supportedModes = getSupportedCategoryPracticeModes(words)
+    .filter((mode) => preferences[mode].enabled);
+  const availableModes = supportedModes.length
+    ? supportedModes
+    : getSupportedCategoryPracticeModes(words);
   const maxTypedRecall = Math.max(1, Math.round(target * 0.35));
   const usedModesByWordId = new Map<string, Set<QuizQuestionMode>>();
   const modeCounts = new Map<QuizQuestionMode, number>();
@@ -469,23 +535,23 @@ function getCategoryPracticeQuestionPlan(
       if (plan.length >= target) break;
 
       const usedModes = usedModesByWordId.get(word.id) ?? new Set();
-      if (usedModes.size >= Math.min(3, supportedModes.length)) continue;
+      if (usedModes.size >= Math.min(3, availableModes.length)) continue;
 
       const masteryScore = masteryByWordId[word.id] ?? word.reviews * 12;
-      const candidates = getCategoryPracticeModeCandidates(
+      const availableCandidates = getCategoryPracticeModeCandidates(
         word,
         masteryScore,
-        supportedModes,
+        availableModes,
         words,
-      ).filter(
-        (mode) =>
-          !usedModes.has(mode) &&
-          (mode !== 'typed-word' ||
-            (modeCounts.get('typed-word') ?? 0) < maxTypedRecall),
+      ).filter((mode) => !usedModes.has(mode));
+      const candidates = availableCandidates.filter(
+        (mode) => mode !== 'typed-word' ||
+          (modeCounts.get('typed-word') ?? 0) < maxTypedRecall,
       );
-      if (candidates.length === 0) continue;
+      const eligibleCandidates = candidates.length ? candidates : availableCandidates;
+      if (eligibleCandidates.length === 0) continue;
 
-      const mode = pickLeastUsedMode(candidates, modeCounts, lastMode);
+      const mode = pickLeastUsedMode(eligibleCandidates, modeCounts, lastMode, preferences);
       usedModes.add(mode);
       usedModesByWordId.set(word.id, usedModes);
       modeCounts.set(mode, (modeCounts.get(mode) ?? 0) + 1);
@@ -521,6 +587,18 @@ function getSupportedCategoryPracticeModes(words: Word[]) {
   return [...baseModes, ...contextualModes];
 }
 
+function getSupportedQuestionModesForWord(word: Word, words: Word[]) {
+  return [
+    'word-to-definition',
+    ...(words.length >= 2 ? ['definition-to-word' as const] : []),
+    'true-false',
+    'typed-word',
+    ...(canBuildSentenceUsageQuestion(word, words) ? ['sentence-usage' as const] : []),
+    ...(canBuildSentenceCompletionQuestion(word, words) ? ['sentence-completion' as const] : []),
+    ...(canBuildClosestSynonymQuestion(word, words) ? ['closest-synonym' as const] : []),
+  ] as QuizQuestionMode[];
+}
+
 function getCategoryPracticeModeCandidates(
   word: Word,
   masteryScore: number,
@@ -548,13 +626,22 @@ function pickLeastUsedMode(
   candidates: QuizQuestionMode[],
   counts: Map<QuizQuestionMode, number>,
   lastMode: QuizQuestionMode | undefined,
+  preferences = normalizeQuestionTypePreferences(undefined),
 ) {
   const sorted = [...candidates].sort(
     (first, second) =>
-      (counts.get(first) ?? 0) - (counts.get(second) ?? 0) ||
+      (counts.get(first) ?? 0) / getModeFrequencyWeight(first, preferences) -
+        (counts.get(second) ?? 0) / getModeFrequencyWeight(second, preferences) ||
       candidates.indexOf(first) - candidates.indexOf(second),
   );
   return sorted.find((mode) => mode !== lastMode) ?? sorted[0];
+}
+
+function getModeFrequencyWeight(
+  mode: QuizQuestionMode,
+  preferences: Record<QuizQuestionMode, QuizQuestionTypePreference>,
+) {
+  return preferences[mode].frequency === 'more' ? 2 : 1;
 }
 
 function buildQuestionForMode(
@@ -594,6 +681,7 @@ function buildQuestionForMode(
 function getBalancedQuestionModes(
   words: Word[],
   masteryByWordId: Record<string, number>,
+  preferences = normalizeQuestionTypePreferences(undefined),
 ) {
   const maxTypedRecall = Math.max(1, Math.round(words.length * 0.35));
   const includesEarlyLearningWord = words.some(
@@ -604,22 +692,23 @@ function getBalancedQuestionModes(
 
   words.forEach((word) => {
     const masteryScore = masteryByWordId[word.id] ?? word.reviews * 12;
-    const candidates = getModeCandidates(word, masteryScore, words);
+    const candidates = getEnabledModeCandidates(
+      word,
+      words,
+      masteryScore,
+      'automatic',
+      preferences,
+    );
     const lastMode = modes.at(-1);
-    const available = candidates.filter(
+    const typedLimited = candidates.filter(
       (candidate) =>
         candidate !== 'typed-word' ||
         (counts.get('typed-word') ?? 0) < maxTypedRecall,
     );
+    const available = typedLimited.length ? typedLimited : candidates;
     const nonRepeating = available.filter((candidate) => candidate !== lastMode);
     const pool = nonRepeating.length ? nonRepeating : available;
-    const mode = pool.reduce(
-      (leastUsed, candidate) =>
-        (counts.get(candidate) ?? 0) < (counts.get(leastUsed) ?? 0)
-          ? candidate
-          : leastUsed,
-      pool[0] ?? candidates[0],
-    );
+    const mode = pickLeastUsedMode(pool, counts, lastMode, preferences);
 
     modes.push(mode);
     counts.set(mode, (counts.get(mode) ?? 0) + 1);
@@ -631,7 +720,8 @@ function getBalancedQuestionModes(
   if (
     includesEarlyLearningWord &&
     words.length >= 3 &&
-    !modes.includes('true-false')
+    !modes.includes('true-false') &&
+    preferences['true-false'].enabled
   ) {
     const replacementIndex = modes.findIndex(
       (mode) => mode !== 'typed-word',
@@ -643,7 +733,8 @@ function getBalancedQuestionModes(
   if (
     includesEarlyLearningWord &&
     words.length >= 2 &&
-    !modes.includes('definition-to-word')
+    !modes.includes('definition-to-word') &&
+    preferences['definition-to-word'].enabled
   ) {
     const replacementIndex = modes.findIndex(
       (mode) => mode !== 'typed-word' && mode !== 'true-false',
@@ -655,7 +746,8 @@ function getBalancedQuestionModes(
   if (
     words.length >= 4 &&
     words.some((word) => canBuildClosestSynonymQuestion(word, words)) &&
-    !modes.includes('closest-synonym')
+    !modes.includes('closest-synonym') &&
+    preferences['closest-synonym'].enabled
   ) {
     const replacementIndex = modes.findIndex(
       (mode, index) =>
@@ -733,14 +825,19 @@ function pickQuizWords(
   priorityWordIds: string[],
   questionLimit = MAX_QUIZ_QUESTIONS,
 ) {
-  const wordsById = new Map(words.map((word) => [word.id, word]));
+  const practiceWords = words.filter(
+    (word) => !word.mastery?.excludedFromPractice,
+  );
+  const wordsById = new Map(practiceWords.map((word) => [word.id, word]));
   const scheduledPriorityWords = Array.from(new Set(priorityWordIds))
     .map((wordId) => wordsById.get(wordId))
     .filter((word): word is Word => Boolean(word));
   const priorityWordIdsSet = new Set(
     scheduledPriorityWords.map((word) => word.id),
   );
-  const remainingWords = words.filter((word) => !priorityWordIdsSet.has(word.id));
+  const remainingWords = practiceWords.filter(
+    (word) => !priorityWordIdsSet.has(word.id),
+  );
   const focusedWords = shuffle(
     remainingWords.filter((word) => word.mastery?.focusMode === true),
   );

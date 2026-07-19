@@ -176,8 +176,8 @@ export function HomeScreen({
           <Ionicons name="paper-plane" size={28} color={COLORS.white} />
         </View>
         <View style={styles.heroGreeting}>
-          <Text style={styles.homeTitle}>{getGreeting()}, WordWiz</Text>
-          <Text style={styles.homeSubtitle}>
+          <Text maxFontSizeMultiplier={1.25} style={styles.homeTitle}>{getGreeting()}, WordWiz</Text>
+          <Text maxFontSizeMultiplier={1.2} style={styles.homeSubtitle}>
             {words.length === 0
               ? 'Start your first word today.'
               : `${words.length} words saved · ${strongWords} feeling strong`}
@@ -207,22 +207,29 @@ export function HomeScreen({
         </View>
       ) : null}
 
-      <View style={styles.homeOverviewCard}>
+      <View
+        style={[
+          styles.homeOverviewCard,
+          freeTrial && styles.homeOverviewCardAfterTrial,
+        ]}
+      >
         <View style={styles.overviewHeader}>
-          <Text style={styles.homeSectionTitle}>Today’s learning</Text>
+          <Text maxFontSizeMultiplier={1.2} style={styles.homeSectionTitle}>
+            Today’s learning
+          </Text>
           <View
             accessible
             accessibilityLabel={`${completedDailyQuizzes} of ${dailyQuizGoal} daily quizzes completed`}
             style={styles.overviewDailyGoal}
           >
             <View style={styles.overviewDailyGoalCopy}>
-              <Text style={styles.overviewDailyGoalLabel}>DAILY GOAL</Text>
-              <Text style={styles.overviewDailyGoalCaption}>
+              <Text maxFontSizeMultiplier={1.15} style={styles.overviewDailyGoalLabel}>DAILY GOAL</Text>
+              <Text maxFontSizeMultiplier={1.15} style={styles.overviewDailyGoalCaption}>
                 {dailyQuizGoal === 1 ? 'Quiz' : 'Quizzes'}
               </Text>
             </View>
             <View style={styles.overviewProgressRing}>
-              <Text style={styles.overviewProgressText}>
+              <Text maxFontSizeMultiplier={1.15} style={styles.overviewProgressText}>
                 {completedDailyQuizzes}/{dailyQuizGoal}
               </Text>
             </View>

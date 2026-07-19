@@ -38,6 +38,7 @@ export type QuizSessionMode =
 export type QuizPreferences = {
   enabled: boolean;
   difficulty: QuizDifficultyPreference;
+  questionTypes?: QuizQuestionTypePreferences;
 };
 
 export type MasteryResult = {
@@ -74,6 +75,8 @@ export type WordMasteryProgress = {
   focusedAt?: string;
   reviewNext?: boolean;
   reviewNextAt?: string;
+  excludedFromPractice?: boolean;
+  excludedFromPracticeAt?: string;
 };
 
 export type Word = {
@@ -215,6 +218,15 @@ export type QuizQuestionMode =
   | 'sentence-usage'
   | 'sentence-completion'
   | 'closest-synonym';
+
+export type QuizQuestionTypePreference = {
+  enabled: boolean;
+  frequency: 'normal' | 'more';
+};
+
+export type QuizQuestionTypePreferences = Partial<
+  Record<QuizQuestionMode, QuizQuestionTypePreference>
+>;
 
 export type QuizQuestion = {
   word: Word;

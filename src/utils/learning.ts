@@ -429,12 +429,21 @@ function mergeFocusMastery(
   const focusedAt = preferred?.focusedAt ?? fallback?.focusedAt;
   const reviewNext = Boolean(preferred?.reviewNext || fallback?.reviewNext);
   const reviewNextAt = preferred?.reviewNextAt ?? fallback?.reviewNextAt;
+  const excludedFromPractice = Boolean(
+    preferred?.excludedFromPractice || fallback?.excludedFromPractice,
+  );
+  const excludedFromPracticeAt =
+    preferred?.excludedFromPracticeAt ?? fallback?.excludedFromPracticeAt;
   return {
     ...mastery,
     focusMode,
     focusedAt: focusMode ? focusedAt : undefined,
     reviewNext,
     reviewNextAt: reviewNext ? reviewNextAt : undefined,
+    excludedFromPractice,
+    excludedFromPracticeAt: excludedFromPractice
+      ? excludedFromPracticeAt
+      : undefined,
   };
 }
 
@@ -669,6 +678,7 @@ export function getDueReviewWords(
   const safeNow = toSafeDate(now.toISOString());
 
   return words
+    .filter((word) => !word.mastery?.excludedFromPractice)
     .map((word) => {
       const progress = getWordMasteryProgress(word, analytics);
       const dueAt = getScheduledReviewAt(word, progress, safeNow);

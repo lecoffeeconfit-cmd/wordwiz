@@ -8,15 +8,6 @@ const appEnvironment =
   'development';
 const fallbackSupabaseUrl = 'https://missing-wordwiz-supabase.supabase.co';
 const fallbackSupabaseAnonKey = 'missing-public-anon-key';
-
-const forbiddenPublicSecrets = [
-  process.env.EXPO_PUBLIC_SUPABASE_SERVICE_ROLE_KEY,
-  process.env.EXPO_PUBLIC_SERVICE_ROLE_KEY,
-  process.env.EXPO_PUBLIC_OPENAI_API_KEY,
-  process.env.EXPO_PUBLIC_WORDNIK_API_KEY,
-  process.env.EXPO_PUBLIC_SECRET_KEY,
-].filter(Boolean);
-
 const configurationError = getConfigurationError();
 
 export const env = {
@@ -36,10 +27,6 @@ export const env = {
 };
 
 function getConfigurationError() {
-  if (forbiddenPublicSecrets.length > 0) {
-    return 'A secret key was configured with EXPO_PUBLIC_. Public Expo variables are bundled into the app. Move secrets to Supabase Edge Functions or another backend.';
-  }
-
   if (!supabaseUrl || !supabaseAnonKey) {
     return 'Missing Supabase environment variables. Set EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY in the EAS production environment.';
   }

@@ -218,6 +218,15 @@ test('subscription access uses the configured public iOS key and active plus ent
   assert.doesNotMatch(revenueCatSource, /test[_-]?store/i);
 });
 
+test('private keys cannot be read by the app or included through public Expo variables', () => {
+  const envSource = fs.readFileSync(path.join(projectRoot, 'src/config/env.ts'), 'utf8');
+  const buildCheck = fs.readFileSync(path.join(projectRoot, 'scripts/check-public-env.cjs'), 'utf8');
+
+  assert.doesNotMatch(envSource, /EXPO_PUBLIC_(SUPABASE_SERVICE_ROLE|SERVICE_ROLE|OPENAI_API_KEY|WORDNIK_API_KEY|SECRET_KEY)/);
+  assert.match(buildCheck, /EXPO_PUBLIC_SUPABASE_SERVICE_ROLE_KEY/);
+  assert.match(buildCheck, /process\.exit\(1\)/);
+});
+
 test('free word limit is enforced atomically in Supabase and cannot be bypassed by direct insert', () => {
   const migration = fs.readFileSync(
     path.join(projectRoot, 'supabase/revenuecat_subscription_migration.sql'),
@@ -924,6 +933,28 @@ test('strong-word quizzes rotate formats and cap typed recall', () => {
   });
 });
 
+test('question type preferences can disable formats and prioritize a chosen format', () => {
+  const words = Array.from({ length: 6 }, (_, index) =>
+    makeWord(`mix-${index}`, `Mix${index}`, `Definition ${index}`, 0),
+  );
+  const questionTypePreferences = Object.fromEntries(
+    quiz.QUIZ_QUESTION_MODES.map((mode) => [mode, {
+      enabled: mode === 'typed-word',
+      frequency: mode === 'typed-word' ? 'more' : 'normal',
+    }]),
+  );
+  const questions = quiz.buildQuiz(
+    words,
+    [],
+    Object.fromEntries(words.map((word) => [word.id, 55])),
+    [],
+    { questionTypePreferences },
+  );
+
+  assert.equal(questions.length, words.length);
+  assert.ok(questions.every((question) => question.mode === 'typed-word'));
+});
+
 test('typed recall hints progress without exposing the full answer', () => {
   const word = {
     ...makeWord('hint-word', 'Compensatory', 'Making up for a loss.', 0),
@@ -1529,6 +1560,35 @@ test('quiz builder prioritizes due word ids and still fills a normal quiz withou
     ['three', 'one'],
   );
   assert.equal(new Set(questions.map((question) => question.word.id)).size, questions.length);
+});
+
+test('paused words stay saved but are omitted from automatic reviews and quizzes', () => {
+  const analytics = { cardHistory: [], quizHistory: [] };
+  const paused = {
+    ...makeWord('paused', 'Paused', 'Set aside for now.', 0),
+    mastery: {
+      ...learning.createWordMasteryProgress('2026-01-01T09:00:00.000Z'),
+      nextReviewAt: '2026-01-02T09:00:00.000Z',
+      excludedFromPractice: true,
+    },
+  };
+  const ready = {
+    ...makeWord('ready', 'Ready', 'Available to practice.', 0),
+    mastery: {
+      ...learning.createWordMasteryProgress('2026-01-01T09:00:00.000Z'),
+      nextReviewAt: '2026-01-02T09:00:00.000Z',
+    },
+  };
+  const due = learning.getDueReviewWords(
+    [paused, ready],
+    analytics,
+    new Date('2026-01-03T09:00:00.000Z'),
+  );
+  assert.deepEqual(due.map((item) => item.word.id), ['ready']);
+
+  const questions = quiz.buildQuiz([paused, ready], [], {}, ['paused', 'ready']);
+  assert.equal(questions.some((question) => question.word.id === 'paused'), false);
+  assert.equal(questions.some((question) => question.word.id === 'ready'), true);
 });
 
 test('category practice expands small groups with distinct formats without extra mastery updates', () => {

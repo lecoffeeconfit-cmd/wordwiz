@@ -1,15 +1,23 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useMemo, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
+  Alert,
   FlatList,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
+  ScrollView,
   Text,
   TextInput,
   View,
 } from 'react-native';
 import { STARTER_WORDS } from '../constants/data';
+import {
+  WORDWIZ_STARTER_COLLECTIONS,
+  type WordWizStarterCollection,
+} from '../constants/wordCollections';
 import { COLORS } from '../constants/theme';
 import type { AnalyticsData, LegalPage, QuizAnswer, QuizProgress, QuizQuestion, ReminderSettings, SortMode, Word } from '../types';
 import { styles } from '../styles';
@@ -26,6 +34,8 @@ export function WordsScreen({
   onOpenPlus,
   onToggleFlag,
   onSelectWord,
+  onTogglePracticeExclusion,
+  onAddStarterCollection,
   freeWordUsage,
 }: {
   words: Word[];
@@ -37,11 +47,19 @@ export function WordsScreen({
   onOpenPlus: () => void;
   onToggleFlag: (wordId: string) => void;
   onSelectWord: (word: Word) => void;
+  onTogglePracticeExclusion: (wordId: string) => void;
+  onAddStarterCollection: (collection: WordWizStarterCollection) => Promise<{
+    added: number;
+    alreadySaved: number;
+    blocked?: boolean;
+  }>;
   freeWordUsage: { wordsAdded: number; limit: number } | null;
 }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearchFocused, setIsSearchFocused] = useState(false);
   const [showFlaggedOnly, setShowFlaggedOnly] = useState(false);
+  const [showCollections, setShowCollections] = useState(false);
+  const [addingCollectionId, setAddingCollectionId] = useState<string | null>(null);
   const listRef = useRef<FlatList<Word>>(null);
   const searchBoxY = useRef(0);
   const normalizedSearchQuery = searchQuery.trim().toLowerCase();
@@ -88,11 +106,48 @@ export function WordsScreen({
     );
   }
 
+  async function addCollection(collection: WordWizStarterCollection) {
+    setAddingCollectionId(collection.id);
+    try {
+      const result = await onAddStarterCollection(collection);
+      if (!result.blocked) {
+        const added = result.added
+          ? `Added ${result.added} ${result.added === 1 ? 'word' : 'words'} to your collection.`
+          : 'Every word in this collection is already saved.';
+        const kept = result.alreadySaved
+          ? ` ${result.alreadySaved} existing ${result.alreadySaved === 1 ? 'word was' : 'words were'} kept as-is.`
+          : '';
+        Alert.alert('Collection ready', `${added}${kept}`);
+        setShowCollections(false);
+      }
+    } finally {
+      setAddingCollectionId(null);
+    }
+  }
+
+  function openPracticeSettings(word: Word) {
+    const isPaused = word.mastery?.excludedFromPractice === true;
+    Alert.alert(
+      isPaused ? 'Resume automatic practice?' : 'Pause automatic practice?',
+      isPaused
+        ? `${word.term} will return to your quizzes and review queue.`
+        : `${word.term} stays in your collection but will not appear in automatic quizzes or due reviews until you resume it.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: isPaused ? 'Resume practice' : 'Pause practice',
+          onPress: () => onTogglePracticeExclusion(word.id),
+        },
+      ],
+    );
+  }
+
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      style={styles.screen}
-    >
+    <>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={styles.screen}
+      >
       <FlatList
         ref={listRef}
         data={filteredWords}
@@ -160,6 +215,25 @@ export function WordsScreen({
               <Ionicons name="chevron-forward" size={23} color={COLORS.white} />
             </Pressable>
 
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Browse WordWiz starter collections"
+              accessibilityHint="Preview optional word lists and add the ones you want."
+              onPress={() => setShowCollections(true)}
+              style={({ pressed }) => [styles.wordCollectionsButton, pressed && styles.pressed]}
+            >
+              <View style={styles.wordCollectionsIcon}>
+                <Ionicons name="library" size={22} color={COLORS.purpleDark} />
+              </View>
+              <View style={styles.wordCollectionsCopy}>
+                <Text style={styles.wordCollectionsTitle}>WordWiz collections</Text>
+                <Text style={styles.wordCollectionsSubtitle}>
+                  Add a ready-to-learn word set
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={21} color={COLORS.purpleDark} />
+            </Pressable>
+
             {isSampleCollection ? (
               <View style={styles.sampleWordsCard}>
                 <View style={styles.sampleWordsIcon}>
@@ -207,7 +281,7 @@ export function WordsScreen({
 
             {words.length > 0 ? (
               <Text style={styles.wordListGestureHint}>
-                Press and hold a word to delete it
+                Double-tap a word to pause practice · Press and hold to delete
               </Text>
             ) : null}
 
@@ -278,11 +352,119 @@ export function WordsScreen({
             word={item}
             index={index}
             onPress={onSelectWord}
+            onDoublePress={openPracticeSettings}
             onRemove={onRemove}
             onToggleFlag={onToggleFlag}
           />
         )}
-      />
-    </KeyboardAvoidingView>
+        />
+      </KeyboardAvoidingView>
+
+      <Modal
+        animationType="slide"
+        transparent
+        visible={showCollections}
+        onRequestClose={() => setShowCollections(false)}
+      >
+        <View style={styles.collectionModalBackdrop}>
+          <Pressable
+            accessibilityLabel="Close WordWiz collections"
+            onPress={() => setShowCollections(false)}
+            style={styles.collectionModalDismiss}
+          />
+          <View style={styles.collectionModalSheet}>
+            <View style={styles.collectionModalHandle} />
+            <View style={styles.collectionModalHeader}>
+              <View style={styles.collectionModalHeaderCopy}>
+                <Text style={styles.collectionModalEyebrow}>WORDWIZ COLLECTIONS</Text>
+                <Text style={styles.collectionModalTitle}>Choose your next set</Text>
+                <Text style={styles.collectionModalSubtitle}>
+                  Preview a collection, then add only the words you want to learn.
+                </Text>
+              </View>
+              <Pressable
+                accessibilityLabel="Close WordWiz collections"
+                onPress={() => setShowCollections(false)}
+                style={styles.collectionModalClose}
+              >
+                <Ionicons name="close" size={21} color={COLORS.ink} />
+              </Pressable>
+            </View>
+
+            <ScrollView
+              bounces={false}
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={styles.collectionModalList}
+            >
+            {WORDWIZ_STARTER_COLLECTIONS.map((collection) => {
+              const alreadySaved = collection.words.filter((collectionWord) =>
+                words.some((word) => word.term.toLowerCase() === collectionWord.term.toLowerCase()),
+              ).length;
+              const isAdding = addingCollectionId === collection.id;
+              const isPurple = collection.color === 'purple';
+              const remainingCount = collection.words.length - alreadySaved;
+              return (
+                <View
+                  key={collection.id}
+                  style={[
+                    styles.collectionCard,
+                    isPurple ? styles.collectionCardPurple : styles.collectionCardOrange,
+                  ]}
+                >
+                  <View style={styles.collectionCardTopRow}>
+                    <View style={[
+                      styles.collectionCardIcon,
+                      isPurple ? styles.collectionIconPurple : styles.collectionIconOrange,
+                    ]}>
+                      <Ionicons
+                        name={collection.icon}
+                        size={22}
+                        color={isPurple ? COLORS.purpleDark : COLORS.orange}
+                      />
+                    </View>
+                    <View style={styles.collectionCardCopy}>
+                      <Text style={styles.collectionCardTitle}>{collection.title}</Text>
+                      <Text style={styles.collectionCardCount}>{collection.subtitle}</Text>
+                    </View>
+                  </View>
+                  <Text style={styles.collectionCardDescription}>{collection.description}</Text>
+                  <Text numberOfLines={1} style={styles.collectionCardPreview}>
+                    Includes {collection.words.slice(0, 4).map((word) => word.term).join(' · ')}
+                  </Text>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`Add ${collection.title} collection`}
+                    disabled={isAdding || remainingCount === 0}
+                    onPress={() => void addCollection(collection)}
+                    style={({ pressed }) => [
+                      styles.collectionAddButton,
+                      isPurple ? styles.collectionAddButtonPurple : styles.collectionAddButtonOrange,
+                      (pressed || isAdding) && styles.pressed,
+                      remainingCount === 0 && styles.collectionAddButtonDone,
+                    ]}
+                  >
+                    {isAdding ? (
+                      <ActivityIndicator size="small" color={COLORS.white} />
+                    ) : (
+                      <>
+                        <Ionicons
+                          name={remainingCount === 0 ? 'checkmark-circle' : 'add-circle-outline'}
+                          size={17}
+                          color={COLORS.white}
+                        />
+                        <Text style={styles.collectionAddButtonText}>
+                          {remainingCount === 0 ? 'ADDED' : `ADD ${remainingCount} WORDS`}
+                        </Text>
+                      </>
+                    )}
+                  </Pressable>
+                </View>
+              );
+            })}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+    </>
   );
 }

@@ -6,6 +6,8 @@ export type AnalyticsEventName =
   | 'word_flag_toggled'
   | 'word_focus_toggled'
   | 'word_review_next_toggled'
+  | 'word_practice_exclusion_toggled'
+  | 'wordwiz_collection_added'
   | 'card_review_recorded'
   | 'quiz_started'
   | 'quiz_completed'

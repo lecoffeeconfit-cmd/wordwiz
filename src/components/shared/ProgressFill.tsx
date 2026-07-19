@@ -15,19 +15,31 @@ import Animated, {
 } from 'react-native-reanimated';
 import { COLORS } from '../../constants/theme';
 
-const GLOSS_COLORS = [
-  'rgba(255,255,255,0.28)',
-  'rgba(255,255,255,0.08)',
-  'rgba(255,255,255,0)',
-] as const;
+function mixHexColors(base: string, target: string, amount: number) {
+  const safeAmount = Math.max(0, Math.min(1, amount));
+  const normalizedBase = base.replace('#', '');
+  const normalizedTarget = target.replace('#', '');
+
+  if (normalizedBase.length !== 6 || normalizedTarget.length !== 6) {
+    return base;
+  }
+
+  const channels = [0, 2, 4].map((offset) => {
+    const from = Number.parseInt(normalizedBase.slice(offset, offset + 2), 16);
+    const to = Number.parseInt(normalizedTarget.slice(offset, offset + 2), 16);
+    return Math.round(from + (to - from) * safeAmount)
+      .toString(16)
+      .padStart(2, '0');
+  });
+
+  return `#${channels.join('')}`;
+}
 
 function ProgressSparkle({
-  color,
   delay,
   driftY,
   size,
 }: {
-  color: string;
   delay: number;
   driftY: number;
   size: number;
@@ -99,12 +111,106 @@ function ProgressSparkle({
         {
           left: -size / 2,
           top: -size / 2,
-          shadowColor: color,
         },
         animatedStyle,
       ]}
     >
-      <Ionicons name="sparkles" size={size} color={COLORS.white} />
+      <Ionicons name="sparkles" size={size} color="#FFF0AD" />
+    </Animated.View>
+  );
+}
+
+function ProgressGlow({ color, strength }: { color: string; strength: number }) {
+  const pulse = useSharedValue(0.55);
+
+  useEffect(() => {
+    pulse.value = withRepeat(
+      withSequence(
+        withTiming(1, { duration: 1050, easing: Easing.inOut(Easing.quad) }),
+        withTiming(0.55, { duration: 1050, easing: Easing.inOut(Easing.quad) }),
+      ),
+      -1,
+      true,
+    );
+
+    return () => cancelAnimation(pulse);
+  }, [pulse]);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    opacity: (0.18 + strength * 0.2) * pulse.value,
+    transform: [{ scaleY: 1 + pulse.value * 0.16 }],
+  }));
+
+  return (
+    <Animated.View
+      accessible={false}
+      pointerEvents="none"
+      style={[
+        styles.glowHalo,
+        {
+          backgroundColor: color,
+          shadowColor: color,
+          shadowOpacity: 0.72,
+          shadowRadius: 7,
+          shadowOffset: { width: 0, height: 0 },
+          elevation: 3,
+        },
+        animatedStyle,
+      ]}
+    />
+  );
+}
+
+function ProgressGlossSweep() {
+  const translateX = useSharedValue(-12);
+  const opacity = useSharedValue(0.18);
+
+  useEffect(() => {
+    translateX.value = withRepeat(
+      withSequence(
+        withTiming(15, { duration: 950, easing: Easing.inOut(Easing.quad) }),
+        withDelay(680, withTiming(-12, { duration: 0 })),
+      ),
+      -1,
+      false,
+    );
+    opacity.value = withRepeat(
+      withSequence(
+        withTiming(0.68, { duration: 500, easing: Easing.out(Easing.quad) }),
+        withTiming(0.18, { duration: 450, easing: Easing.in(Easing.quad) }),
+        withDelay(680, withTiming(0.18, { duration: 0 })),
+      ),
+      -1,
+      false,
+    );
+
+    return () => {
+      cancelAnimation(translateX);
+      cancelAnimation(opacity);
+    };
+  }, [opacity, translateX]);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    opacity: opacity.value,
+    transform: [{ translateX: translateX.value }, { rotate: '-18deg' }],
+  }));
+
+  return (
+    <Animated.View
+      accessible={false}
+      pointerEvents="none"
+      style={[styles.glossSweep, animatedStyle]}
+    >
+      <LinearGradient
+        colors={[
+          'rgba(255,186,48,0)',
+          'rgba(255,214,104,0.98)',
+          'rgba(255,186,48,0)',
+        ]}
+        end={{ x: 1, y: 0 }}
+        start={{ x: 0, y: 1 }}
+        style={styles.glossGradient}
+      />
     </Animated.View>
   );
 }
@@ -123,39 +229,43 @@ export function ProgressFill({
   const safeProgress = Math.max(0, Math.min(100, progress));
   const hasGlow = safeProgress >= 50;
   const isGlossy = safeProgress >= 75;
-  const hasSparkles = safeProgress >= 95;
-  const glossOpacity = 0.16 + ((safeProgress - 75) / 25) * 0.16;
+  const hasSparkles = safeProgress >= 90;
+  const glowStrength = Math.min(1, Math.max(0, (safeProgress - 50) / 50));
+  const polishedColors = [
+    mixHexColors(color, COLORS.white, 0.1),
+    color,
+    mixHexColors(color, COLORS.ink, 0.1),
+  ] as const;
 
   return (
     <View
       style={[
         styles.container,
         style,
-        hasGlow && {
-          shadowColor: color,
-          shadowOpacity: 0.48,
-          shadowRadius: 6,
-          shadowOffset: { width: 0, height: 0 },
-          elevation: 3,
-        },
       ]}
     >
-      <View style={[styles.surface, { borderRadius: radius, backgroundColor: color }]}>
-        {isGlossy ? (
-          <LinearGradient
-            colors={GLOSS_COLORS}
-            end={{ x: 1, y: 1 }}
-            pointerEvents="none"
-            start={{ x: 0, y: 0 }}
-            style={[StyleSheet.absoluteFill, { opacity: glossOpacity }]}
-          />
-        ) : null}
-      </View>
+      {hasGlow ? <ProgressGlow color={color} strength={glowStrength} /> : null}
+      {isGlossy ? (
+        <LinearGradient
+          colors={polishedColors}
+          end={{ x: 0, y: 1 }}
+          start={{ x: 0, y: 0 }}
+          style={[styles.surface, { borderRadius: radius }]}
+        >
+          <ProgressGlossSweep />
+        </LinearGradient>
+      ) : (
+        <View style={[styles.surface, { borderRadius: radius, backgroundColor: color }]} />
+      )}
       {hasSparkles ? (
         <View pointerEvents="none" style={styles.sparkleLayer}>
-          <ProgressSparkle color={color} delay={0} driftY={2} size={11} />
-          <ProgressSparkle color={color} delay={260} driftY={8} size={8} />
-          <ProgressSparkle color={color} delay={520} driftY={-5} size={7} />
+          <ProgressSparkle delay={0} driftY={2} size={10} />
+          {safeProgress >= 95 ? (
+            <ProgressSparkle delay={360} driftY={-5} size={8} />
+          ) : null}
+          {safeProgress >= 99 ? (
+            <ProgressSparkle delay={720} driftY={5} size={6} />
+          ) : null}
         </View>
       ) : null}
     </View>
@@ -165,11 +275,22 @@ export function ProgressFill({
 const styles = StyleSheet.create({
   container: {
     height: '100%',
+    overflow: 'visible',
+    position: 'relative',
   },
   surface: {
     width: '100%',
     height: '100%',
     overflow: 'hidden',
+    position: 'relative',
+  },
+  glowHalo: {
+    position: 'absolute',
+    top: -3,
+    right: -4,
+    bottom: -3,
+    left: -4,
+    borderRadius: 999,
   },
   sparkleLayer: {
     position: 'absolute',
@@ -181,9 +302,16 @@ const styles = StyleSheet.create({
   },
   sparkle: {
     position: 'absolute',
-    shadowOpacity: 0.9,
-    shadowRadius: 5,
-    shadowOffset: { width: 0, height: 0 },
-    elevation: 4,
+  },
+  glossSweep: {
+    position: 'absolute',
+    top: -8,
+    right: 5,
+    width: 18,
+    height: 52,
+  },
+  glossGradient: {
+    flex: 1,
+    borderRadius: 10,
   },
 });

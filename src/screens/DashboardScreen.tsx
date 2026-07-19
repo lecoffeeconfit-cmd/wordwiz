@@ -3,11 +3,11 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, FlatList, Pressable, ScrollView, Text, View } from 'react-native';
 import { COLORS } from '../constants/theme';
-import type { AnalyticsData, LegalPage, QuizAnswer, QuizDifficultyPreference, QuizPreferences, QuizProgress, QuizQuestion, ReminderSettings, SortMode, TimeBasedLearningSettings, Word } from '../types';
+import type { AnalyticsData, LegalPage, QuizAnswer, QuizDifficultyPreference, QuizPreferences, QuizProgress, QuizQuestion, QuizQuestionMode, ReminderSettings, SortMode, TimeBasedLearningSettings, Word } from '../types';
 import type { QuizFeedbackSummary } from '../utils';
 import type { AuthUser } from '../types';
 import { styles } from '../styles';
-import { DEFAULT_TIME_BASED_LEARNING_SETTINGS, MASTERY_LEVELS, buildAchievements, buildQuiz, calculateStreakStats, FLUENT_RECALL_SECONDS, formatReminderTime, formatStudyTime, getDayKey, getDueReviewWords, getHeroProgressColor, getMasteryLevel, getMasteryLevelProgress, getNextMasteryLevel, getProgressColor, getProgressPaleColor, getQuizAttemptKind, getQuizFeedbackByWord, getQuizFeedbackSummary, getQuizRecallPaceByQuestionType, getQuizRecallPaceByWord, getQuizResponseSignalSummary, getQuizRetrievalProfile, getRecentDays, getStreakMessage, getStreakMilestone, getStreakWeek, getWordMastery, getWordMasteryCategory, getWordMasteryCategoryForWord, normalizeTimeBasedLearningSettings, shuffle } from '../utils';
+import { DEFAULT_TIME_BASED_LEARNING_SETTINGS, MASTERY_LEVELS, buildAchievements, buildQuiz, calculateStreakStats, FLUENT_RECALL_SECONDS, formatReminderTime, formatStudyTime, getDayKey, getDueReviewWords, getHeroProgressColor, getMasteryLevel, getMasteryLevelProgress, getNextMasteryLevel, getProgressColor, getProgressPaleColor, getQuizAttemptKind, getQuizFeedbackByWord, getQuizFeedbackSummary, getQuizRecallPaceByQuestionType, getQuizRecallPaceByWord, getQuizResponseSignalSummary, getQuizRetrievalProfile, getRecentDays, getStreakMessage, getStreakMilestone, getStreakWeek, getWordMastery, getWordMasteryCategory, getWordMasteryCategoryForWord, normalizeQuestionTypePreferences, normalizeTimeBasedLearningSettings, shuffle } from '../utils';
 import { CompactPagination, DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, ProgressFill, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 import { LessonProgressRing } from '../components/dashboard/LessonProgressRing';
 import { useSubscription } from '../subscription/SubscriptionProvider';
@@ -24,6 +24,88 @@ const QUIZ_DIFFICULTY_OPTIONS: { id: QuizDifficultyPreference; label: string }[]
   { id: 'hard', label: 'Hard' },
   { id: 'ultra', label: 'Ultra' },
 ];
+
+const QUESTION_TYPE_OPTIONS: {
+  id: QuizQuestionMode;
+  label: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  description: string;
+  mastery: string;
+  strength: string;
+}[] = [
+  {
+    id: 'word-to-definition',
+    label: 'Meaning match',
+    icon: 'book-outline',
+    description: 'See the word, then connect it to the right meaning. A gentle first step for a new word.',
+    mastery: '+5 mastery when correct',
+    strength: 'Foundation',
+  },
+  {
+    id: 'definition-to-word',
+    label: 'Word match',
+    icon: 'swap-horizontal-outline',
+    description: 'Start from the meaning and choose the word. This asks you to retrieve more than a simple recognition check.',
+    mastery: '+7 mastery when correct',
+    strength: 'Growing recall',
+  },
+  {
+    id: 'true-false',
+    label: 'True or false',
+    icon: 'checkmark-circle-outline',
+    description: 'Spot whether a word and meaning truly belong together. It is a quick confidence check between deeper prompts.',
+    mastery: '+3 mastery when correct',
+    strength: 'Quick check',
+  },
+  {
+    id: 'typed-word',
+    label: 'Type the word',
+    icon: 'create-outline',
+    description: 'Bring the word to mind without answer choices. This gives the strongest direct-recall practice once you have a foundation.',
+    mastery: '+10 mastery when correct',
+    strength: 'Strongest recall',
+  },
+  {
+    id: 'sentence-usage',
+    label: 'Sentence context',
+    icon: 'chatbubble-ellipses-outline',
+    description: 'Choose the sentence that uses the word naturally. It builds understanding beyond memorizing a definition.',
+    mastery: '+5 mastery when correct',
+    strength: 'Real-world use',
+  },
+  {
+    id: 'sentence-completion',
+    label: 'Complete the context',
+    icon: 'text-outline',
+    description: 'Use context clues to supply the missing word. It combines meaning, usage, and retrieval.',
+    mastery: '+7 mastery when correct',
+    strength: 'Contextual recall',
+  },
+  {
+    id: 'closest-synonym',
+    label: 'Closest synonym',
+    icon: 'git-compare-outline',
+    description: 'Distinguish a word from nearby meanings. This helps make vocabulary knowledge more precise.',
+    mastery: '+5 mastery when correct',
+    strength: 'Meaning precision',
+  },
+];
+
+function tintHex(color: string, target: string, amount: number) {
+  const normalizedColor = color.replace('#', '');
+  const normalizedTarget = target.replace('#', '');
+  const blend = Math.max(0, Math.min(1, amount));
+
+  if (normalizedColor.length !== 6 || normalizedTarget.length !== 6) return color;
+
+  return `#${[0, 2, 4]
+    .map((offset) => {
+      const from = Number.parseInt(normalizedColor.slice(offset, offset + 2), 16);
+      const to = Number.parseInt(normalizedTarget.slice(offset, offset + 2), 16);
+      return Math.round(from + (to - from) * blend).toString(16).padStart(2, '0');
+    })
+    .join('')}`;
+}
 
 export function DashboardScreen({
   words,
@@ -90,9 +172,17 @@ export function DashboardScreen({
   const [recallPaceView, setRecallPaceView] = useState<'types' | 'words'>('types');
   const [activityWindow, setActivityWindow] = useState<7 | 30>(7);
   const [isTimeSettingsExpanded, setIsTimeSettingsExpanded] = useState(false);
+  const [isQuestionMixExpanded, setIsQuestionMixExpanded] = useState(false);
+  const [expandedQuestionType, setExpandedQuestionType] = useState<QuizQuestionMode | null>(null);
   const normalizedTimeSettings = normalizeTimeBasedLearningSettings(
     timeBasedLearningSettings,
   );
+  const normalizedQuestionTypePreferences = normalizeQuestionTypePreferences(
+    quizPreferences.questionTypes,
+  );
+  const enabledQuestionTypeCount = QUESTION_TYPE_OPTIONS.filter(
+    (option) => normalizedQuestionTypePreferences[option.id].enabled,
+  ).length;
   const masterSparkleScale = useRef(new Animated.Value(1)).current;
   const flaggedCountScale = useRef(new Animated.Value(1)).current;
   const [recentlyUnflaggedWordIds, setRecentlyUnflaggedWordIds] = useState<string[]>([]);
@@ -616,13 +706,25 @@ export function DashboardScreen({
               <Text style={styles.streakTitle}>{streakMilestone.title}</Text>
             </View>
             <View style={styles.streakSummary}>
-              <Text style={styles.streakCurrentValue}>
-                {streakStats.current}d
-              </Text>
-              <Text style={styles.streakCurrentLabel}>Current streak</Text>
-              <Text style={styles.streakBestLabel}>
-                Best {streakStats.longest}d
-              </Text>
+              <View style={styles.streakSummaryMetric}>
+                <View style={styles.streakCurrentIcon}>
+                  <Ionicons name="flame" size={13} color={COLORS.orange} />
+                </View>
+                <View>
+                  <Text style={styles.streakMetricValue}>{streakStats.current}d</Text>
+                  <Text style={styles.streakMetricLabel}>Current</Text>
+                </View>
+              </View>
+              <View style={styles.streakSummaryDivider} />
+              <View style={styles.streakSummaryMetric}>
+                <View style={styles.streakBestIcon}>
+                  <Ionicons name="trophy" size={12} color="#B48700" />
+                </View>
+                <View>
+                  <Text style={styles.streakMetricValue}>{streakStats.longest}d</Text>
+                  <Text style={styles.streakMetricLabel}>Best</Text>
+                </View>
+              </View>
             </View>
           </View>
           <Text style={styles.streakMessage}>
@@ -1775,6 +1877,140 @@ export function DashboardScreen({
           Auto adapts to each word. Easy favors recognition; Hard and Ultra favor typed recall.
         </Text>
 
+        <View style={styles.questionMixCard}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ expanded: isQuestionMixExpanded }}
+            onPress={() => setIsQuestionMixExpanded((expanded) => !expanded)}
+            style={({ pressed }) => [styles.questionMixHeader, pressed && styles.pressed]}
+          >
+            <View style={styles.questionMixHeaderCopy}>
+              <Text style={styles.quizPreferenceLabel}>QUESTION MIX</Text>
+              <Text style={styles.questionMixSummary}>
+                {enabledQuestionTypeCount} types on · More appears about twice as often
+              </Text>
+            </View>
+            <Ionicons
+              name={isQuestionMixExpanded ? 'chevron-up' : 'chevron-down'}
+              size={18}
+              color={COLORS.purpleDark}
+            />
+          </Pressable>
+
+          {isQuestionMixExpanded ? (
+            <>
+              <Text style={styles.questionMixHint}>
+                Tap a type to see how it supports learning. Keep at least one type on; WordWiz still spaces prompts out when it can.
+              </Text>
+              {QUESTION_TYPE_OPTIONS.map((option) => {
+                const preference = normalizedQuestionTypePreferences[option.id];
+                const detailVisible = expandedQuestionType === option.id;
+                const isOnlyEnabledType = preference.enabled && enabledQuestionTypeCount === 1;
+
+                return (
+                  <View
+                    key={option.id}
+                    style={[
+                      styles.questionMixRow,
+                      !preference.enabled && styles.questionMixRowDisabled,
+                      detailVisible && styles.questionMixRowExpanded,
+                    ]}
+                  >
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={`${option.label} details`}
+                      accessibilityState={{ expanded: detailVisible }}
+                      onPress={() => setExpandedQuestionType(
+                        detailVisible ? null : option.id,
+                      )}
+                      style={({ pressed }) => [styles.questionMixMain, pressed && styles.pressed]}
+                    >
+                      <View style={styles.questionMixIcon}>
+                        <Ionicons name={option.icon} size={17} color={COLORS.purpleDark} />
+                      </View>
+                      <View style={styles.questionMixCopy}>
+                        <Text style={styles.questionMixTitle}>{option.label}</Text>
+                        <Text style={styles.questionMixStrength}>{option.strength}</Text>
+                      </View>
+                      <Ionicons
+                        name={detailVisible ? 'chevron-up' : 'chevron-down'}
+                        size={15}
+                        color={COLORS.muted}
+                      />
+                    </Pressable>
+
+                    <View style={styles.questionMixControls}>
+                      <Pressable
+                        accessibilityRole="switch"
+                        accessibilityLabel={`Use ${option.label} questions`}
+                        accessibilityState={{ checked: preference.enabled, disabled: isOnlyEnabledType }}
+                        disabled={isOnlyEnabledType}
+                        onPress={() => onQuizPreferencesChange({
+                          ...quizPreferences,
+                          questionTypes: {
+                            ...normalizedQuestionTypePreferences,
+                            [option.id]: { ...preference, enabled: !preference.enabled },
+                          },
+                        })}
+                        style={({ pressed }) => [
+                          styles.questionMixToggle,
+                          preference.enabled && styles.questionMixToggleActive,
+                          isOnlyEnabledType && styles.questionMixControlDisabled,
+                          pressed && !isOnlyEnabledType && styles.pressed,
+                        ]}
+                      >
+                        <View style={[
+                          styles.questionMixToggleKnob,
+                          preference.enabled && styles.questionMixToggleKnobActive,
+                        ]} />
+                      </Pressable>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={`${option.label} frequency: ${preference.frequency === 'more' ? 'more often' : 'normal'}`}
+                        accessibilityState={{ disabled: !preference.enabled }}
+                        disabled={!preference.enabled}
+                        onPress={() => onQuizPreferencesChange({
+                          ...quizPreferences,
+                          questionTypes: {
+                            ...normalizedQuestionTypePreferences,
+                            [option.id]: {
+                              ...preference,
+                              frequency: preference.frequency === 'more' ? 'normal' : 'more',
+                            },
+                          },
+                        })}
+                        style={({ pressed }) => [
+                          styles.questionMixFrequency,
+                          preference.frequency === 'more' && preference.enabled && styles.questionMixFrequencyActive,
+                          !preference.enabled && styles.questionMixControlDisabled,
+                          pressed && preference.enabled && styles.pressed,
+                        ]}
+                      >
+                        <Text style={[
+                          styles.questionMixFrequencyText,
+                          preference.frequency === 'more' && preference.enabled && styles.questionMixFrequencyTextActive,
+                        ]}>
+                          {preference.frequency === 'more' ? 'MORE' : 'NORMAL'}
+                        </Text>
+                      </Pressable>
+                    </View>
+
+                    {detailVisible ? (
+                      <View style={styles.questionMixDetail}>
+                        <Text style={styles.questionMixDescription}>{option.description}</Text>
+                        <View style={styles.questionMixReward}>
+                          <Ionicons name="trending-up-outline" size={14} color={COLORS.teal} />
+                          <Text style={styles.questionMixRewardText}>{option.mastery}</Text>
+                        </View>
+                      </View>
+                    ) : null}
+                  </View>
+                );
+              })}
+            </>
+          ) : null}
+        </View>
+
         <Pressable
           accessibilityRole="switch"
           accessibilityLabel="Time-based learning"
@@ -2392,6 +2628,117 @@ function ReminderTimeStepper({
   );
 }
 
+function DailyBarGloss() {
+  const translateY = useRef(new Animated.Value(-8)).current;
+  const opacity = useRef(new Animated.Value(0.15)).current;
+
+  useEffect(() => {
+    const animation = Animated.loop(
+      Animated.sequence([
+        Animated.parallel([
+          Animated.timing(translateY, {
+            toValue: 82,
+            duration: 1250,
+            useNativeDriver: true,
+          }),
+          Animated.timing(opacity, {
+            toValue: 0.72,
+            duration: 430,
+            useNativeDriver: true,
+          }),
+        ]),
+        Animated.timing(opacity, {
+          toValue: 0.12,
+          duration: 450,
+          useNativeDriver: true,
+        }),
+        Animated.parallel([
+          Animated.timing(translateY, {
+            toValue: -8,
+            duration: 0,
+            useNativeDriver: true,
+          }),
+          Animated.timing(opacity, {
+            toValue: 0.12,
+            duration: 0,
+            useNativeDriver: true,
+          }),
+        ]),
+        Animated.delay(650),
+      ]),
+    );
+    animation.start();
+    return () => animation.stop();
+  }, [opacity, translateY]);
+
+  return (
+    <Animated.View
+      accessible={false}
+      pointerEvents="none"
+      style={[
+        styles.barGlossSweep,
+        { opacity, transform: [{ translateY }] },
+      ]}
+    >
+      <LinearGradient
+        colors={[
+          'rgba(255,186,48,0)',
+          'rgba(255,214,104,0.98)',
+          'rgba(255,186,48,0)',
+        ]}
+        end={{ x: 1, y: 0.5 }}
+        start={{ x: 0, y: 0.5 }}
+        style={styles.barGlossGradient}
+      />
+    </Animated.View>
+  );
+}
+
+function DailyBarSparkle({ delay = 0 }: { delay?: number }) {
+  const opacity = useRef(new Animated.Value(0)).current;
+  const translateX = useRef(new Animated.Value(0)).current;
+  const translateY = useRef(new Animated.Value(0)).current;
+  const scale = useRef(new Animated.Value(0.5)).current;
+
+  useEffect(() => {
+    const animation = Animated.loop(
+      Animated.sequence([
+        Animated.delay(delay),
+        Animated.parallel([
+          Animated.timing(opacity, { toValue: 1, duration: 170, useNativeDriver: true }),
+          Animated.timing(scale, { toValue: 1.05, duration: 170, useNativeDriver: true }),
+          Animated.timing(translateX, { toValue: 5, duration: 170, useNativeDriver: true }),
+          Animated.timing(translateY, { toValue: -4, duration: 170, useNativeDriver: true }),
+        ]),
+        Animated.parallel([
+          Animated.timing(opacity, { toValue: 0, duration: 570, useNativeDriver: true }),
+          Animated.timing(scale, { toValue: 0.6, duration: 570, useNativeDriver: true }),
+          Animated.timing(translateX, { toValue: 12, duration: 570, useNativeDriver: true }),
+          Animated.timing(translateY, { toValue: -16, duration: 570, useNativeDriver: true }),
+        ]),
+      ]),
+    );
+    animation.start();
+    return () => animation.stop();
+  }, [delay, opacity, scale, translateX, translateY]);
+
+  return (
+    <Animated.View
+      accessible={false}
+      pointerEvents="none"
+      style={[
+        styles.dailyBarSparkle,
+        {
+          opacity,
+          transform: [{ translateX }, { translateY }, { scale }],
+        },
+      ]}
+    >
+      <Ionicons name="sparkles" size={9} color="#FFF0AD" />
+    </Animated.View>
+  );
+}
+
 function DailyActivityBar({
   day,
   isToday,
@@ -2421,7 +2768,12 @@ function DailyActivityBar({
   const fillColor = isToday ? COLORS.green : COLORS.blue;
   const hasGlow = isActive && day.dailyProgress >= 50;
   const isGlossy = isActive && day.dailyProgress >= 75;
-  const glossOpacity = 0.14 + ((Math.max(75, day.dailyProgress) - 75) / 25) * 0.16;
+  const hasSparkles = isActive && day.dailyProgress >= 90;
+  const polishColors = [
+    tintHex(fillColor, COLORS.white, 0.2),
+    fillColor,
+    tintHex(fillColor, COLORS.ink, 0.1),
+  ] as const;
 
   return (
     <View style={[styles.barColumn, compact && styles.barColumnCompact]}>
@@ -2450,16 +2802,20 @@ function DailyActivityBar({
           ) : null}
           {isGlossy ? (
             <LinearGradient
-              colors={[
-                'rgba(255,255,255,0.3)',
-                'rgba(255,255,255,0.08)',
-                'rgba(255,255,255,0)',
-              ]}
-              end={{ x: 1, y: 1 }}
+              colors={polishColors}
+              end={{ x: 0, y: 1 }}
               pointerEvents="none"
               start={{ x: 0, y: 0 }}
-              style={[styles.barGloss, { opacity: glossOpacity }]}
-            />
+              style={styles.barGloss}
+            >
+              <DailyBarGloss />
+            </LinearGradient>
+          ) : null}
+          {hasSparkles ? (
+            <View pointerEvents="none" style={styles.dailyBarSparkleLayer}>
+              <DailyBarSparkle />
+              {day.dailyProgress >= 98 ? <DailyBarSparkle delay={360} /> : null}
+            </View>
           ) : null}
         </View>
       </View>

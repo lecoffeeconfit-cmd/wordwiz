@@ -40,7 +40,9 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "test": "node tests/run-tests.cjs",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "security:check-env": "node scripts/check-public-env.cjs",
+    "eas-build-pre-install": "node scripts/check-public-env.cjs"
   },
   "overrides": {
     "uuid": "^11.1.1"

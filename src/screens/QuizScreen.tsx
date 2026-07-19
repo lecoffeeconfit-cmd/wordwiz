@@ -278,6 +278,7 @@ export function QuizScreen({
     const sessionOptions = {
       difficulty: quizPreferences.difficulty,
       sessionMode,
+      questionTypePreferences: quizPreferences.questionTypes,
       questionLimit:
         sessionMode === 'quick'
           ? quickQuestionCount

@@ -12,6 +12,9 @@ import {
   EMPTY_ANALYTICS,
   STARTER_WORDS,
 } from '../constants/data';
+import {
+  type WordWizStarterCollection,
+} from '../constants/wordCollections';
 import { COLORS } from '../constants/theme';
 import { AddWordModal, WordWizPlusModal } from '../modals';
 import {
@@ -89,6 +92,7 @@ import {
   getWordMastery,
   getWordMasteryProgress,
   mergeWordLists,
+  normalizeQuestionTypePreferences,
   upsertSavedWord,
 } from '../utils';
 
@@ -104,6 +108,7 @@ const CLOUD_SYNC_LOGS_ENABLED =
 const DEFAULT_QUIZ_PREFERENCES: QuizPreferences = {
   enabled: true,
   difficulty: 'automatic',
+  questionTypes: normalizeQuestionTypePreferences(undefined),
 };
 
 export default function AppContent() {
@@ -415,11 +420,18 @@ export default function AppContent() {
             }
           : DEFAULT_TIME_BASED_LEARNING_SETTINGS,
       );
-      setQuizPreferences(
-        savedQuizPreferences
-          ? { ...DEFAULT_QUIZ_PREFERENCES, ...JSON.parse(savedQuizPreferences) }
-          : DEFAULT_QUIZ_PREFERENCES,
-      );
+      const savedPreferences = savedQuizPreferences
+        ? JSON.parse(savedQuizPreferences) as QuizPreferences
+        : null;
+      setQuizPreferences(savedPreferences
+        ? {
+            ...DEFAULT_QUIZ_PREFERENCES,
+            ...savedPreferences,
+            questionTypes: normalizeQuestionTypePreferences(
+              savedPreferences.questionTypes,
+            ),
+          }
+        : DEFAULT_QUIZ_PREFERENCES);
     } catch (error) {
       reportError(error, { area: 'load_user_cache' });
       setWords(STARTER_WORDS);
@@ -748,6 +760,52 @@ export default function AppContent() {
               word.id === wordId &&
               word.mastery?.reviewNext === !wasQueued &&
               word.mastery?.reviewNextAt === reviewNextAt
+                ? previousWord
+                : word,
+            ),
+          );
+          deferCloudSync();
+        });
+    }
+  }
+
+  function toggleWordPracticeExclusion(wordId: string) {
+    const previousWord = words.find((word) => word.id === wordId);
+    if (!previousWord) return;
+
+    const wasExcluded = previousWord.mastery?.excludedFromPractice === true;
+    const excludedFromPracticeAt = wasExcluded ? undefined : new Date().toISOString();
+    const nextWord: Word = {
+      ...previousWord,
+      mastery: {
+        ...getWordMasteryProgress(previousWord, analytics),
+        excludedFromPractice: !wasExcluded,
+        excludedFromPracticeAt,
+      },
+    };
+
+    setWords((currentWords) =>
+      currentWords.map((word) => (word.id === wordId ? nextWord : word)),
+    );
+    trackEvent('word_practice_exclusion_toggled', { excluded: !wasExcluded });
+
+    if (currentUser && cloudHydratedUserId.current === currentUser.id) {
+      saveCloudWord(
+        currentUser.id,
+        nextWord,
+        getScreenContext(activeTab, 'toggle_word_practice_exclusion'),
+      )
+        .then(() => {
+          markCloudCacheFresh(currentUser.id);
+        })
+        .catch((error) => {
+          reportError(error, { area: 'save_word_practice_exclusion' });
+          trackEvent('cloud_sync_failed', { operation: 'save_word_practice_exclusion' });
+          setWords((currentWords) =>
+            currentWords.map((word) =>
+              word.id === wordId &&
+              word.mastery?.excludedFromPractice === !wasExcluded &&
+              word.mastery?.excludedFromPracticeAt === excludedFromPracticeAt
                 ? previousWord
                 : word,
             ),
@@ -1196,6 +1254,91 @@ export default function AppContent() {
     return true;
   }
 
+  async function addStarterCollection(collection: WordWizStarterCollection) {
+    if (!currentUser) {
+      Alert.alert('Sign in required', 'Sign in before adding a WordWiz collection.');
+      return { added: 0, alreadySaved: 0, blocked: true };
+    }
+
+    const existingTerms = new Set(words.map((word) => word.term.trim().toLowerCase()));
+    const newCollectionWords = collection.words.filter(
+      (collectionWord) => !existingTerms.has(collectionWord.term.trim().toLowerCase()),
+    );
+    const alreadySaved = collection.words.length - newCollectionWords.length;
+    if (newCollectionWords.length === 0) {
+      return { added: 0, alreadySaved };
+    }
+
+    if (!hasFullLearningAccess) {
+      presentPlusPaywall('word-limit');
+      return { added: 0, alreadySaved, blocked: true };
+    }
+
+    const savedWords: Word[] = [];
+    try {
+      for (let index = 0; index < newCollectionWords.length; index += 4) {
+        const batch = newCollectionWords.slice(index, index + 4);
+        const savedBatch = await Promise.allSettled(batch.map((collectionWord) => {
+          const createdAt = new Date().toISOString();
+          const wordData = buildWordFromInput({
+            term: collectionWord.term,
+            definition: collectionWord.definition,
+            example: collectionWord.example,
+            details: {
+              simpleDefinition: collectionWord.definition,
+              partOfSpeech: collectionWord.partOfSpeech,
+              commonWords: collectionWord.group ? [collectionWord.group] : [],
+              basicInfo: collectionWord.group
+                ? `Part of the “${collectionWord.group}” group. Notice the difference while you practice.`
+                : `Part of the WordWiz “${collection.title}” collection.`,
+            },
+            id: createUuid(),
+            createdAt,
+          });
+          return createCloudWordWithFreeLimit(wordData);
+        }));
+        savedWords.push(
+          ...savedBatch.flatMap((result) =>
+            result.status === 'fulfilled' ? [result.value] : [],
+          ),
+        );
+        const failedSave = savedBatch.find((result) => result.status === 'rejected');
+        if (failedSave?.status === 'rejected') throw failedSave.reason;
+      }
+    } catch (error) {
+      if (savedWords.length > 0) {
+        setWords((currentWords) =>
+          savedWords.reduce((nextWords, savedWord) => upsertSavedWord(nextWords, savedWord), currentWords),
+        );
+      }
+      if (error instanceof FreeWordLimitError) {
+        await refreshFreeWordUsage();
+        presentPlusPaywall('word-limit');
+        return { added: savedWords.length, alreadySaved, blocked: true };
+      }
+      reportError(error, { area: 'add_wordwiz_collection' });
+      trackEvent('cloud_sync_failed', { operation: 'add_wordwiz_collection' });
+      Alert.alert(
+        'Could not finish the collection',
+        savedWords.length
+          ? `${savedWords.length} words were added. Please try again to add the rest.`
+          : 'Please check your connection and try again.',
+      );
+      return { added: savedWords.length, alreadySaved, blocked: true };
+    }
+
+    setWords((currentWords) =>
+      savedWords.reduce((nextWords, savedWord) => upsertSavedWord(nextWords, savedWord), currentWords),
+    );
+    await refreshFreeWordUsage();
+    markCloudCacheFresh(currentUser.id);
+    trackEvent('wordwiz_collection_added', {
+      collection: collection.id,
+      added: savedWords.length,
+    });
+    return { added: savedWords.length, alreadySaved };
+  }
+
   useEffect(() => {
     if (
       activeTab === 'quiz' &&
@@ -1523,6 +1666,8 @@ export default function AppContent() {
           onOpenPlus={() => presentPlusPaywall('word-limit')}
           onToggleFlag={toggleWordFlag}
           onSelectWord={(word) => openCards(word.id)}
+          onTogglePracticeExclusion={toggleWordPracticeExclusion}
+          onAddStarterCollection={addStarterCollection}
           freeWordUsage={hasFullLearningAccess ? null : freeWordUsage}
         />
       );
