@@ -7,6 +7,7 @@ import type {
   QuizProgress,
   ReviewRating,
   StreakStats,
+  StudySetMembership,
   Word,
   WordDetails,
   WordMasteryProgress,
@@ -16,6 +17,37 @@ import { buildWordContextExamples, makeDistinctSimpleDefinition } from './dictio
 import { getQuizRecallPaceSignal, isDirectRecallQuestion } from './quiz';
 
 export const NOVICE_MASTERY_COLOR = '#89CFF0';
+
+export type StudySet = StudySetMembership & {
+  wordIds: string[];
+};
+
+/** Build the learner's sets from membership stored with each word's cloud-safe mastery data. */
+export function getStudySets(words: Word[]): StudySet[] {
+  const sets = new Map<string, StudySet>();
+
+  words.forEach((word) => {
+    word.mastery?.studySets?.forEach((membership) => {
+      if (!membership.id || !membership.name.trim()) return;
+      const existing = sets.get(membership.id);
+      if (existing) {
+        existing.wordIds.push(word.id);
+        return;
+      }
+      sets.set(membership.id, {
+        ...membership,
+        name: membership.name.trim(),
+        wordIds: [word.id],
+      });
+    });
+  });
+
+  return [...sets.values()].sort(
+    (first, second) =>
+      first.createdAt.localeCompare(second.createdAt) ||
+      first.name.localeCompare(second.name),
+  );
+}
 
 export type QuizFeedbackSummary = {
   hard: number;
@@ -507,7 +539,9 @@ export function applyQuizReviews(
 export function addQuizAttempt(analytics: AnalyticsData, attempt: QuizAttempt) {
   return {
     ...analytics,
-    quizHistory: [attempt, ...analytics.quizHistory].slice(0, 30),
+    // Keep a longer local history so weekly Omega Test results remain useful
+    // alongside the normal quiz trend.
+    quizHistory: [attempt, ...analytics.quizHistory].slice(0, 100),
   };
 }
 
@@ -1380,6 +1414,16 @@ export function getStreakMilestone(stats: StreakStats) {
       title: '3-day spark',
       description: 'The habit is starting to catch.',
       color: '#2879E8',
+    };
+  }
+  if (streak >= 1) {
+    return {
+      title: streak === 1 ? 'First spark' : 'Growing spark',
+      description:
+        streak === 1
+          ? 'Your word habit has begun.'
+          : 'One more day unlocks your first streak badge.',
+      color: '#FF8A3D',
     };
   }
 

@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -21,7 +21,7 @@ import {
 import { COLORS } from '../constants/theme';
 import type { AnalyticsData, LegalPage, QuizAnswer, QuizProgress, QuizQuestion, ReminderSettings, SortMode, Word } from '../types';
 import { styles } from '../styles';
-import { buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, getDayKey, getRecentDays, getStreakMessage, getStreakWeek, getWordMastery, shuffle } from '../utils';
+import { getStudySets } from '../utils';
 import { DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 
 export function WordsScreen({
@@ -36,6 +36,10 @@ export function WordsScreen({
   onSelectWord,
   onTogglePracticeExclusion,
   onAddStarterCollection,
+  onCreateStudySet,
+  onDeleteStudySet,
+  openStudySetBuilderOnMount = false,
+  onStudySetBuilderOpened,
   freeWordUsage,
 }: {
   words: Word[];
@@ -53,20 +57,35 @@ export function WordsScreen({
     alreadySaved: number;
     blocked?: boolean;
   }>;
+  onCreateStudySet: (name: string, wordIds: string[]) => Promise<boolean>;
+  onDeleteStudySet: (studySetId: string) => Promise<boolean>;
+  openStudySetBuilderOnMount?: boolean;
+  onStudySetBuilderOpened?: () => void;
   freeWordUsage: { wordsAdded: number; limit: number } | null;
 }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearchFocused, setIsSearchFocused] = useState(false);
   const [showFlaggedOnly, setShowFlaggedOnly] = useState(false);
   const [showCollections, setShowCollections] = useState(false);
+  const [showStudySetBuilder, setShowStudySetBuilder] = useState(false);
+  const [showStudySetManager, setShowStudySetManager] = useState(false);
+  const [studySetName, setStudySetName] = useState('');
+  const [selectedStudySetId, setSelectedStudySetId] = useState<string | null>(null);
+  const [selectedStudyWordIds, setSelectedStudyWordIds] = useState<string[]>([]);
+  const [isSavingStudySet, setIsSavingStudySet] = useState(false);
   const [addingCollectionId, setAddingCollectionId] = useState<string | null>(null);
   const listRef = useRef<FlatList<Word>>(null);
   const searchBoxY = useRef(0);
   const normalizedSearchQuery = searchQuery.trim().toLowerCase();
+  const studySets = useMemo(() => getStudySets(words), [words]);
+  const activeStudySet = studySets.find((set) => set.id === selectedStudySetId);
   const filteredWords = useMemo(() => {
-    const searchableWords = showFlaggedOnly
-      ? words.filter((word) => word.isFlagged)
+    const setWords = activeStudySet
+      ? words.filter((word) => activeStudySet.wordIds.includes(word.id))
       : words;
+    const searchableWords = showFlaggedOnly
+      ? setWords.filter((word) => word.isFlagged)
+      : setWords;
     if (!normalizedSearchQuery) return searchableWords;
 
     return searchableWords.filter((word) =>
@@ -85,7 +104,7 @@ export function WordsScreen({
         .toLowerCase()
         .includes(normalizedSearchQuery),
     );
-  }, [normalizedSearchQuery, showFlaggedOnly, words]);
+  }, [activeStudySet, normalizedSearchQuery, showFlaggedOnly, words]);
   const isSampleCollection =
     words.length > 0 &&
     words.every((word) =>
@@ -122,6 +141,91 @@ export function WordsScreen({
       }
     } finally {
       setAddingCollectionId(null);
+    }
+  }
+
+  function openStudySetBuilder() {
+    setStudySetName('');
+    setSelectedStudyWordIds([]);
+    setShowStudySetBuilder(true);
+  }
+
+  function openStudySetManager() {
+    if (studySets.length === 0) {
+      openStudySetBuilder();
+      return;
+    }
+    setShowStudySetManager(true);
+  }
+
+  function confirmDeleteStudySet(studySetId: string, studySetName: string) {
+    Alert.alert(
+      `Delete “${studySetName}”?`,
+      'This removes the set only. Every word stays saved in your WordWiz library.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete set',
+          style: 'destructive',
+          onPress: () => {
+            void onDeleteStudySet(studySetId).then((didDelete) => {
+              if (!didDelete) {
+                Alert.alert('Could not delete set', 'Please try again in a moment.');
+                return;
+              }
+              if (selectedStudySetId === studySetId) {
+                setSelectedStudySetId(null);
+              }
+            });
+          },
+        },
+      ],
+    );
+  }
+
+  useEffect(() => {
+    if (!openStudySetBuilderOnMount) return;
+
+    openStudySetBuilder();
+    onStudySetBuilderOpened?.();
+  }, [onStudySetBuilderOpened, openStudySetBuilderOnMount]);
+
+  function toggleStudySetWord(wordId: string) {
+    setSelectedStudyWordIds((current) =>
+      current.includes(wordId)
+        ? current.filter((id) => id !== wordId)
+        : [...current, wordId],
+    );
+  }
+
+  async function saveStudySet() {
+    const normalizedSetName = studySetName.trim().replace(/\s+/g, ' ');
+    if (!normalizedSetName) {
+      Alert.alert('Name your set', 'Give this study set a short, recognizable name.');
+      return;
+    }
+    if (
+      studySets.some(
+        (set) => set.name.toLocaleLowerCase() === normalizedSetName.toLocaleLowerCase(),
+      )
+    ) {
+      Alert.alert('That set already exists', 'Choose a different name so it stays easy to find in Quiz.');
+      return;
+    }
+    if (selectedStudyWordIds.length === 0) {
+      Alert.alert('Choose a word', 'Select at least one word to add to this set.');
+      return;
+    }
+
+    setIsSavingStudySet(true);
+    try {
+      const didSave = await onCreateStudySet(normalizedSetName, selectedStudyWordIds);
+      if (didSave) {
+        setShowStudySetBuilder(false);
+        Alert.alert('Study set ready', 'Find it on the Quiz page whenever you want a focused practice session.');
+      }
+    } finally {
+      setIsSavingStudySet(false);
     }
   }
 
@@ -215,24 +319,85 @@ export function WordsScreen({
               <Ionicons name="chevron-forward" size={23} color={COLORS.white} />
             </Pressable>
 
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Browse WordWiz starter collections"
-              accessibilityHint="Preview optional word lists and add the ones you want."
-              onPress={() => setShowCollections(true)}
-              style={({ pressed }) => [styles.wordCollectionsButton, pressed && styles.pressed]}
-            >
-              <View style={styles.wordCollectionsIcon}>
-                <Ionicons name="library" size={22} color={COLORS.purpleDark} />
-              </View>
-              <View style={styles.wordCollectionsCopy}>
-                <Text style={styles.wordCollectionsTitle}>WordWiz collections</Text>
-                <Text style={styles.wordCollectionsSubtitle}>
-                  Add a ready-to-learn word set
-                </Text>
-              </View>
-              <Ionicons name="chevron-forward" size={21} color={COLORS.purpleDark} />
-            </Pressable>
+            <View style={styles.wordResourcesRow}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Browse WordWiz starter collections"
+                accessibilityHint="Preview optional word lists and add the ones you want."
+                onPress={() => setShowCollections(true)}
+                style={({ pressed }) => [styles.wordResourceButton, pressed && styles.pressed]}
+              >
+                <View style={styles.wordResourceIcon}>
+                  <Ionicons name="library" size={20} color={COLORS.purpleDark} />
+                </View>
+                <View style={styles.wordResourceCopy}>
+                  <Text numberOfLines={1} style={styles.wordResourceTitle}>Collections</Text>
+                  <Text numberOfLines={1} style={styles.wordResourceSubtitle}>Ready-made</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={17} color={COLORS.purpleDark} />
+              </Pressable>
+
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Manage study sets"
+                accessibilityHint="Create or delete focused word sets for flashcards and quizzes."
+                onPress={openStudySetManager}
+                style={({ pressed }) => [styles.wordResourceButton, styles.wordStudySetsResourceButton, pressed && styles.pressed]}
+              >
+                <View style={[styles.wordResourceIcon, styles.wordStudySetsResourceIcon]}>
+                  <Ionicons name="layers" size={20} color={COLORS.blue} />
+                </View>
+                <View style={styles.wordResourceCopy}>
+                  <Text numberOfLines={1} style={styles.wordResourceTitle}>Study sets</Text>
+                  <Text numberOfLines={1} style={styles.wordResourceSubtitle}>
+                    {studySets.length ? `${studySets.length} saved` : 'Create one'}
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={17} color={COLORS.blue} />
+              </Pressable>
+            </View>
+
+            {studySets.length > 0 ? (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.studySetFilterList}
+              >
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: selectedStudySetId === null }}
+                  onPress={() => setSelectedStudySetId(null)}
+                  style={[
+                    styles.studySetFilterChip,
+                    selectedStudySetId === null && styles.studySetFilterChipActive,
+                  ]}
+                >
+                  <Text style={[
+                    styles.studySetFilterText,
+                    selectedStudySetId === null && styles.studySetFilterTextActive,
+                  ]}>All words</Text>
+                </Pressable>
+                {studySets.map((set) => {
+                  const isActive = set.id === selectedStudySetId;
+                  return (
+                    <Pressable
+                      key={set.id}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Show ${set.name} study set`}
+                      accessibilityState={{ selected: isActive }}
+                      onPress={() => setSelectedStudySetId(isActive ? null : set.id)}
+                      style={[styles.studySetFilterChip, isActive && styles.studySetFilterChipActive]}
+                    >
+                      <Ionicons name="layers-outline" size={14} color={isActive ? COLORS.white : COLORS.blue} />
+                      <Text numberOfLines={1} style={[styles.studySetFilterText, isActive && styles.studySetFilterTextActive]}>
+                        {set.name}
+                      </Text>
+                      <Text style={[styles.studySetFilterCount, isActive && styles.studySetFilterTextActive]}>{set.wordIds.length}</Text>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+            ) : null}
 
             {isSampleCollection ? (
               <View style={styles.sampleWordsCard}>
@@ -258,7 +423,11 @@ export function WordsScreen({
 
             <View style={styles.listToolbar}>
               <Text style={styles.sectionTitle}>
-                {showFlaggedOnly ? 'FLAGGED WORDS' : 'YOUR WORDS'}
+                {showFlaggedOnly
+                  ? 'FLAGGED WORDS'
+                  : activeStudySet
+                    ? activeStudySet.name.toUpperCase()
+                    : 'YOUR WORDS'}
               </Text>
               <View style={styles.segmentedControl}>
                 <SortButton
@@ -336,6 +505,8 @@ export function WordsScreen({
                 ? 'No words found'
                 : showFlaggedOnly
                   ? 'No flagged words yet'
+                  : activeStudySet
+                    ? 'No words in this set'
                   : 'Start your collection'}
             </Text>
             <Text style={styles.emptyText}>
@@ -343,6 +514,8 @@ export function WordsScreen({
                 ? 'Try a different word, meaning, or synonym.'
                 : showFlaggedOnly
                   ? 'Flag words while studying to review them here.'
+                  : activeStudySet
+                    ? 'Choose another study set or add more words to this one.'
                   : 'Add a word you heard, read, or wondered about.'}
             </Text>
           </View>
@@ -462,6 +635,178 @@ export function WordsScreen({
               );
             })}
             </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        animationType="slide"
+        transparent
+        visible={showStudySetBuilder}
+        onRequestClose={() => setShowStudySetBuilder(false)}
+      >
+        <View style={styles.collectionModalBackdrop}>
+          <Pressable
+            accessibilityLabel="Close study set builder"
+            onPress={() => setShowStudySetBuilder(false)}
+            style={styles.collectionModalDismiss}
+          />
+          <View style={[styles.collectionModalSheet, styles.studySetModalSheet]}>
+            <View style={styles.collectionModalHandle} />
+            <View style={styles.collectionModalHeader}>
+              <View style={styles.collectionModalHeaderCopy}>
+                <Text style={styles.collectionModalEyebrow}>MY STUDY SET</Text>
+                <Text style={styles.collectionModalTitle}>Build a focused set</Text>
+                <Text style={styles.collectionModalSubtitle}>
+                  Pick the words you want together. Your new set will appear in Quiz.
+                </Text>
+              </View>
+              <Pressable
+                accessibilityLabel="Close study set builder"
+                onPress={() => setShowStudySetBuilder(false)}
+                style={styles.collectionModalClose}
+              >
+                <Ionicons name="close" size={21} color={COLORS.ink} />
+              </Pressable>
+            </View>
+
+            <TextInput
+              autoCapitalize="words"
+              maxLength={36}
+              placeholder="Set name, e.g. Interview words"
+              placeholderTextColor={COLORS.muted}
+              value={studySetName}
+              onChangeText={setStudySetName}
+              style={styles.studySetNameInput}
+            />
+            <View style={styles.studySetSelectHeader}>
+              <Text style={styles.studySetSelectLabel}>CHOOSE WORDS</Text>
+              <Pressable
+                onPress={() => setSelectedStudyWordIds(
+                  selectedStudyWordIds.length === words.length ? [] : words.map((word) => word.id),
+                )}
+              >
+                <Text style={styles.studySetSelectAllText}>
+                  {selectedStudyWordIds.length === words.length ? 'CLEAR ALL' : 'SELECT ALL'}
+                </Text>
+              </Pressable>
+            </View>
+            <ScrollView
+              bounces={false}
+              showsVerticalScrollIndicator={false}
+              style={styles.studySetBuilderList}
+              contentContainerStyle={styles.studySetWordList}
+            >
+              {words.map((word) => {
+                const selected = selectedStudyWordIds.includes(word.id);
+                return (
+                  <Pressable
+                    key={word.id}
+                    accessibilityRole="checkbox"
+                    accessibilityState={{ checked: selected }}
+                    onPress={() => toggleStudySetWord(word.id)}
+                    style={[styles.studySetWordOption, selected && styles.studySetWordOptionSelected]}
+                  >
+                    <View style={[
+                      styles.studySetWordCheckbox,
+                      !selected && styles.studySetWordCheckboxEmpty,
+                    ]}>
+                      {selected ? <Ionicons name="checkmark" size={15} color={COLORS.white} /> : null}
+                    </View>
+                    <View style={styles.studySetWordCopy}>
+                      <Text numberOfLines={1} style={styles.studySetWordTerm}>{word.term}</Text>
+                      <Text numberOfLines={1} style={styles.studySetWordDefinition}>{word.simpleDefinition || word.definition}</Text>
+                    </View>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+            <Pressable
+              accessibilityRole="button"
+              disabled={isSavingStudySet}
+              onPress={() => void saveStudySet()}
+              style={({ pressed }) => [styles.studySetSaveButton, (pressed || isSavingStudySet) && styles.pressed]}
+            >
+              {isSavingStudySet ? <ActivityIndicator size="small" color={COLORS.white} /> : <Ionicons name="sparkles" size={18} color={COLORS.white} />}
+              <Text style={styles.studySetSaveButtonText}>
+                CREATE SET · {selectedStudyWordIds.length} {selectedStudyWordIds.length === 1 ? 'WORD' : 'WORDS'}
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        animationType="slide"
+        transparent
+        visible={showStudySetManager}
+        onRequestClose={() => setShowStudySetManager(false)}
+      >
+        <View style={styles.collectionModalBackdrop}>
+          <Pressable
+            accessibilityLabel="Close study set manager"
+            onPress={() => setShowStudySetManager(false)}
+            style={styles.collectionModalDismiss}
+          />
+          <View style={styles.studySetManagerSheet}>
+            <View style={styles.collectionModalHandle} />
+            <View style={styles.collectionModalHeader}>
+              <View style={styles.collectionModalHeaderCopy}>
+                <Text style={styles.collectionModalEyebrow}>MY STUDY SETS</Text>
+                <Text style={styles.collectionModalTitle}>Practice your way</Text>
+                <Text style={styles.collectionModalSubtitle}>
+                  These focused decks are ready in Flashcards and Quiz. Deleting a set never deletes its words.
+                </Text>
+              </View>
+              <Pressable
+                accessibilityLabel="Close study set manager"
+                onPress={() => setShowStudySetManager(false)}
+                style={styles.collectionModalClose}
+              >
+                <Ionicons name="close" size={21} color={COLORS.ink} />
+              </Pressable>
+            </View>
+
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={styles.studySetManagerList}
+            >
+              {studySets.map((set) => (
+                <View key={set.id} style={styles.studySetManagerItem}>
+                  <View style={styles.studySetManagerIcon}>
+                    <Ionicons name="layers" size={19} color={COLORS.blue} />
+                  </View>
+                  <View style={styles.studySetManagerCopy}>
+                    <Text numberOfLines={1} style={styles.studySetManagerName}>{set.name}</Text>
+                    <Text style={styles.studySetManagerMeta}>
+                      {set.wordIds.length} {set.wordIds.length === 1 ? 'word' : 'words'} · ready to practice
+                    </Text>
+                  </View>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`Delete ${set.name} study set`}
+                    accessibilityHint="Removes this set but keeps every word saved."
+                    onPress={() => confirmDeleteStudySet(set.id, set.name)}
+                    style={({ pressed }) => [styles.studySetDeleteButton, pressed && styles.pressed]}
+                  >
+                    <Ionicons name="trash-outline" size={18} color={COLORS.red} />
+                  </Pressable>
+                </View>
+              ))}
+            </ScrollView>
+
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Create a new study set"
+              onPress={() => {
+                setShowStudySetManager(false);
+                openStudySetBuilder();
+              }}
+              style={({ pressed }) => [styles.studySetManagerCreateButton, pressed && styles.pressed]}
+            >
+              <Ionicons name="add" size={20} color={COLORS.white} />
+              <Text style={styles.studySetManagerCreateText}>CREATE A NEW SET</Text>
+            </Pressable>
           </View>
         </View>
       </Modal>

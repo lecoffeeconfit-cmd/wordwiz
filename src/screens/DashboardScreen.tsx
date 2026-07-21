@@ -7,7 +7,7 @@ import type { AnalyticsData, LegalPage, QuizAnswer, QuizDifficultyPreference, Qu
 import type { QuizFeedbackSummary } from '../utils';
 import type { AuthUser } from '../types';
 import { styles } from '../styles';
-import { DEFAULT_TIME_BASED_LEARNING_SETTINGS, MASTERY_LEVELS, buildAchievements, buildQuiz, calculateStreakStats, FLUENT_RECALL_SECONDS, formatReminderTime, formatStudyTime, getDayKey, getDueReviewWords, getHeroProgressColor, getMasteryLevel, getMasteryLevelProgress, getNextMasteryLevel, getProgressColor, getProgressPaleColor, getQuizAttemptKind, getQuizFeedbackByWord, getQuizFeedbackSummary, getQuizRecallPaceByQuestionType, getQuizRecallPaceByWord, getQuizResponseSignalSummary, getQuizRetrievalProfile, getRecentDays, getStreakMessage, getStreakMilestone, getStreakWeek, getWordMastery, getWordMasteryCategory, getWordMasteryCategoryForWord, normalizeQuestionTypePreferences, normalizeTimeBasedLearningSettings, shuffle } from '../utils';
+import { DEFAULT_TIME_BASED_LEARNING_SETTINGS, MASTERY_LEVELS, buildAchievements, buildQuiz, calculateStreakStats, FLUENT_RECALL_SECONDS, formatReminderTime, formatStudyTime, getDayKey, getDueReviewWords, getHeroProgressColor, getMasteryLevel, getMasteryLevelProgress, getNextMasteryLevel, getOmegaTestAttempts, getProgressColor, getProgressPaleColor, getQuizAttemptKind, getQuizFeedbackByWord, getQuizFeedbackSummary, getQuizRecallPaceByQuestionType, getQuizRecallPaceByWord, getQuizResponseSignalSummary, getQuizRetrievalProfile, getRecentDays, getStreakMessage, getStreakMilestone, getStreakWeek, getWordMastery, getWordMasteryCategory, getWordMasteryCategoryForWord, normalizeQuestionTypePreferences, normalizeTimeBasedLearningSettings, shuffle } from '../utils';
 import { CompactPagination, DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, ProgressFill, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 import { LessonProgressRing } from '../components/dashboard/LessonProgressRing';
 import { useSubscription } from '../subscription/SubscriptionProvider';
@@ -203,6 +203,24 @@ export function DashboardScreen({
   const accuracy = totalQuizQuestions
     ? Math.round((totalCorrect / totalQuizQuestions) * 100)
     : 0;
+  const omegaTestAttempts = getOmegaTestAttempts(analytics);
+  const omegaTestAverage = omegaTestAttempts.length
+    ? Math.round(
+        omegaTestAttempts.reduce(
+          (total, attempt) =>
+            total + (attempt.total ? (attempt.score / attempt.total) * 100 : 0),
+          0,
+        ) / omegaTestAttempts.length,
+      )
+    : 0;
+  const omegaTestBest = omegaTestAttempts.reduce(
+    (best, attempt) =>
+      Math.max(
+        best,
+        attempt.total ? Math.round((attempt.score / attempt.total) * 100) : 0,
+      ),
+    0,
+  );
   const flaggedWordIds = words.filter((word) => word.isFlagged).map((word) => word.id);
   const flaggedCount = flaggedWordIds.length;
 
@@ -2114,6 +2132,69 @@ export function DashboardScreen({
           </View>
         ) : null}
       </View>
+
+      <DashboardSection
+        title="OMEGA TESTS"
+        badge={omegaTestAttempts.length ? `${omegaTestAttempts.length} taken` : 'Weekly'}
+      >
+        {omegaTestAttempts.length === 0 ? (
+          <View style={styles.omegaStatsEmpty}>
+            <View style={styles.omegaStatsEmptyIcon}>
+              <Ionicons name="planet-outline" size={21} color={COLORS.purpleDark} />
+            </View>
+            <View style={styles.omegaStatsEmptyCopy}>
+              <Text style={styles.omegaStatsEmptyTitle}>Your full-word assessment lives here</Text>
+              <Text style={styles.omegaStatsEmptyText}>
+                Complete an Omega Test from Quiz to track every weekly result, accuracy, and time.
+              </Text>
+            </View>
+          </View>
+        ) : (
+          <>
+            <View style={styles.omegaStatsSummaryRow}>
+              <View style={styles.omegaStatsMetric}>
+                <Text style={styles.omegaStatsMetricValue}>{omegaTestBest}%</Text>
+                <Text style={styles.omegaStatsMetricLabel}>Best score</Text>
+              </View>
+              <View style={styles.omegaStatsMetricDivider} />
+              <View style={styles.omegaStatsMetric}>
+                <Text style={styles.omegaStatsMetricValue}>{omegaTestAverage}%</Text>
+                <Text style={styles.omegaStatsMetricLabel}>Average</Text>
+              </View>
+              <View style={styles.omegaStatsMetricDivider} />
+              <View style={styles.omegaStatsMetric}>
+                <Text style={styles.omegaStatsMetricValue}>{omegaTestAttempts.length}</Text>
+                <Text style={styles.omegaStatsMetricLabel}>Taken</Text>
+              </View>
+            </View>
+            <View style={styles.omegaStatsHistory}>
+              {omegaTestAttempts.map((attempt) => {
+                const percent = attempt.total
+                  ? Math.round((attempt.score / attempt.total) * 100)
+                  : 0;
+                const dateLabel = new Date(`${attempt.date}T12:00:00`).toLocaleDateString(
+                  'en-US',
+                  { month: 'short', day: 'numeric', year: 'numeric' },
+                );
+                return (
+                  <View key={attempt.id} style={styles.omegaStatsHistoryRow}>
+                    <View style={styles.omegaStatsHistoryIcon}>
+                      <Ionicons name="sparkles" size={15} color={COLORS.purpleDark} />
+                    </View>
+                    <View style={styles.omegaStatsHistoryCopy}>
+                      <Text style={styles.omegaStatsHistoryTitle}>Omega Test · {dateLabel}</Text>
+                      <Text style={styles.omegaStatsHistoryText}>
+                        {attempt.score}/{attempt.total} correct · {formatStudyTime(attempt.durationSeconds)}
+                      </Text>
+                    </View>
+                    <Text style={styles.omegaStatsHistoryScore}>{percent}%</Text>
+                  </View>
+                );
+              })}
+            </View>
+          </>
+        )}
+      </DashboardSection>
 
       <DashboardSection title="QUIZ TREND" badge="Recent">
         {recentQuizzes.length === 0 ? (

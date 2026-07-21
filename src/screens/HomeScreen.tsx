@@ -235,20 +235,30 @@ export function HomeScreen({
             </View>
           </View>
         </View>
+        <View
+          accessible
+          accessibilityLabel="All-time progress"
+          style={styles.homeAllTimeSummaryHeader}
+        >
+          <Ionicons name="analytics-outline" size={13} color={COLORS.muted} />
+          <Text maxFontSizeMultiplier={1.15} style={styles.homeAllTimeSummaryLabel}>
+            ALL-TIME PROGRESS
+          </Text>
+        </View>
         <View style={styles.homeIdeaGrid}>
           <HomeMiniCard
             color={COLORS.bluePale}
             accent={COLORS.blue}
             icon="book-outline"
-            title={`${words.length} words`}
+            title={`${words.length} saved words`}
             subtitle={`${learningWords} still learning`}
           />
           <HomeMiniCard
             color={COLORS.orangePale}
             accent={COLORS.orange}
             icon="checkmark-circle-outline"
-            title={`${accuracy}% quiz`}
-            subtitle={`${analytics.quizHistory.length} quizzes done`}
+            title={`${accuracy}% overall`}
+            subtitle={`Across ${analytics.quizHistory.length} quizzes`}
           />
         </View>
         <View style={styles.homeDottedLine} />

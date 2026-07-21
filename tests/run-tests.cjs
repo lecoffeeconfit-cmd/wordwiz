@@ -794,6 +794,67 @@ test('quiz builder creates answer options for up to ten words', () => {
   });
 });
 
+test('Omega Test covers every eligible word with varied prompts and strict recall', () => {
+  const words = [
+    makeWord('omega-a', 'Avid', 'Very eager or enthusiastic.'),
+    makeWord('omega-b', 'Brisk', 'Quick and energetic.'),
+    {
+      ...makeWord('omega-paused', 'Calm', 'Peaceful and free from excitement.'),
+      mastery: { excludedFromPractice: true },
+    },
+  ];
+  const questions = quiz.buildOmegaTest(words, []);
+
+  assert.equal(questions.length, 4);
+  assert.deepEqual(
+    [...new Set(questions.map((question) => question.word.id))].sort(),
+    ['omega-a', 'omega-b'],
+  );
+  ['omega-a', 'omega-b'].forEach((wordId) => {
+    const wordQuestions = questions.filter((question) => question.word.id === wordId);
+    assert.equal(wordQuestions.length, 2);
+    assert.ok(wordQuestions.some((question) => question.mode === 'typed-word'));
+    assert.ok(
+      wordQuestions.some(
+        (question) => question.mode !== 'typed-word' && question.options.length >= 2,
+      ),
+    );
+  });
+  questions
+    .filter((question) => question.mode === 'typed-word')
+    .forEach((question) => assert.equal(question.strictSpelling, true));
+});
+
+test('Omega Test unlocks again seven days after the most recent assessment', () => {
+  const completedAt = '2026-07-01T12:00:00.000Z';
+  const analytics = {
+    cardHistory: [],
+    quizHistory: [
+      {
+        id: 'omega-1',
+        date: '2026-07-01',
+        score: 3,
+        total: 4,
+        durationSeconds: 120,
+        completedAt,
+        answers: [
+          { wordId: 'omega-a', correct: true, sessionMode: 'omega-test' },
+        ],
+      },
+    ],
+  };
+  const startedAt = Date.parse(completedAt);
+
+  assert.equal(
+    quiz.getOmegaTestStatus(analytics, startedAt + 6 * 24 * 60 * 60 * 1000).available,
+    false,
+  );
+  assert.equal(
+    quiz.getOmegaTestStatus(analytics, startedAt + 7 * 24 * 60 * 60 * 1000).available,
+    true,
+  );
+});
+
 test('quick, hard, and ultra quiz profiles build the requested retrieval challenge', () => {
   const words = [
     makeWord('quick-a', 'Avid', 'Very eager or enthusiastic.'),

@@ -69,6 +69,7 @@ export function AddWordModal({
   const [timePeriodDraft, setTimePeriodDraft] = useState('');
   const [historyDraft, setHistoryDraft] = useState('');
   const synonymsInputRef = useRef<TextInput>(null);
+  const termInputRef = useRef<TextInput>(null);
   const basicInfoInputRef = useRef<TextInput>(null);
   const timePeriodInputRef = useRef<TextInput>(null);
   const historyInputRef = useRef<TextInput>(null);
@@ -134,6 +135,10 @@ export function AddWordModal({
     setLookupStatus('');
     setSpellingSuggestions([]);
     closeSectionEditors();
+  }
+
+  function openAppleDictation() {
+    termInputRef.current?.focus();
   }
 
   async function autoDefine(nextTerm = term) {
@@ -424,7 +429,35 @@ export function AddWordModal({
               autoCapitalize="words"
               returnKeyType="search"
               onSubmitEditing={() => autoDefine()}
+              inputRef={termInputRef}
+              rightAccessory={
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Use keyboard dictation to add a word"
+                  accessibilityHint="Opens the word field so you can tap the microphone on your keyboard."
+                  onPress={openAppleDictation}
+                  style={({ pressed }) => [
+                    styles.voiceEntryButton,
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <Ionicons name="mic" size={20} color={COLORS.purpleDark} />
+                  <Text style={styles.voiceEntryButtonText}>DICTATE</Text>
+                </Pressable>
+              }
             />
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Open keyboard dictation"
+              accessibilityHint="Focuses the word field. Then tap the microphone on your keyboard to speak the word."
+              onPress={openAppleDictation}
+              style={({ pressed }) => [styles.voiceStatus, pressed && styles.pressed]}
+            >
+              <Ionicons name="mic-outline" size={16} color={COLORS.purpleDark} />
+              <Text style={styles.voiceStatusText}>
+                Want to say it instead? Tap Dictate, then use the microphone on your keyboard.
+              </Text>
+            </Pressable>
 
             {duplicateWord ? (
               <View style={styles.duplicateWordNotice}>
@@ -1085,6 +1118,7 @@ function InputGroup({
   returnKeyType,
   onSubmitEditing,
   inputRef,
+  rightAccessory,
 }: {
   label: string;
   icon: keyof typeof Ionicons.glyphMap;
@@ -1096,25 +1130,35 @@ function InputGroup({
   returnKeyType?: 'done' | 'go' | 'next' | 'search' | 'send';
   onSubmitEditing?: () => void;
   inputRef?: RefObject<TextInput | null>;
+  rightAccessory?: ReactNode;
 }) {
+  const hasRightAccessory = rightAccessory !== undefined && rightAccessory !== null;
+
   return (
     <View style={styles.inputGroup}>
       <View style={styles.inputLabelRow}>
         <Ionicons name={icon} size={17} color={COLORS.purpleDark} />
         <Text style={styles.inputLabel}>{label}</Text>
       </View>
-      <TextInput
-        ref={inputRef}
-        value={value}
-        onChangeText={onChangeText}
-        placeholder={placeholder}
-        placeholderTextColor="#B5ABC9"
-        multiline={multiline}
-        autoCapitalize={autoCapitalize}
-        returnKeyType={returnKeyType}
-        onSubmitEditing={onSubmitEditing}
-        style={[styles.input, multiline && styles.inputMultiline]}
-      />
+      <View style={hasRightAccessory ? styles.inputWithAccessoryRow : undefined}>
+        <TextInput
+          ref={inputRef}
+          value={value}
+          onChangeText={onChangeText}
+          placeholder={placeholder}
+          placeholderTextColor="#B5ABC9"
+          multiline={multiline}
+          autoCapitalize={autoCapitalize}
+          returnKeyType={returnKeyType}
+          onSubmitEditing={onSubmitEditing}
+          style={[
+            styles.input,
+            hasRightAccessory && styles.inputWithAccessory,
+            multiline && styles.inputMultiline,
+          ]}
+        />
+        {rightAccessory}
+      </View>
     </View>
   );
 }

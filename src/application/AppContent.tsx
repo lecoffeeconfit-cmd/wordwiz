@@ -124,6 +124,8 @@ export default function AppContent() {
   const [initialQuizStudyGroup, setInitialQuizStudyGroup] = useState<
     'flagged' | undefined
   >();
+  const [openStudySetBuilderOnMount, setOpenStudySetBuilderOnMount] =
+    useState(false);
   const [quizPriorityWordIds, setQuizPriorityWordIds] = useState<string[]>([]);
   const [quizProgress, setQuizProgress] = useState<QuizProgress | null>(null);
   const [analytics, setAnalytics] = useState<AnalyticsData>(EMPTY_ANALYTICS);
@@ -619,6 +621,11 @@ export default function AppContent() {
     setActiveTab('quiz');
   }
 
+  function openStudySetBuilder() {
+    setOpenStudySetBuilderOnMount(true);
+    setActiveTab('words');
+  }
+
   function openFlaggedQuiz() {
     openQuiz('flagged');
   }
@@ -721,6 +728,111 @@ export default function AppContent() {
           deferCloudSync();
         });
     }
+  }
+
+  async function createStudySet(name: string, wordIds: string[]) {
+    const trimmedName = name.trim().replace(/\s+/g, ' ');
+    const selectedWordIds = new Set(wordIds);
+    if (!trimmedName || selectedWordIds.size === 0) {
+      return false;
+    }
+
+    const membership = {
+      id: createUuid(),
+      name: trimmedName,
+      createdAt: new Date().toISOString(),
+    };
+    const previousWords = words.filter((word) => selectedWordIds.has(word.id));
+    const nextWords = previousWords.map((word) => ({
+      ...word,
+      mastery: {
+        ...getWordMasteryProgress(word, analytics),
+        studySets: [
+          ...(word.mastery?.studySets ?? []),
+          membership,
+        ],
+      },
+    }));
+    const nextWordsById = new Map(nextWords.map((word) => [word.id, word]));
+    const previousWordsById = new Map(previousWords.map((word) => [word.id, word]));
+
+    setWords((currentWords) =>
+      currentWords.map((word) => nextWordsById.get(word.id) ?? word),
+    );
+    trackEvent('study_set_created', { wordCount: nextWords.length });
+
+    if (currentUser && cloudHydratedUserId.current === currentUser.id) {
+      try {
+        await saveCloudWords(
+          currentUser.id,
+          nextWords,
+          getScreenContext('words', 'create_study_set'),
+        );
+        markCloudCacheFresh(currentUser.id);
+      } catch (error) {
+        reportError(error, { area: 'save_study_set' });
+        trackEvent('cloud_sync_failed', { operation: 'save_study_set' });
+        setWords((currentWords) =>
+          currentWords.map((word) => nextWordsById.has(word.id)
+            ? previousWordsById.get(word.id) ?? word
+            : word),
+        );
+        deferCloudSync();
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  async function deleteStudySet(studySetId: string) {
+    const previousWords = words.filter((word) =>
+      word.mastery?.studySets?.some((set) => set.id === studySetId),
+    );
+    if (previousWords.length === 0) return true;
+
+    const nextWords = previousWords.map((word) => ({
+      ...word,
+      mastery: {
+        ...getWordMasteryProgress(word, analytics),
+        studySets: (word.mastery?.studySets ?? []).filter(
+          (set) => set.id !== studySetId,
+        ),
+      },
+    }));
+    const nextWordsById = new Map(nextWords.map((word) => [word.id, word]));
+    const previousWordsById = new Map(
+      previousWords.map((word) => [word.id, word]),
+    );
+
+    setWords((currentWords) =>
+      currentWords.map((word) => nextWordsById.get(word.id) ?? word),
+    );
+
+    if (currentUser && cloudHydratedUserId.current === currentUser.id) {
+      try {
+        await saveCloudWords(
+          currentUser.id,
+          nextWords,
+          getScreenContext('words', 'delete_study_set'),
+        );
+        markCloudCacheFresh(currentUser.id);
+      } catch (error) {
+        reportError(error, { area: 'delete_study_set' });
+        trackEvent('cloud_sync_failed', { operation: 'delete_study_set' });
+        setWords((currentWords) =>
+          currentWords.map((word) =>
+            nextWordsById.has(word.id)
+              ? previousWordsById.get(word.id) ?? word
+              : word,
+          ),
+        );
+        deferCloudSync();
+        return false;
+      }
+    }
+
+    return true;
   }
 
   function toggleWordReviewNext(wordId: string) {
@@ -1668,6 +1780,10 @@ export default function AppContent() {
           onSelectWord={(word) => openCards(word.id)}
           onTogglePracticeExclusion={toggleWordPracticeExclusion}
           onAddStarterCollection={addStarterCollection}
+          onCreateStudySet={createStudySet}
+          onDeleteStudySet={deleteStudySet}
+          openStudySetBuilderOnMount={openStudySetBuilderOnMount}
+          onStudySetBuilderOpened={() => setOpenStudySetBuilderOnMount(false)}
           freeWordUsage={hasFullLearningAccess ? null : freeWordUsage}
         />
       );
@@ -1683,6 +1799,7 @@ export default function AppContent() {
           onEditWord={openEditWord}
           onReview={recordCardReview}
           onToggleFlag={toggleWordFlag}
+          onOpenStudySetBuilder={openStudySetBuilder}
         />
       );
     }
@@ -1701,6 +1818,7 @@ export default function AppContent() {
           onComplete={completeQuiz}
           onReviewCards={() => openCards()}
           onToggleFlag={toggleWordFlag}
+          onOpenStudySetBuilder={openStudySetBuilder}
         />
       );
     }

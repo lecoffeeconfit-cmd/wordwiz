@@ -4,10 +4,19 @@ import { AppState, FlatList, Pressable, ScrollView, Text, View } from 'react-nat
 import { COLORS } from '../constants/theme';
 import type { AnalyticsData, LegalPage, QuizAnswer, QuizProgress, QuizQuestion, ReminderSettings, SortMode, Word } from '../types';
 import { styles } from '../styles';
-import { buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, formatWordAddedDate, formatWordFlaggedDate, getCompleteFlashcardDefinition, getDayKey, getNewStudyWords, getRecentDays, getStreakMessage, getStreakWeek, getWordLearningContexts, getWordMastery, getWordMasteryCategoryForWord, NEW_STUDY_GROUP, shuffle, sortWordsAlphabetically, WORD_MASTERY_CATEGORIES, type WordMasteryCategoryId } from '../utils';
+import { buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, formatWordAddedDate, formatWordFlaggedDate, getCompleteFlashcardDefinition, getDayKey, getNewStudyWords, getRecentDays, getStreakMessage, getStreakWeek, getStudySets, getWordLearningContexts, getWordMastery, getWordMasteryCategoryForWord, NEW_STUDY_GROUP, shuffle, sortWordsAlphabetically, WORD_MASTERY_CATEGORIES, type WordMasteryCategoryId } from '../utils';
 import { DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, ProgressFill, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, SpeakButton, SpeakDefinitionButton, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 
-type CardsStudyGroupId = WordMasteryCategoryId | 'new' | 'flagged';
+type CardsStudyGroupId = WordMasteryCategoryId | 'new' | 'flagged' | `set:${string}`;
+
+type CardsStudyGroup = {
+  id: CardsStudyGroupId;
+  label: string;
+  shortLabel: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  color: string;
+  pale: string;
+};
 
 const FLAGGED_STUDY_GROUP = {
   id: 'flagged' as const,
@@ -26,6 +35,7 @@ export function CardsScreen({
   onEditWord,
   onReview,
   onToggleFlag,
+  onOpenStudySetBuilder,
 }: {
   words: Word[];
   analytics: AnalyticsData;
@@ -38,6 +48,7 @@ export function CardsScreen({
     durationSeconds: number,
   ) => void;
   onToggleFlag: (wordId: string) => void;
+  onOpenStudySetBuilder: () => void;
 }) {
   const [cardIndex, setCardIndex] = useState(0);
   const [showAnswer, setShowAnswer] = useState(false);
@@ -85,6 +96,7 @@ export function CardsScreen({
     () => getNewStudyWords(words, analytics),
     [analytics, words],
   );
+  const studySets = useMemo(() => getStudySets(words), [words]);
   const filteredWords = useMemo(
     () =>
       selectedCategory === 'all'
@@ -95,19 +107,33 @@ export function CardsScreen({
           ? words.filter((word) =>
               (flaggedSessionIds ?? words.filter((item) => item.isFlagged).map((item) => item.id)).includes(word.id),
             )
+        : selectedCategory.startsWith('set:')
+          ? words.filter((word) =>
+              word.mastery?.studySets?.some(
+                (set) => set.id === selectedCategory.slice(4),
+              ),
+            )
         : wordMastery
             .filter((item) => item.categoryId === selectedCategory)
             .map((item) => item.word),
     [flaggedSessionIds, newWords, selectedCategory, wordMastery, words],
   );
-  const studyGroups = [
+  const studyGroups: CardsStudyGroup[] = [
     WORD_MASTERY_CATEGORIES[0],
     NEW_STUDY_GROUP,
     ...WORD_MASTERY_CATEGORIES.slice(1),
     FLAGGED_STUDY_GROUP,
   ];
+  const studySetGroups: CardsStudyGroup[] = studySets.map((set) => ({
+    id: `set:${set.id}`,
+    label: set.name,
+    shortLabel: set.name,
+    icon: 'layers',
+    color: COLORS.blue,
+    pale: COLORS.bluePale,
+  }));
   const selectedCategoryDetails =
-    studyGroups.find(
+    [...studyGroups, ...studySetGroups].find(
       (category) => category.id === selectedCategory,
     ) ?? studyGroups[0];
   const alphabeticalWords = useMemo(
@@ -148,6 +174,15 @@ export function CardsScreen({
       setFlaggedSessionIds(words.filter((word) => word.isFlagged).map((word) => word.id));
     }
   }, [initialStudyGroup]);
+
+  useEffect(() => {
+    if (
+      selectedCategory.startsWith('set:') &&
+      !studySets.some((set) => `set:${set.id}` === selectedCategory)
+    ) {
+      setSelectedCategory('all');
+    }
+  }, [selectedCategory, studySets]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextState) => {
@@ -207,7 +242,7 @@ export function CardsScreen({
             ? newWords.length
             : category.id === 'flagged'
             ? flaggedCount
-            : categoryCounts[category.id] ?? 0;
+            : categoryCounts[category.id as WordMasteryCategoryId] ?? 0;
 
         return (
           <Pressable
@@ -259,6 +294,78 @@ export function CardsScreen({
     </ScrollView>
   );
 
+  const studySetSelector = (
+    <View style={styles.practiceStudySetsRow}>
+      <View style={styles.practiceStudySetsHeading}>
+        <Ionicons name="layers-outline" size={15} color={COLORS.blue} />
+        <Text style={styles.practiceStudySetsTitle}>MY SETS</Text>
+      </View>
+      {studySets.length > 0 ? (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.practiceStudySetsScroller}
+          contentContainerStyle={styles.practiceStudySetsList}
+        >
+          {studySetGroups.map((set) => {
+            const isActive = selectedCategory === set.id;
+            const count = studySets.find((studySet) => `set:${studySet.id}` === set.id)?.wordIds.length ?? 0;
+            return (
+              <Pressable
+                key={set.id}
+                accessibilityRole="button"
+                accessibilityLabel={`Study ${set.label}`}
+                accessibilityState={{ selected: isActive }}
+                onPress={() => {
+                  setSelectedCategory(set.id);
+                  setFlaggedSessionIds(null);
+                }}
+                style={[
+                  styles.practiceStudySetChip,
+                  isActive && styles.practiceStudySetChipActive,
+                ]}
+              >
+                <Text
+                  numberOfLines={1}
+                  style={[
+                    styles.practiceStudySetText,
+                    isActive && styles.practiceStudySetTextActive,
+                  ]}
+                >
+                  {set.shortLabel}
+                </Text>
+                <Text
+                  style={[
+                    styles.practiceStudySetCount,
+                    isActive && styles.practiceStudySetTextActive,
+                  ]}
+                >
+                  {count}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+      ) : (
+        <Text numberOfLines={1} style={styles.practiceStudySetsEmpty}>
+          Create a focused deck
+        </Text>
+      )}
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Create a study set"
+        accessibilityHint="Choose saved words for a focused flashcard deck or quiz."
+        onPress={onOpenStudySetBuilder}
+        style={({ pressed }) => [
+          styles.practiceStudySetAddButton,
+          pressed && styles.pressed,
+        ]}
+      >
+        <Ionicons name="add" size={19} color={COLORS.blue} />
+      </Pressable>
+    </View>
+  );
+
   function nextCard(remembered: boolean) {
     if (!current) return;
     const durationSeconds = getActiveCardDurationSeconds();
@@ -303,6 +410,7 @@ export function CardsScreen({
           subtitle="Choose a word group to study."
         />
         {categorySelector}
+        {studySetSelector}
         <View
           style={[
             styles.practiceCategoryBanner,
@@ -350,6 +458,7 @@ export function CardsScreen({
       />
 
       {categorySelector}
+      {studySetSelector}
       <View
         style={[
           styles.practiceCategoryBanner,

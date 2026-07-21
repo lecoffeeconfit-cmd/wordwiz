@@ -4,6 +4,8 @@ import { getCompleteFlashcardDefinition, getWordLearningContexts } from './dicti
 
 const MAX_QUIZ_QUESTIONS = 10;
 export const MAX_QUICK_PRACTICE_QUESTIONS = 20;
+export const OMEGA_TEST_COOLDOWN_DAYS = 7;
+export const OMEGA_TEST_COOLDOWN_MS = OMEGA_TEST_COOLDOWN_DAYS * 24 * 60 * 60 * 1000;
 const RECENT_ATTEMPTS_TO_AVOID = 3;
 export const TIMED_LEARNING_SECONDS = 15;
 export const FLUENT_RECALL_SECONDS = 6;
@@ -317,6 +319,75 @@ export function buildQuiz(
         mode === 'typed-word',
     };
   });
+}
+
+/**
+ * A weekly assessment that deliberately revisits every saved practice word.
+ * Each word gets one varied recognition/context prompt and one strict direct
+ * recall prompt, so its score reflects more than familiarity with one format.
+ */
+export function buildOmegaTest(
+  words: Word[],
+  recentAttempts: QuizAttempt[] = [],
+): QuizQuestion[] {
+  const omegaWords = words.filter((word) => !word.mastery?.excludedFromPractice);
+  const recognitionModes: QuizQuestionMode[] = [
+    'word-to-definition',
+    'definition-to-word',
+    'true-false',
+    'sentence-usage',
+    'sentence-completion',
+    'closest-synonym',
+  ];
+
+  return shuffle(omegaWords).flatMap((word, wordIndex) => {
+    const contextOffset = getContextOffset(word, recentAttempts, wordIndex);
+    const recognitionMode = recognitionModes[wordIndex % recognitionModes.length];
+    const modes: QuizQuestionMode[] = [recognitionMode, 'typed-word'];
+
+    return modes.map((mode, modeIndex) => ({
+      ...buildQuestionForMode(
+        word,
+        omegaWords,
+        wordIndex * modes.length + modeIndex,
+        mode,
+        contextOffset + modeIndex,
+      ),
+      strictSpelling: mode === 'typed-word',
+    }));
+  });
+}
+
+export function getOmegaTestAttempts(analytics: AnalyticsData) {
+  return analytics.quizHistory.filter((attempt) =>
+    attempt.answers.some((answer) => answer.sessionMode === 'omega-test'),
+  );
+}
+
+export function getOmegaTestStatus(
+  analytics: AnalyticsData,
+  now = Date.now(),
+) {
+  const attempts = getOmegaTestAttempts(analytics);
+  const mostRecent = attempts.reduce<QuizAttempt | null>((latest, attempt) => {
+    if (!latest) return attempt;
+    return Date.parse(attempt.completedAt) > Date.parse(latest.completedAt)
+      ? attempt
+      : latest;
+  }, null);
+  const mostRecentTimestamp = mostRecent ? Date.parse(mostRecent.completedAt) : 0;
+  const nextAvailableAt = mostRecentTimestamp + OMEGA_TEST_COOLDOWN_MS;
+  const remainingMs = mostRecent
+    ? Math.max(0, nextAvailableAt - now)
+    : 0;
+
+  return {
+    attempts,
+    mostRecent,
+    available: remainingMs === 0,
+    nextAvailableAt: mostRecent ? new Date(nextAvailableAt).toISOString() : null,
+    remainingMs,
+  };
 }
 
 /**

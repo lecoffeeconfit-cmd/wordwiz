@@ -5,6 +5,7 @@ export type AnalyticsEventName =
   | 'word_deleted'
   | 'word_flag_toggled'
   | 'word_focus_toggled'
+  | 'study_set_created'
   | 'word_review_next_toggled'
   | 'word_practice_exclusion_toggled'
   | 'wordwiz_collection_added'

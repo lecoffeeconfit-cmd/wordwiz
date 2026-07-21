@@ -127,7 +127,7 @@ export async function fetchUserLearningData(
         .select(QUIZ_ATTEMPT_COLUMNS)
         .eq('user_id', userId)
         .order('completed_at', { ascending: false })
-        .limit(30),
+        .limit(100),
       supabase
         .from('card_reviews')
         .select(CARD_REVIEW_COLUMNS)
@@ -157,7 +157,7 @@ export async function fetchUserLearningData(
   });
   logCloudRead('quiz_attempts', quizResult.data, context, {
     rows: quizResult.data?.length ?? 0,
-    cappedAt: 30,
+    cappedAt: 100,
   });
   logCloudRead('card_reviews', reviewsResult.data, context, {
     rows: reviewsResult.data?.length ?? 0,

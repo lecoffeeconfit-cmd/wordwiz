@@ -104,11 +104,6 @@ export function WordRow({
               Synonyms: {word.commonWords.slice(0, 3).join(', ')}
             </Text>
           )}
-          {word.pronunciation && (
-            <Text maxFontSizeMultiplier={1.15} numberOfLines={1} style={styles.wordMeta}>
-              {word.pronunciation}
-            </Text>
-          )}
           <View style={styles.wordDateMetaRow}>
             <View style={styles.wordAddedMeta}>
               <Ionicons name="calendar-outline" size={11} color={COLORS.muted} />
@@ -116,6 +111,18 @@ export function WordRow({
                 {formatWordAddedDate(word.createdAt)}
               </Text>
             </View>
+            {word.reviews > 0 ? (
+              <View
+                accessible
+                accessibilityLabel={`${word.reviews} ${word.reviews === 1 ? 'review' : 'reviews'}`}
+                style={styles.wordAddedMeta}
+              >
+                <Ionicons name="refresh" size={11} color={COLORS.muted} />
+                <Text maxFontSizeMultiplier={1.15} style={styles.wordAddedText}>
+                  {word.reviews} {word.reviews === 1 ? 'review' : 'reviews'}
+                </Text>
+              </View>
+            ) : null}
             {word.isFlagged ? (
               <View style={styles.wordFlaggedMeta}>
                 <Ionicons name="bookmark" size={11} color={COLORS.purpleDark} />
@@ -142,10 +149,6 @@ export function WordRow({
             definition={word.simpleDefinition || word.definition}
             term={word.term}
           />
-          <View style={styles.reviewCount}>
-            <Ionicons name="refresh" size={13} color={COLORS.muted} />
-            <Text maxFontSizeMultiplier={1.15} style={styles.reviewText}>{word.reviews}</Text>
-          </View>
         </View>
         <Pressable
           accessibilityRole="button"

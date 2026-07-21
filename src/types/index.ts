@@ -33,7 +33,8 @@ export type QuizSessionMode =
   | 'quick'
   | 'challenge'
   | 'mistake-review'
-  | 'mastery-test';
+  | 'mastery-test'
+  | 'omega-test';
 
 export type QuizPreferences = {
   enabled: boolean;
@@ -48,6 +49,12 @@ export type MasteryResult = {
 };
 
 export type ReviewRating = 'hard' | 'correct' | 'easy';
+
+export type StudySetMembership = {
+  id: string;
+  name: string;
+  createdAt: string;
+};
 
 export type WordMasteryProgress = {
   masteryPercent: number;
@@ -77,6 +84,7 @@ export type WordMasteryProgress = {
   reviewNextAt?: string;
   excludedFromPractice?: boolean;
   excludedFromPracticeAt?: string;
+  studySets?: StudySetMembership[];
 };
 
 export type Word = {
@@ -181,6 +189,7 @@ export type QuizProgress = {
 export type QuizAnswer = {
   wordId: string;
   correct: boolean;
+  sessionMode?: QuizSessionMode;
   difficulty?: QuizQuestionDifficulty;
   questionMode?: QuizQuestionMode;
   answeredAt?: string;
