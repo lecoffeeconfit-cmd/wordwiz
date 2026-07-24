@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Canvas as SkiaCanvas, Circle as SkiaCircle, Group as SkiaGroup, Path as SkiaPath, Skia, vec } from '@shopify/react-native-skia';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { LayoutChangeEvent } from 'react-native';
-import { ActivityIndicator, Alert, Animated, Easing, FlatList, Pressable, ScrollView, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Animated, Easing, FlatList, Image, Pressable, ScrollView, Text, View } from 'react-native';
 import { COLORS } from '../constants/theme';
 import type { AnalyticsData, LegalPage, QuizAnswer, QuizDifficultyPreference, QuizPreferences, QuizProgress, QuizQuestion, QuizQuestionMode, ReminderSettings, SortMode, TimeBasedLearningSettings, Word } from '../types';
 import type { QuizFeedbackSummary } from '../utils';
@@ -1281,18 +1281,19 @@ export function DashboardScreen({
           <>
             <View style={styles.retrievalProfileSplit}>
               <RetrievalEvidenceCard
-                label="Recognition"
-                value={retrievalProfile.recognitionPercent}
-                detail="Familiarity · may use cues or quiz patterns"
-                color={COLORS.blue}
-                pale="#EAF3FF"
-              />
-              <RetrievalEvidenceCard
                 label="Recall"
                 value={retrievalProfile.recallPercent}
                 detail="Retrieval · bring the meaning back from memory"
                 color={COLORS.greenDark}
                 pale="#E8FBF4"
+                isGoal
+              />
+              <RetrievalEvidenceCard
+                label="Recognition"
+                value={retrievalProfile.recognitionPercent}
+                detail="Familiarity · may use cues or quiz patterns"
+                color={COLORS.blue}
+                pale="#EAF3FF"
               />
             </View>
             <View style={styles.retrievalEvidenceRow}>
@@ -2663,12 +2664,23 @@ export function DashboardScreen({
 
       <View style={styles.subscriptionOverviewCard}>
         <View style={styles.subscriptionOverviewHeader}>
-          <View style={styles.subscriptionOverviewIcon}>
-            <Ionicons
-              name={isSubscribed || isComplimentary ? 'sparkles' : 'card-outline'}
-              size={21}
-              color={isSubscribed || isComplimentary ? COLORS.purpleDark : COLORS.blue}
-            />
+          <View
+            style={[
+              styles.subscriptionOverviewIcon,
+              (isSubscribed || isComplimentary) && styles.subscriptionOverviewIconPremium,
+            ]}
+          >
+            {isSubscribed || isComplimentary ? (
+              <>
+                <Image
+                  accessibilityLabel="WordWiz magic mark"
+                  source={require('../../assets/wordwiz-logo.png')}
+                  style={styles.subscriptionOverviewLogo}
+                />
+              </>
+            ) : (
+              <Ionicons name="card-outline" size={21} color={COLORS.blue} />
+            )}
           </View>
           <View style={styles.subscriptionOverviewHeaderCopy}>
             <Text style={styles.subscriptionOverviewLabel}>SUBSCRIPTION</Text>
@@ -3022,18 +3034,29 @@ function RetrievalEvidenceCard({
   detail,
   color,
   pale,
+  isGoal = false,
 }: {
   label: string;
   value: number;
   detail: string;
   color: string;
   pale: string;
+  isGoal?: boolean;
 }) {
   return (
     <View style={[styles.retrievalEvidenceCard, { backgroundColor: pale }]}>
+      {isGoal ? (
+        <View style={styles.retrievalEvidenceGoalPill}>
+          <Ionicons name="ribbon" size={10} color="#B77A08" />
+          <Text style={styles.retrievalEvidenceGoalText}>THE GOAL</Text>
+        </View>
+      ) : null}
       <Text style={[styles.retrievalEvidenceValue, { color }]}>{value}%</Text>
       <Text style={styles.retrievalEvidenceLabel}>{label}</Text>
       <Text style={styles.retrievalEvidenceDetail}>{detail}</Text>
+      {isGoal ? (
+        <Text style={styles.retrievalEvidenceGoalNote}>Aim to grow this skill</Text>
+      ) : null}
     </View>
   );
 }

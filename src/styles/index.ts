@@ -3559,7 +3559,7 @@ export const styles = StyleSheet.create({
   practiceCategoryScroller: {
     alignSelf: 'stretch',
     width: '100%',
-    marginTop: 14,
+    marginTop: 8,
     marginBottom: 10,
   },
   practiceCategoryList: {
@@ -4117,7 +4117,7 @@ export const styles = StyleSheet.create({
     color: COLORS.white,
   },
   completeCard: {
-    marginTop: 12,
+    marginTop: 6,
     width: '100%',
     overflow: 'hidden',
     padding: 20,
@@ -6153,7 +6153,7 @@ export const styles = StyleSheet.create({
     fontWeight: '900',
   },
   insightCard: {
-    marginTop: 9,
+    marginTop: -9,
     marginBottom: 9,
     padding: 17,
     borderWidth: 1.5,
@@ -7981,6 +7981,7 @@ export const styles = StyleSheet.create({
     gap: 10,
   },
   retrievalEvidenceCard: {
+    position: 'relative',
     flex: 1,
     minHeight: 114,
     padding: 13,
@@ -8003,6 +8004,32 @@ export const styles = StyleSheet.create({
     fontSize: 10,
     lineHeight: 14,
     fontWeight: '700',
+  },
+  retrievalEvidenceGoalPill: {
+    position: 'absolute',
+    top: 10,
+    right: 9,
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+    borderRadius: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    borderWidth: 1,
+    borderColor: '#F2D27C',
+    backgroundColor: 'rgba(255,252,235,0.92)',
+  },
+  retrievalEvidenceGoalText: {
+    color: '#A76B00',
+    fontSize: 7,
+    fontWeight: '900',
+    letterSpacing: 0.35,
+  },
+  retrievalEvidenceGoalNote: {
+    marginTop: 5,
+    color: COLORS.greenDark,
+    fontSize: 9,
+    fontWeight: '900',
   },
   retrievalEvidenceRow: {
     marginTop: 10,
@@ -8319,9 +8346,20 @@ export const styles = StyleSheet.create({
     width: 42,
     height: 42,
     borderRadius: 15,
+    overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#EEE9FF',
+  },
+  subscriptionOverviewIconPremium: {
+    borderWidth: 2,
+    borderColor: '#E0B34A',
+    backgroundColor: '#17142F',
+    ...SOFT_SHADOW,
+  },
+  subscriptionOverviewLogo: {
+    width: '100%',
+    height: '100%',
   },
   subscriptionOverviewHeaderCopy: {
     flex: 1,
