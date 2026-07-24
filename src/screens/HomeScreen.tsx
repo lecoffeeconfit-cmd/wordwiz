@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { FlatList, Image, Pressable, ScrollView, Text, View } from 'react-native';
+import { Animated, FlatList, Image, Pressable, ScrollView, Text, View } from 'react-native';
 import { COLORS } from '../constants/theme';
 import type { AnalyticsData, LegalPage, QuizAnswer, QuizProgress, QuizQuestion, ReminderSettings, SortMode, Word } from '../types';
 import { styles } from '../styles';
@@ -31,7 +31,7 @@ export function HomeScreen({
   onReviewWord,
   onQuiz,
   onStats,
-  freeTrial,
+  complimentaryAccess,
 }: {
   words: Word[];
   analytics: AnalyticsData;
@@ -42,19 +42,33 @@ export function HomeScreen({
   onReviewWord: (wordId: string) => void;
   onQuiz: () => void;
   onStats: () => void;
-  freeTrial: { daysRemaining: number; expiresAt: string | null } | null;
+  complimentaryAccess: { daysRemaining: number; expiresAt: string | null } | null;
 }) {
   const [achievementCarouselWidth, setAchievementCarouselWidth] = useState(0);
   const [showAllReviewWords, setShowAllReviewWords] = useState(false);
   const [reviewWordPage, setReviewWordPage] = useState(0);
   const lastReviewWordTapAt = useRef(0);
   const reviewWordTapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const homeProgressSparkle = useRef(new Animated.Value(0.35)).current;
   const mastery = words.map((word) => getWordMastery(word, analytics));
   const overallMastery = words.length
     ? Math.round(mastery.reduce((total, score) => total + score, 0) / words.length)
     : 0;
   const strongWords = mastery.filter((score) => score >= 80).length;
+  const masteredWords = mastery.filter((score) => score >= 100).length;
+  const buildingWords = mastery.filter((score) => score >= 40 && score < 80).length;
   const learningWords = words.length - strongWords;
+  const homeProgressSummary =
+    words.length === 0
+      ? 'Start your first word today.'
+      : masteredWords > 0
+        ? `${words.length} words saved · ${masteredWords} mastered`
+        : strongWords > 0
+          ? `${words.length} words saved · ${strongWords} growing strong`
+          : buildingWords > 0
+            ? `${words.length} words saved · ${buildingWords} building confidence`
+            : `${words.length} words saved · Ready for your first review`;
+  const hasProgressCelebration = masteredWords > 0 || strongWords > 0;
   const totalQuizQuestions = analytics.quizHistory.reduce(
     (total, attempt) => total + attempt.total,
     0,
@@ -109,6 +123,31 @@ export function HomeScreen({
         (currentReviewWordPage + 1) * EXPANDED_REVIEW_WORD_PAGE_SIZE,
       )
     : reviewWords.slice(0, 3);
+
+  useEffect(() => {
+    if (!hasProgressCelebration) {
+      homeProgressSparkle.setValue(0.35);
+      return;
+    }
+
+    const animation = Animated.loop(
+      Animated.sequence([
+        Animated.timing(homeProgressSparkle, {
+          toValue: 1,
+          duration: 1150,
+          useNativeDriver: true,
+        }),
+        Animated.timing(homeProgressSparkle, {
+          toValue: 0.35,
+          duration: 1150,
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+
+    animation.start();
+    return () => animation.stop();
+  }, [hasProgressCelebration, homeProgressSparkle]);
 
   useEffect(
     () => () => {
@@ -177,27 +216,32 @@ export function HomeScreen({
         </View>
         <View style={styles.heroGreeting}>
           <Text maxFontSizeMultiplier={1.25} style={styles.homeTitle}>{getGreeting()}, WordWiz</Text>
-          <Text maxFontSizeMultiplier={1.2} style={styles.homeSubtitle}>
-            {words.length === 0
-              ? 'Start your first word today.'
-              : `${words.length} words saved · ${strongWords} feeling strong`}
-          </Text>
+          <View style={styles.homeSubtitleRow}>
+            {hasProgressCelebration ? (
+              <Animated.View style={{ opacity: homeProgressSparkle }}>
+                <Ionicons name="sparkles" size={13} color="#D39A16" />
+              </Animated.View>
+            ) : null}
+            <Text maxFontSizeMultiplier={1.2} style={styles.homeSubtitle}>
+              {homeProgressSummary}
+            </Text>
+          </View>
         </View>
       </View>
 
-      {freeTrial ? (
+      {complimentaryAccess ? (
         <View
           accessible
-          accessibilityLabel={`Your 30-day WordWiz trial has ${freeTrial.daysRemaining} days left`}
+          accessibilityLabel={`Your complimentary WordWiz Plus access has ${complimentaryAccess.daysRemaining} days left`}
           style={styles.homeTrialCard}
         >
           <View style={styles.homeTrialIcon}>
             <Ionicons name="sparkles" size={19} color={COLORS.purpleDark} />
           </View>
           <View style={styles.homeTrialCopy}>
-            <Text style={styles.homeTrialLabel}>30-DAY FREE TRIAL</Text>
+            <Text style={styles.homeTrialLabel}>COMPLIMENTARY WORDWIZ PLUS</Text>
             <Text style={styles.homeTrialTitle}>
-              {freeTrial.daysRemaining} {freeTrial.daysRemaining === 1 ? 'day' : 'days'} of full access left
+              {complimentaryAccess.daysRemaining} {complimentaryAccess.daysRemaining === 1 ? 'day' : 'days'} of full access left
             </Text>
             <Text style={styles.homeTrialSubtitle}>
               Enjoy every learning tool — no card required.
@@ -210,13 +254,18 @@ export function HomeScreen({
       <View
         style={[
           styles.homeOverviewCard,
-          freeTrial && styles.homeOverviewCardAfterTrial,
+          complimentaryAccess && styles.homeOverviewCardAfterTrial,
         ]}
       >
-        <View style={styles.overviewHeader}>
-          <Text maxFontSizeMultiplier={1.2} style={styles.homeSectionTitle}>
-            Today’s learning
-          </Text>
+          <View style={styles.overviewHeader}>
+          <View style={styles.overviewTitleGroup}>
+            <View style={[styles.overviewTitleIcon, styles.wordWizHatBadge]}>
+              <WordWizHatIcon />
+            </View>
+            <Text maxFontSizeMultiplier={1.2} style={styles.homeSectionTitle}>
+              Today’s learning
+            </Text>
+          </View>
           <View
             accessible
             accessibilityLabel={`${completedDailyQuizzes} of ${dailyQuizGoal} daily quizzes completed`}
@@ -237,13 +286,16 @@ export function HomeScreen({
         </View>
         <View
           accessible
-          accessibilityLabel="All-time progress"
+          accessibilityLabel="All-time learning summary"
           style={styles.homeAllTimeSummaryHeader}
         >
-          <Ionicons name="analytics-outline" size={13} color={COLORS.muted} />
-          <Text maxFontSizeMultiplier={1.15} style={styles.homeAllTimeSummaryLabel}>
-            ALL-TIME PROGRESS
-          </Text>
+          <View style={styles.homeAllTimeSummaryLead}>
+            <Ionicons name="analytics-outline" size={13} color={COLORS.muted} />
+            <Text maxFontSizeMultiplier={1.15} style={styles.homeAllTimeSummaryLabel}>
+              ALL-TIME LEARNING
+            </Text>
+          </View>
+          <View style={styles.homeAllTimeSummaryDivider} />
         </View>
         <View style={styles.homeIdeaGrid}>
           <HomeMiniCard
@@ -251,14 +303,16 @@ export function HomeScreen({
             accent={COLORS.blue}
             icon="book-outline"
             title={`${words.length} saved words`}
-            subtitle={`${learningWords} still learning`}
+            subtitle={`${strongWords} strong · ${learningWords} learning`}
           />
           <HomeMiniCard
             color={COLORS.orangePale}
             accent={COLORS.orange}
             icon="checkmark-circle-outline"
-            title={`${accuracy}% overall`}
-            subtitle={`Across ${analytics.quizHistory.length} quizzes`}
+            title={totalQuizQuestions ? `${accuracy}% accuracy` : 'No quizzes yet'}
+            subtitle={totalQuizQuestions
+              ? `${totalCorrect} / ${totalQuizQuestions} correct`
+              : 'Take a quiz to begin'}
           />
         </View>
         <View style={styles.homeDottedLine} />
@@ -296,6 +350,7 @@ export function HomeScreen({
             progress={Math.max(overallMastery, words.length ? 6 : 0)}
             radius={4}
             style={{ width: `${Math.max(overallMastery, words.length ? 6 : 0)}%` }}
+            variant="main"
           />
         </View>
         <Pressable onPress={onStats} style={styles.homeStartButton}>
@@ -545,6 +600,9 @@ export function HomeScreen({
           <Ionicons name="add" size={24} color={COLORS.white} />
         </View>
         <Text style={styles.homeFloatingAddText}>Add word</Text>
+        <View pointerEvents="none" accessible={false} style={styles.homeFloatingAddSparkle}>
+          <Ionicons name="sparkles" size={11} color="#FFE58A" />
+        </View>
       </Pressable>
     </View>
   );
@@ -570,4 +628,19 @@ function getReviewReason(word: Word, analytics: AnalyticsData) {
     return 'New';
   }
   return `${getWordMastery(word, analytics)}%`;
+}
+
+function WordWizHatIcon() {
+  return (
+    <View accessible={false} style={styles.wordWizHatIcon}>
+      <View style={styles.wordWizHatCone} />
+      <View style={styles.wordWizHatBrim} />
+      <Ionicons
+        name="sparkles"
+        size={10}
+        color="#FFE58A"
+        style={styles.wordWizHatSparkle}
+      />
+    </View>
+  );
 }

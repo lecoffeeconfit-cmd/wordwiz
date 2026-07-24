@@ -1,30 +1,28 @@
 import { Ionicons } from '@expo/vector-icons';
+import { Canvas, Group, Path, Skia, vec } from '@shopify/react-native-skia';
 import * as Haptics from 'expo-haptics';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import Animated, {
   Easing,
   type SharedValue,
   interpolate,
   runOnJS,
-  useAnimatedProps,
   useAnimatedReaction,
   useAnimatedStyle,
+  useDerivedValue,
   useSharedValue,
   withDelay,
-  withRepeat,
   withSequence,
   withSpring,
   withTiming,
 } from 'react-native-reanimated';
-import Svg, { Circle, Line } from 'react-native-svg';
 import { COLORS } from '../../constants/theme';
 import { MASTERY_LEVELS } from '../../utils';
 
 const SIZE = 132;
 const STROKE_WIDTH = 12;
 const RADIUS = (SIZE - STROKE_WIDTH) / 2;
-const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
 const CENTER = SIZE / 2;
 const RING_INNER_RADIUS = RADIUS - STROKE_WIDTH / 2;
 const RING_OUTER_RADIUS = RADIUS + STROKE_WIDTH / 2;
@@ -32,7 +30,6 @@ const CENTER_SIZE = RING_INNER_RADIUS * 2;
 const SEGMENT_COLORS = MASTERY_LEVELS.map((level) => level.color);
 const SEGMENT_SPARKLE_RADIUS = RADIUS + STROKE_WIDTH * 0.42;
 
-const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 
 type LessonProgressRingProps = {
   progress: number;
@@ -45,8 +42,6 @@ type MasteryRingSegment = {
   color: string;
   startScore: number;
   endScore: number;
-  startLength: number;
-  arcLength: number;
   startDegrees: number;
   sweepDegrees: number;
   sparkleRatio: number;
@@ -64,8 +59,6 @@ const MASTERY_RING_SEGMENTS: MasteryRingSegment[] = MASTERY_LEVELS.map(
       color: level.color,
       startScore,
       endScore,
-      startLength: CIRCUMFERENCE * (startScore / 100),
-      arcLength: CIRCUMFERENCE * (scoreSpan / 100),
       startDegrees: startScore * 3.6,
       sweepDegrees: scoreSpan * 3.6,
       sparkleRatio: index % 2 === 0 ? 0.66 : 0.42,
@@ -133,12 +126,10 @@ export function LessonProgressRing({
   const [burstKey, setBurstKey] = useState(0);
   const animatedMasteryScore = useSharedValue(safeMasteryScore);
   const displayedProgressValue = useSharedValue(safeCenterProgress);
-  const glowPulse = useSharedValue(0);
   const ringPulse = useSharedValue(1);
   const centerScale = useSharedValue(1);
   const capBounce = useSharedValue(0);
   const sparkleBurst = useSharedValue(0);
-  const shimmerTravel = useSharedValue(0);
   const completionTitleOpacity = useSharedValue(isComplete ? 1 : 0);
   const xpReward = useSharedValue(isComplete ? 1 : 0);
 
@@ -150,6 +141,7 @@ export function LessonProgressRing({
     const previousCompletion = previousCompletionProgress.current;
     const didIncrease = safeProgress > previous || safeMasteryScore > previousMastery;
     const didComplete = isComplete && previousCompletion < 100;
+    const shouldSparkle = Math.max(safeProgress, safeMasteryScore) >= 75;
 
     animatedMasteryScore.value = withTiming(safeMasteryScore, {
       duration: 900,
@@ -166,19 +158,17 @@ export function LessonProgressRing({
         withSpring(1.035, { damping: 12, stiffness: 210 }),
         withSpring(1, { damping: 13, stiffness: 180 }),
       );
-      glowPulse.value = withSequence(
-        withTiming(1, { duration: 190 }),
-        withTiming(0, { duration: 620, easing: Easing.out(Easing.cubic) }),
-      );
       capBounce.value = withSequence(
         withSpring(-4, { damping: 9, stiffness: 260 }),
         withSpring(0, { damping: 11, stiffness: 210 }),
       );
-      sparkleBurst.value = withSequence(
-        withTiming(1, { duration: 170 }),
-        withTiming(0, { duration: 650 }),
-      );
-      setBurstKey((key) => key + 1);
+      if (shouldSparkle) {
+        sparkleBurst.value = withSequence(
+          withTiming(1, { duration: 170 }),
+          withTiming(0, { duration: 650 }),
+        );
+        setBurstKey((key) => key + 1);
+      }
     }
 
     if (didComplete) {
@@ -190,10 +180,6 @@ export function LessonProgressRing({
       ringPulse.value = withSequence(
         withSpring(1.06, { damping: 10, stiffness: 190 }),
         withSpring(1, { damping: 12, stiffness: 170 }),
-      );
-      glowPulse.value = withSequence(
-        withTiming(1, { duration: 180 }),
-        withTiming(0, { duration: 900, easing: Easing.out(Easing.cubic) }),
       );
       completionTitleOpacity.value = withTiming(1, { duration: 360 });
       xpReward.value = withSequence(
@@ -216,7 +202,6 @@ export function LessonProgressRing({
     completionTitleOpacity,
     completionProgress,
     displayedProgressValue,
-    glowPulse,
     isComplete,
     ringPulse,
     safeMasteryScore,
@@ -225,17 +210,6 @@ export function LessonProgressRing({
     sparkleBurst,
     xpReward,
   ]);
-
-  useEffect(() => {
-    shimmerTravel.value = withRepeat(
-      withTiming(1, {
-        duration: 2500,
-        easing: Easing.linear,
-      }),
-      -1,
-      false,
-    );
-  }, [shimmerTravel]);
 
   useAnimatedReaction(
     () => Math.round(displayedProgressValue.value),
@@ -252,9 +226,6 @@ export function LessonProgressRing({
 
   const centerStyle = useAnimatedStyle(() => ({
     transform: [{ scale: centerScale.value }],
-    boxShadow: `0 15px 32px rgba(32, 51, 109, 0.18), 0 0 22px rgba(255, 255, 255, ${
-      0.36 + glowPulse.value * 0.18
-    })`,
   }));
 
   const capStyle = useAnimatedStyle(() => ({
@@ -277,19 +248,20 @@ export function LessonProgressRing({
   return (
     <View style={localStyles.container}>
       <Animated.View style={[localStyles.ringShell, pulseStyle]}>
-        <Svg width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`}>
-          {MASTERY_RING_SEGMENTS.map((segment) => (
-            <SegmentArc
-              key={segment.key}
-              segment={segment}
-              animatedScore={animatedMasteryScore}
-              shimmerTravel={shimmerTravel}
-            />
-          ))}
+        <Canvas pointerEvents="none" style={localStyles.ringCanvas}>
+          <Group origin={vec(CENTER, CENTER)} transform={[{ rotate: -Math.PI / 2 }]}>
+            {MASTERY_RING_SEGMENTS.map((segment) => (
+              <SegmentArc
+                key={segment.key}
+                segment={segment}
+                animatedScore={animatedMasteryScore}
+              />
+            ))}
+          </Group>
           {MASTERY_BOUNDARY_LINES.map((line) => (
             <LevelBoundaryLine key={line.score} line={line} />
           ))}
-        </Svg>
+        </Canvas>
       </Animated.View>
 
       <View pointerEvents="none" style={localStyles.effectsLayer}>
@@ -298,9 +270,7 @@ export function LessonProgressRing({
             key={`${segment.key}-sparkle`}
             segment={segment}
             size={index % 2 === 0 ? 4 : 3}
-            phase={index * 0.13}
             animatedScore={animatedMasteryScore}
-            shimmerTravel={shimmerTravel}
             burst={sparkleBurst}
           />
         ))}
@@ -397,112 +367,63 @@ function ConfettiPiece({
 function SegmentArc({
   segment,
   animatedScore,
-  shimmerTravel,
 }: {
   segment: MasteryRingSegment;
   animatedScore: SharedValue<number>;
-  shimmerTravel: SharedValue<number>;
 }) {
-  const trackDasharray = `${segment.arcLength} ${CIRCUMFERENCE - segment.arcLength}`;
-  const strokeDashoffset = -segment.startLength;
-  const rotateToTop = `rotate(-90 ${CENTER} ${CENTER})`;
-
-  const fillAnimatedProps = useAnimatedProps(() => {
+  const circlePath = useMemo(() => {
+    const path = Skia.Path.Make();
+    path.addCircle(CENTER, CENTER, RADIUS);
+    return path;
+  }, []);
+  const fillEnd = useDerivedValue(() => {
     const segmentProgress = getSegmentProgress(
       animatedScore.value,
       segment.startScore,
       segment.endScore,
     );
-    const fillLength = Math.max(0.01, segment.arcLength * segmentProgress);
-
-    return {
-      opacity: segmentProgress > 0.002 ? 1 : 0,
-      strokeDasharray: `${fillLength} ${CIRCUMFERENCE - fillLength}`,
-    };
+    return segment.startScore / 100 + ((segment.endScore - segment.startScore) / 100) * segmentProgress;
   });
-
-  const shineAnimatedProps = useAnimatedProps(() => {
+  const glowOpacity = useDerivedValue(() => {
     const segmentProgress = getSegmentProgress(
       animatedScore.value,
       segment.startScore,
       segment.endScore,
     );
-    const glossProgress = clampUnit((animatedScore.value - 75) / 25);
-    const visibleLength = Math.max(0.01, segment.arcLength * segmentProgress);
-    const shineLength = Math.max(10, Math.min(23, segment.arcLength * 0.36));
-    const travelLength = Math.max(0, visibleLength - shineLength);
-    const localOffset = travelLength * shimmerTravel.value;
-
-    return {
-      opacity: glossProgress * 0.42,
-      strokeDasharray: `${shineLength} ${CIRCUMFERENCE - shineLength}`,
-      strokeDashoffset: -(segment.startLength + localOffset),
-    };
-  });
-
-  const glowAnimatedProps = useAnimatedProps(() => {
-    const segmentProgress = getSegmentProgress(
-      animatedScore.value,
-      segment.startScore,
-      segment.endScore,
-    );
-    const glowProgress = clampUnit((animatedScore.value - 50) / 20);
-    const fillLength = Math.max(0.01, segment.arcLength * segmentProgress);
-
-    return {
-      opacity: glowProgress * (segmentProgress > 0.002 ? 0.32 : 0),
-      strokeDasharray: `${fillLength} ${CIRCUMFERENCE - fillLength}`,
-    };
+    if (segmentProgress < 0.5) return 0;
+    if (segmentProgress < 0.75) return 0.1;
+    return 0.18;
   });
 
   return (
     <>
-      <Circle
-        cx={CENTER}
-        cy={CENTER}
-        r={RADIUS}
-        stroke="rgba(6,35,95,0.22)"
+      <Path
+        path={circlePath}
+        start={segment.startScore / 100}
+        end={segment.endScore / 100}
+        color="rgba(6,35,95,0.22)"
+        style="stroke"
+        strokeCap="butt"
         strokeWidth={STROKE_WIDTH}
-        strokeLinecap="butt"
-        fill="transparent"
-        strokeDasharray={trackDasharray}
-        strokeDashoffset={strokeDashoffset}
-        transform={rotateToTop}
       />
-      <AnimatedCircle
-        cx={CENTER}
-        cy={CENTER}
-        r={RADIUS}
-        stroke={segment.color}
-        strokeWidth={STROKE_WIDTH + 8}
-        strokeLinecap="butt"
-        fill="transparent"
-        strokeDashoffset={strokeDashoffset}
-        animatedProps={glowAnimatedProps}
-        transform={rotateToTop}
+      <Path
+        path={circlePath}
+        start={segment.startScore / 100}
+        end={fillEnd}
+        color={segment.color}
+        opacity={glowOpacity}
+        style="stroke"
+        strokeCap="butt"
+        strokeWidth={STROKE_WIDTH + 3}
       />
-      <AnimatedCircle
-        cx={CENTER}
-        cy={CENTER}
-        r={RADIUS}
-        stroke={segment.color}
+      <Path
+        path={circlePath}
+        start={segment.startScore / 100}
+        end={fillEnd}
+        color={segment.color}
+        style="stroke"
+        strokeCap="butt"
         strokeWidth={STROKE_WIDTH}
-        strokeLinecap="butt"
-        fill="transparent"
-        strokeDashoffset={strokeDashoffset}
-        animatedProps={fillAnimatedProps}
-        transform={rotateToTop}
-      />
-      <AnimatedCircle
-        cx={CENTER}
-        cy={CENTER}
-        r={RADIUS}
-        stroke={segment.color}
-        strokeWidth={4}
-        strokeLinecap="round"
-        fill="transparent"
-        animatedProps={shineAnimatedProps}
-        transform={rotateToTop}
       />
     </>
   );
@@ -513,15 +434,20 @@ function LevelBoundaryLine({
 }: {
   line: (typeof MASTERY_BOUNDARY_LINES)[number];
 }) {
+  const boundaryPath = useMemo(() => {
+    const path = Skia.Path.Make();
+    path.moveTo(line.innerX, line.innerY);
+    path.lineTo(line.outerX, line.outerY);
+    return path;
+  }, [line.innerX, line.innerY, line.outerX, line.outerY]);
+
   return (
-    <Line
-      x1={line.innerX}
-      y1={line.innerY}
-      x2={line.outerX}
-      y2={line.outerY}
-      stroke="rgba(255,255,255,0.42)"
+    <Path
+      path={boundaryPath}
+      color="rgba(224,235,255,0.55)"
+      style="stroke"
+      strokeCap="butt"
       strokeWidth={1.25}
-      strokeLinecap="butt"
     />
   );
 }
@@ -529,16 +455,12 @@ function LevelBoundaryLine({
 function SegmentSparkle({
   segment,
   size,
-  phase,
   animatedScore,
-  shimmerTravel,
   burst,
 }: {
   segment: MasteryRingSegment;
   size: number;
-  phase: number;
   animatedScore: SharedValue<number>;
-  shimmerTravel: SharedValue<number>;
   burst: SharedValue<number>;
 }) {
   const sparkleAngle = segment.startDegrees + segment.sweepDegrees * segment.sparkleRatio;
@@ -547,21 +469,18 @@ function SegmentSparkle({
   const y = CENTER + Math.sin(radians) * SEGMENT_SPARKLE_RADIUS - size / 2;
 
   const sparkleStyle = useAnimatedStyle(() => {
-    const glowProgress = clampUnit((animatedScore.value - 50) / 20);
-    const glossProgress = clampUnit((animatedScore.value - 75) / 25);
-    const twinkle =
-      0.55 + Math.sin((shimmerTravel.value + phase) * Math.PI * 2) * 0.28;
-    const orbit = shimmerTravel.value * Math.PI * 2 + phase;
+    const segmentProgress = getSegmentProgress(
+      animatedScore.value,
+      segment.startScore,
+      segment.endScore,
+    );
+    const sparkleProgress = clampUnit((segmentProgress - 0.95) / 0.05);
 
     return {
-      opacity: Math.max(
-        0,
-        glowProgress * (0.42 + glossProgress * 0.1) * twinkle + burst.value * 0.32,
-      ),
+      opacity: sparkleProgress * burst.value * 0.82,
       transform: [
-        { translateX: Math.cos(orbit) * 1.6 },
-        { translateY: Math.sin(orbit) * 1.6 },
-        { scale: 0.72 + glowProgress * 0.46 + burst.value * 0.24 },
+        { translateY: -burst.value * 3 },
+        { scale: 0.72 + burst.value * 0.5 },
       ],
     };
   });
@@ -619,6 +538,10 @@ const localStyles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  ringCanvas: {
+    height: SIZE,
+    width: SIZE,
+  },
   effectsLayer: {
     ...StyleSheet.absoluteFill,
   },
@@ -655,7 +578,7 @@ const localStyles = StyleSheet.create({
   },
   sparkle: {
     position: 'absolute',
-    shadowColor: COLORS.white,
+    shadowColor: COLORS.purple,
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.8,
     shadowRadius: 5,

@@ -1,7 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Alert,
+  Dimensions,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -41,9 +43,59 @@ export function LoginScreen({
   const [verificationEmail, setVerificationEmail] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isResendingVerification, setIsResendingVerification] = useState(false);
+  const scrollViewRef = useRef<ScrollView>(null);
+  const nameInputRef = useRef<TextInput>(null);
+  const emailInputRef = useRef<TextInput>(null);
+  const passwordInputRef = useRef<TextInput>(null);
+  const scrollOffsetRef = useRef(0);
+  const keyboardHeightRef = useRef(0);
+  const focusScrollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const isCreateMode = mode === 'create';
   const isForgotMode = mode === 'forgot';
+
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const keyboardShowSubscription = Keyboard.addListener(showEvent, (event) => {
+      keyboardHeightRef.current = event.endCoordinates.height;
+    });
+    const keyboardHideSubscription = Keyboard.addListener(hideEvent, () => {
+      keyboardHeightRef.current = 0;
+    });
+
+    return () => {
+      keyboardShowSubscription.remove();
+      keyboardHideSubscription.remove();
+      if (focusScrollTimer.current) {
+        clearTimeout(focusScrollTimer.current);
+      }
+    };
+  }, []);
+
+  function keepFocusedInputVisible(input: TextInput | null) {
+    if (focusScrollTimer.current) {
+      clearTimeout(focusScrollTimer.current);
+    }
+
+    focusScrollTimer.current = setTimeout(() => {
+      if (!input || keyboardHeightRef.current === 0) return;
+
+      input.measureInWindow((_x, y, _width, height) => {
+        const keyboardTop = Dimensions.get('window').height - keyboardHeightRef.current;
+        const inputBottom = y + height;
+        const spaceAboveKeyboard = 20;
+        const scrollDistance = inputBottom + spaceAboveKeyboard - keyboardTop;
+
+        if (scrollDistance > 0) {
+          scrollViewRef.current?.scrollTo({
+            y: scrollOffsetRef.current + scrollDistance,
+            animated: true,
+          });
+        }
+      });
+    }, Platform.OS === 'ios' ? 200 : 100);
+  }
 
   async function submit() {
     const emailError = validateEmail(email);
@@ -131,9 +183,15 @@ export function LoginScreen({
       style={styles.authKeyboard}
     >
       <ScrollView
+        ref={scrollViewRef}
         style={styles.screen}
         contentContainerStyle={styles.authContent}
+        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
         keyboardShouldPersistTaps="handled"
+        onScroll={(event) => {
+          scrollOffsetRef.current = event.nativeEvent.contentOffset.y;
+        }}
+        scrollEventThrottle={16}
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.authHero}>
@@ -168,8 +226,8 @@ export function LoginScreen({
               <View style={styles.verificationCopy}>
                 <Text style={styles.verificationTitle}>Verify your email</Text>
                 <Text style={styles.verificationText}>
-                  We sent a confirmation link to {verificationEmail}. Open it,
-                  then log in here.
+                  We sent a confirmation link to {verificationEmail}. Open it
+                  to return here and finish signing in.
                 </Text>
                 <Pressable
                   onPress={resendVerification}
@@ -237,6 +295,11 @@ export function LoginScreen({
               onChangeText={setName}
               placeholder="Alex"
               autoCapitalize="words"
+              inputRef={nameInputRef}
+              onFocus={() => keepFocusedInputVisible(nameInputRef.current)}
+              returnKeyType="next"
+              blurOnSubmit={false}
+              onSubmitEditing={() => emailInputRef.current?.focus()}
             />
           )}
           <AuthField
@@ -247,6 +310,13 @@ export function LoginScreen({
             placeholder="you@example.com"
             autoCapitalize="none"
             keyboardType="email-address"
+            inputRef={emailInputRef}
+            onFocus={() => keepFocusedInputVisible(emailInputRef.current)}
+            returnKeyType={isForgotMode ? 'done' : 'next'}
+            blurOnSubmit={isForgotMode}
+            onSubmitEditing={isForgotMode
+              ? () => { void submit(); }
+              : () => passwordInputRef.current?.focus()}
           />
           {!isForgotMode && (
             <AuthField
@@ -256,6 +326,10 @@ export function LoginScreen({
               onChangeText={setPassword}
               placeholder="Your password"
               secureTextEntry
+              inputRef={passwordInputRef}
+              onFocus={() => keepFocusedInputVisible(passwordInputRef.current)}
+              returnKeyType="done"
+              onSubmitEditing={() => { void submit(); }}
             />
           )}
           {isCreateMode && (
@@ -400,6 +474,11 @@ function AuthField({
   secureTextEntry,
   autoCapitalize = 'sentences',
   keyboardType = 'default',
+  inputRef,
+  onFocus,
+  onSubmitEditing,
+  returnKeyType,
+  blurOnSubmit,
 }: {
   icon: keyof typeof Ionicons.glyphMap;
   label: string;
@@ -409,6 +488,11 @@ function AuthField({
   secureTextEntry?: boolean;
   autoCapitalize?: 'none' | 'sentences' | 'words' | 'characters';
   keyboardType?: 'default' | 'email-address';
+  inputRef?: React.RefObject<TextInput | null>;
+  onFocus?: () => void;
+  onSubmitEditing?: () => void;
+  returnKeyType?: 'done' | 'next';
+  blurOnSubmit?: boolean;
 }) {
   return (
     <View style={styles.authFieldGroup}>
@@ -416,6 +500,7 @@ function AuthField({
       <View style={styles.authInputWrap}>
         <Ionicons name={icon} size={20} color={COLORS.purpleDark} />
         <TextInput
+          ref={inputRef}
           value={value}
           onChangeText={onChangeText}
           placeholder={placeholder}
@@ -423,6 +508,10 @@ function AuthField({
           secureTextEntry={secureTextEntry}
           autoCapitalize={autoCapitalize}
           keyboardType={keyboardType}
+          onFocus={onFocus}
+          onSubmitEditing={onSubmitEditing}
+          returnKeyType={returnKeyType}
+          blurOnSubmit={blurOnSubmit}
           style={styles.authInput}
         />
       </View>

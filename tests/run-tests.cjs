@@ -239,13 +239,13 @@ test('free word limit is enforced atomically in Supabase and cannot be bypassed 
   assert.match(migration, /Words are created through the allowance RPC/);
 });
 
-test('the automatic trial starts server-side and grants full access for thirty days', () => {
+test('complimentary Plus access starts server-side once and lasts thirty days', () => {
   const migration = fs.readFileSync(
-    path.join(projectRoot, 'supabase/automatic_trial_migration.sql'),
+    path.join(projectRoot, 'supabase/final_access_model_migration.sql'),
     'utf8',
   );
-  const appContent = fs.readFileSync(
-    path.join(projectRoot, 'src/application/AppContent.tsx'),
+  const subscriptionProvider = fs.readFileSync(
+    path.join(projectRoot, 'src/subscription/SubscriptionProvider.tsx'),
     'utf8',
   );
   const homeScreen = fs.readFileSync(
@@ -253,12 +253,14 @@ test('the automatic trial starts server-side and grants full access for thirty d
     'utf8',
   );
 
-  assert.match(migration, /get_trial_access\(\)/);
-  assert.match(migration, /now\(\) \+ interval '30 days'/);
-  assert.match(migration, /if not \(v_is_plus or v_is_trial\)/);
-  assert.match(appContent, /getFreeTrialAccess/);
-  assert.match(appContent, /hasFullLearningAccess/);
-  assert.match(homeScreen, /30-DAY FREE TRIAL/);
+  assert.match(migration, /get_or_start_my_access\(\)/);
+  assert.match(migration, /complimentary_access/);
+  assert.match(migration, /v_now \+ interval '30 days'/);
+  assert.match(migration, /if not \(v_is_plus or v_complimentary_active\)/);
+  assert.match(subscriptionProvider, /getOrStartComplimentaryAccess/);
+  assert.match(subscriptionProvider, /hasActiveRevenueCatEntitlement/);
+  assert.match(subscriptionProvider, /hasActiveComplimentaryAccess/);
+  assert.match(homeScreen, /COMPLIMENTARY WORDWIZ PLUS/);
 });
 
 test('word saving trims input and creates a new saved word', () => {
@@ -655,6 +657,13 @@ test('word saving capitalizes the first letter for display', () => {
 
   assert.equal(savedWord.term, 'Serendipity');
   assert.equal(acronymWord.term, 'NASA');
+});
+
+test('word term keys treat spacing and capitalization as duplicates', () => {
+  assert.equal(
+    learning.getSavedWordTermKey('  Sea   Change  '),
+    learning.getSavedWordTermKey('sea change'),
+  );
 });
 
 
@@ -1718,6 +1727,30 @@ test('category practice expands small groups with distinct formats without extra
   assert.equal(updatedWord.mastery.totalCorrect, 1);
 });
 
+test('standard quizzes give small collections varied prompts for every word', () => {
+  const words = [
+    makeWord('small-one', 'Breeze', 'A gentle wind.', 0),
+    makeWord('small-two', 'Crisp', 'Fresh and pleasantly sharp.', 0),
+    makeWord('small-three', 'Dawn', 'The first light of day.', 0),
+  ];
+  const questions = quiz.buildQuiz(words, [], {});
+
+  assert.equal(questions.length, 6);
+  words.forEach((word) => {
+    const wordQuestions = questions.filter((question) => question.word.id === word.id);
+    assert.equal(wordQuestions.length, 2);
+    assert.equal(new Set(wordQuestions.map((question) => question.mode)).size, 2);
+  });
+  assert.equal(
+    new Set(
+      questions.map(
+        (question) => `${question.prompt}\u0000${question.displayText}\u0000${question.answer}`,
+      ),
+    ).size,
+    questions.length,
+  );
+});
+
 test('flagged words remain ordinary words for mastery and small-group practice', () => {
   const flaggedWord = {
     ...makeWord('flagged', 'Flagged', 'Marked for extra study.', 0),
@@ -2066,6 +2099,58 @@ test('achievement builder recognizes three quizzes in one day', () => {
         achievement.id.startsWith('review-horizon-') && !achievement.unlocked,
     ),
   );
+});
+
+test('achievement builder tracks consecutive perfect quizzes separately from total perfect quizzes', () => {
+  const quizHistory = [
+    { id: '1', date: '2026-01-01', score: 2, total: 2, durationSeconds: 10, completedAt: '2026-01-01T10:00:00.000Z', answers: [] },
+    { id: '2', date: '2026-01-02', score: 1, total: 2, durationSeconds: 10, completedAt: '2026-01-02T10:00:00.000Z', answers: [] },
+    { id: '3', date: '2026-01-03', score: 2, total: 2, durationSeconds: 10, completedAt: '2026-01-03T10:00:00.000Z', answers: [] },
+    { id: '4', date: '2026-01-04', score: 2, total: 2, durationSeconds: 10, completedAt: '2026-01-04T10:00:00.000Z', answers: [] },
+    { id: '5', date: '2026-01-05', score: 2, total: 2, durationSeconds: 10, completedAt: '2026-01-05T10:00:00.000Z', answers: [] },
+  ];
+  const achievements = learning.buildAchievements({
+    words: [],
+    analytics: { cardHistory: [], quizHistory },
+  });
+
+  const threeInARow = achievements.find((achievement) => achievement.id === 'perfect-streak-3');
+  const fiveInARow = achievements.find((achievement) => achievement.id === 'perfect-streak-5');
+
+  assert.equal(threeInARow.unlocked, true);
+  assert.equal(threeInARow.progress, 3);
+  assert.equal(fiveInARow.unlocked, false);
+  assert.equal(fiveInARow.progress, 3);
+});
+
+test('achievement track scales rewards from early practice through collection mastery', () => {
+  const words = Array.from({ length: 100 }, (_, index) =>
+    makeWord(String(index), `Word ${index}`, `Definition ${index}`, 0),
+  );
+  const quizHistory = Array.from({ length: 50 }, (_, index) => ({
+    id: `quiz-${index}`,
+    date: `2026-02-${String((index % 20) + 1).padStart(2, '0')}`,
+    score: 2,
+    total: 3,
+    durationSeconds: 10,
+    completedAt: `2026-02-01T${String(index % 24).padStart(2, '0')}:00:00.000Z`,
+    answers: [],
+  }));
+  const achievements = learning.buildAchievements({
+    words,
+    analytics: { cardHistory: [], quizHistory },
+  });
+
+  const collector = achievements.find((achievement) => achievement.id === 'collector-100');
+  const quizMilestone = achievements.find((achievement) => achievement.id === 'quiz-50');
+  const fullMastery = achievements.find((achievement) => achievement.id === 'mastery-all-words');
+
+  assert.equal(collector.unlocked, true);
+  assert.equal(quizMilestone.unlocked, true);
+  assert.equal(fullMastery.unlocked, false);
+  assert.equal(collector.refreshTokens, 1);
+  assert.ok(quizMilestone.points > 0);
+  assert.equal(fullMastery.points, 100);
 });
 
 test('progress colors move through stronger learning states', () => {

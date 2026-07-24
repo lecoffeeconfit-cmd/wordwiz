@@ -1,10 +1,11 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
+import * as Linking from 'expo-linking';
 import * as SplashScreen from 'expo-splash-screen';
 import * as WebBrowser from 'expo-web-browser';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Platform, Pressable, Text, View } from 'react-native';
+import { Alert, Animated, Platform, Pressable, Text, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BottomTabs } from '../components';
 import {
@@ -16,17 +17,24 @@ import {
   type WordWizStarterCollection,
 } from '../constants/wordCollections';
 import { COLORS } from '../constants/theme';
-import { AddWordModal, WordWizPlusModal } from '../modals';
+import {
+  AddWordModal,
+  ComplimentaryAccessModal,
+  DeleteWordModal,
+  WordWizPlusModal,
+} from '../modals';
 import {
   CardsScreen,
   DashboardScreen,
   HomeScreen,
+  type PausedQuizSession,
   LoginScreen,
   QuizScreen,
   WordsScreen,
 } from '../screens';
 import {
   normalizeEmail,
+  completeSupabaseAuthRedirect,
   resendSupabaseEmailVerification,
   requestSupabaseAccountDeletion,
   sendSupabasePasswordReset,
@@ -43,9 +51,9 @@ import {
   buildSmartReminderMessages,
   deleteCloudWord,
   createCloudWordWithFreeLimit,
+  DuplicateWordError,
   FreeWordLimitError,
-  getFreeTrialAccess,
-  getFreeWordUsage,
+  lookupWordDetails,
   syncRevenueCatEntitlement,
   fetchUserLearningData,
   reportError,
@@ -54,16 +62,17 @@ import {
   saveCloudReminderSettings,
   saveCloudWord,
   saveCloudWords,
+  saveCloudStudySetMembership,
   scheduleDailyReminder,
   setSentryUser,
   trackEvent,
-  type FreeTrialAccess,
 } from '../services';
 import { env } from '../config/env';
 import { useSubscription } from '../subscription/SubscriptionProvider';
 import { styles } from '../styles';
 import type {
   AnalyticsData,
+  AchievementWallet,
   AuthUser,
   LegalPage,
   QuizAnswer,
@@ -76,12 +85,14 @@ import type {
   TimeBasedLearningSettings,
   Word,
   WordDetails,
+  StudySetMembership,
 } from '../types';
 import type { Provider } from '@supabase/supabase-js';
 import {
   addQuizAttempt,
   applyFlashcardReview,
   applyQuizMastery,
+  buildAchievements,
   buildQuizCompletion,
   buildWordFromInput,
   calculateStreakStats,
@@ -89,6 +100,7 @@ import {
   getDayKey,
   getDueReviewWords,
   getNextMasteryLevel,
+  getSavedWordTermKey,
   getWordMastery,
   getWordMasteryProgress,
   mergeWordLists,
@@ -96,8 +108,8 @@ import {
   upsertSavedWord,
 } from '../utils';
 
-const ONBOARDING_KEY = '@wordwiz/onboarding-complete/v1';
 const CLOUD_HYDRATE_CACHE_MS = 30 * 60 * 1000;
+const LEGACY_ONBOARDING_KEY = '@wordwiz/onboarding-complete/v1';
 const LEGAL_PAGE_URLS: Record<LegalPage, string> = {
   privacy: 'https://lecoffeeconfit-cmd.github.io/wordwiz-legal/',
   terms: 'https://lecoffeeconfit-cmd.github.io/wordwiz-legal/terms.html',
@@ -109,6 +121,11 @@ const DEFAULT_QUIZ_PREFERENCES: QuizPreferences = {
   enabled: true,
   difficulty: 'automatic',
   questionTypes: normalizeQuestionTypePreferences(undefined),
+};
+const EMPTY_ACHIEVEMENT_WALLET: AchievementWallet = {
+  claimedAchievementIds: [],
+  points: 0,
+  refreshTokens: 0,
 };
 
 export default function AppContent() {
@@ -128,7 +145,11 @@ export default function AppContent() {
     useState(false);
   const [quizPriorityWordIds, setQuizPriorityWordIds] = useState<string[]>([]);
   const [quizProgress, setQuizProgress] = useState<QuizProgress | null>(null);
+  const [pausedQuizSession, setPausedQuizSession] =
+    useState<PausedQuizSession | null>(null);
   const [analytics, setAnalytics] = useState<AnalyticsData>(EMPTY_ANALYTICS);
+  const [achievementWallet, setAchievementWallet] =
+    useState<AchievementWallet>(EMPTY_ACHIEVEMENT_WALLET);
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
   const [reminderSettings, setReminderSettings] =
     useState<ReminderSettings>(DEFAULT_REMINDER);
@@ -143,30 +164,68 @@ export default function AppContent() {
   const [appNotice, setAppNotice] = useState<string | null>(null);
   const [currentDayKey, setCurrentDayKey] = useState(getDayKey());
   const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState(false);
+  const [showOnboardingGuide, setShowOnboardingGuide] = useState(false);
   const [showAddWord, setShowAddWord] = useState(false);
   const [wordToEdit, setWordToEdit] = useState<Word | null>(null);
-  const [freeWordUsage, setFreeWordUsage] = useState<{
-    monthKey: string;
-    wordsAdded: number;
-    limit: number;
-  } | null>(null);
-  const [freeTrial, setFreeTrial] = useState<FreeTrialAccess | null>(null);
+  const [wordToRemove, setWordToRemove] = useState<Word | null>(null);
+  const [showComplimentaryWelcome, setShowComplimentaryWelcome] = useState(false);
   const [showPlusPaywall, setShowPlusPaywall] = useState(false);
   const [plusPaywallReason, setPlusPaywallReason] = useState<
     'quiz' | 'word-limit' | 'premium-feature'
   >('premium-feature');
+  const [justActivatedPlusUserId, setJustActivatedPlusUserId] = useState<
+    string | null
+  >(null);
   const cloudHydratedUserId = useRef<string | null>(null);
   const cloudHydratingUserId = useRef<string | null>(null);
+  const achievementWalletLoadedUserId = useRef<string | null>(null);
   const latestWords = useRef<Word[]>([]);
+  const starterCollectionEnrichmentIds = useRef(new Set<string>());
   const hasHiddenNativeSplash = useRef(false);
   const lastReminderRefreshKey = useRef<string | null>(null);
   const isSavingWord = useRef(false);
   const pendingPlusAction = useRef<(() => void) | null>(null);
+  const pauseActiveQuizRef = useRef<(() => void) | null>(null);
+  const immediatelyActivatedPlusUserId = useRef<string | null>(null);
+  const complimentaryWelcomeUserId = useRef<string | null>(null);
   const hasFullLearningAccess =
-    subscription.hasPlusAccess || freeTrial?.isActive === true;
+    subscription.hasPlusAccess ||
+    justActivatedPlusUserId === currentUser?.id;
+  const freeWordUsage = !hasFullLearningAccess && subscription.monthlyWordsAdded !== null
+    ? {
+        wordsAdded: subscription.monthlyWordsAdded,
+        limit: subscription.monthlyWordLimit,
+      }
+    : null;
+
+  function canUseFullLearningAccess() {
+    return (
+      hasFullLearningAccess ||
+      immediatelyActivatedPlusUserId.current === currentUser?.id
+    );
+  }
+
+  useEffect(() => {
+    if (
+      subscription.isAccessLoading ||
+      subscription.isLoading ||
+      !canUseFullLearningAccess() ||
+      !pendingPlusAction.current
+    ) {
+      return;
+    }
+    const action = pendingPlusAction.current;
+    pendingPlusAction.current = null;
+    setShowPlusPaywall(false);
+    action();
+  }, [hasFullLearningAccess, subscription.isAccessLoading, subscription.isLoading]);
   const smartReminderContext = useMemo(
     () => buildCurrentReminderContext(words, analytics, dailyQuizGoal),
     [analytics, currentDayKey, dailyQuizGoal, words],
+  );
+  const currentAchievements = useMemo(
+    () => buildAchievements({ words, analytics }),
+    [analytics, words],
   );
   const smartReminderMessages = useMemo(
     () => buildSmartReminderMessages(smartReminderContext),
@@ -201,11 +260,8 @@ export default function AppContent() {
     async function loadData() {
       try {
         trackEvent('app_opened');
-        const onboardingComplete = await AsyncStorage.getItem(ONBOARDING_KEY);
-        setHasCompletedOnboarding(onboardingComplete === 'true');
-
         if (!env.isSupabaseConfigured) {
-          setWords(STARTER_WORDS);
+          setWords([]);
           setQuizProgress(null);
           setAnalytics(EMPTY_ANALYTICS);
           setReminderSettings(DEFAULT_REMINDER);
@@ -234,7 +290,7 @@ export default function AppContent() {
         if (sessionUser) {
           await loadUserCache(sessionUser.id);
         } else {
-          setWords(STARTER_WORDS);
+          setWords([]);
           setQuizProgress(null);
           setAnalytics(EMPTY_ANALYTICS);
           setReminderSettings(DEFAULT_REMINDER);
@@ -245,14 +301,14 @@ export default function AppContent() {
         }
       } catch (error) {
         reportError(error, { area: 'app_boot' });
-        setWords(STARTER_WORDS);
+        setWords([]);
         setAnalytics(EMPTY_ANALYTICS);
         setReminderSettings(DEFAULT_REMINDER);
         setDailyQuizGoal(1);
         setTimedLearningEnabled(false);
         setTimeBasedLearningSettings(DEFAULT_TIME_BASED_LEARNING_SETTINGS);
         setQuizPreferences(DEFAULT_QUIZ_PREFERENCES);
-        setAppNotice('WordWiz had trouble loading saved data, so it opened with starter words.');
+        setAppNotice('WordWiz had trouble loading saved data. Please try again when you are connected.');
       } finally {
         await clearLegacyLearningData();
         setIsReady(true);
@@ -277,6 +333,48 @@ export default function AppContent() {
   }, []);
 
   useEffect(() => {
+    if (!env.isSupabaseConfigured) {
+      return;
+    }
+
+    let isActive = true;
+
+    async function handleAuthRedirect(url: string | null) {
+      if (!url) return;
+
+      try {
+        const user = await completeSupabaseAuthRedirect(url, {
+          screen: 'Auth callback',
+          reason: 'email_or_provider_redirect',
+        });
+        if (user && isActive) {
+          setCurrentUser(user);
+        }
+      } catch (error) {
+        reportError(error, { area: 'auth_redirect' });
+        if (isActive) {
+          Alert.alert(
+            'Could not finish verification',
+            'That link may have expired. Request a new verification email and try again.',
+          );
+        }
+      }
+    }
+
+    void Linking.getInitialURL().then(handleAuthRedirect).catch((error) => {
+      reportError(error, { area: 'auth_initial_url' });
+    });
+    const linkingSubscription = Linking.addEventListener('url', ({ url }) => {
+      void handleAuthRedirect(url);
+    });
+
+    return () => {
+      isActive = false;
+      linkingSubscription.remove();
+    };
+  }, []);
+
+  useEffect(() => {
     setSentryUser(currentUser);
   }, [currentUser]);
 
@@ -284,43 +382,17 @@ export default function AppContent() {
     void subscription.syncUser(currentUser?.id ?? null);
   }, [currentUser?.id, subscription.syncUser]);
 
-  const refreshFreeTrial = useCallback(async () => {
-    if (!currentUser) {
-      setFreeTrial(null);
+  useEffect(() => {
+    if (
+      !currentUser ||
+      !subscription.complimentaryJustStarted ||
+      complimentaryWelcomeUserId.current === currentUser.id
+    ) {
       return;
     }
-
-    try {
-      setFreeTrial(await getFreeTrialAccess());
-    } catch (error) {
-      reportError(error, { area: 'free_trial_access' });
-      setFreeTrial(null);
-    }
-  }, [currentUser]);
-
-  useEffect(() => {
-    void refreshFreeTrial();
-  }, [refreshFreeTrial]);
-
-  const refreshFreeWordUsage = useCallback(async () => {
-    if (!currentUser || hasFullLearningAccess) {
-      setFreeWordUsage(null);
-      return;
-    }
-
-    try {
-      setFreeWordUsage(await getFreeWordUsage());
-    } catch (error) {
-      reportError(error, { area: 'free_word_usage' });
-      // Keep the limit unknown until the server responds. The create RPC remains
-      // the authoritative enforcement point, so this never grants extra words.
-      setFreeWordUsage(null);
-    }
-  }, [currentUser, hasFullLearningAccess]);
-
-  useEffect(() => {
-    void refreshFreeWordUsage();
-  }, [refreshFreeWordUsage]);
+    complimentaryWelcomeUserId.current = currentUser.id;
+    setShowComplimentaryWelcome(true);
+  }, [currentUser, subscription.complimentaryExpiresAt, subscription.complimentaryJustStarted]);
 
   useEffect(() => {
     const intervalId = setInterval(() => {
@@ -374,14 +446,19 @@ export default function AppContent() {
     }
 
     if (!currentUser) {
-      setWords(STARTER_WORDS);
+      setWords([]);
       setQuizProgress(null);
+      setPausedQuizSession(null);
       setAnalytics(EMPTY_ANALYTICS);
+      achievementWalletLoadedUserId.current = null;
+      setAchievementWallet(EMPTY_ACHIEVEMENT_WALLET);
       setReminderSettings(DEFAULT_REMINDER);
       setDailyQuizGoal(1);
       setTimedLearningEnabled(false);
       setTimeBasedLearningSettings(DEFAULT_TIME_BASED_LEARNING_SETTINGS);
       setQuizPreferences(DEFAULT_QUIZ_PREFERENCES);
+      setHasCompletedOnboarding(false);
+      setShowOnboardingGuide(false);
       return;
     }
 
@@ -392,7 +469,9 @@ export default function AppContent() {
 
   async function loadUserCache(userId: string) {
     try {
-      const [savedWords, savedQuiz, savedAnalytics, savedReminder, savedDailyQuizGoal, savedTimedLearning, savedTimeBasedLearningSettings, savedQuizPreferences] =
+      achievementWalletLoadedUserId.current = null;
+      setAchievementWallet(EMPTY_ACHIEVEMENT_WALLET);
+      const [savedWords, savedQuiz, savedAnalytics, savedReminder, savedDailyQuizGoal, savedTimedLearning, savedTimeBasedLearningSettings, savedQuizPreferences, savedAchievementWallet, savedOnboarding, legacyOnboarding] =
         await Promise.all([
           AsyncStorage.getItem(getUserCacheKey(userId, 'words')),
           AsyncStorage.getItem(getUserCacheKey(userId, 'quiz-progress')),
@@ -402,9 +481,13 @@ export default function AppContent() {
           AsyncStorage.getItem(getUserCacheKey(userId, 'timed-learning-enabled')),
           AsyncStorage.getItem(getUserCacheKey(userId, 'time-based-learning-settings')),
           AsyncStorage.getItem(getUserCacheKey(userId, 'quiz-preferences')),
+          AsyncStorage.getItem(getUserCacheKey(userId, 'achievement-wallet')),
+          AsyncStorage.getItem(getUserCacheKey(userId, 'onboarding-complete')),
+          AsyncStorage.getItem(LEGACY_ONBOARDING_KEY),
         ]);
 
-      setWords(savedWords ? JSON.parse(savedWords) : STARTER_WORDS);
+      const cachedWords = savedWords ? JSON.parse(savedWords) as Word[] : [];
+      setWords(cachedWords.filter(isUserCreatedWord));
       setQuizProgress(savedQuiz ? JSON.parse(savedQuiz) : null);
       setAnalytics(savedAnalytics ? JSON.parse(savedAnalytics) : EMPTY_ANALYTICS);
       setReminderSettings(
@@ -434,17 +517,42 @@ export default function AppContent() {
             ),
           }
         : DEFAULT_QUIZ_PREFERENCES);
+      const parsedWallet = savedAchievementWallet
+        ? JSON.parse(savedAchievementWallet) as Partial<AchievementWallet>
+        : null;
+      setAchievementWallet({
+        claimedAchievementIds: Array.isArray(parsedWallet?.claimedAchievementIds)
+          ? parsedWallet.claimedAchievementIds
+          : [],
+        points: Math.max(0, Number(parsedWallet?.points) || 0),
+        refreshTokens: Math.max(0, Number(parsedWallet?.refreshTokens) || 0),
+      });
+      const onboardingComplete =
+        savedOnboarding === 'true' ||
+        (savedOnboarding === null && legacyOnboarding === 'true');
+      setHasCompletedOnboarding(onboardingComplete);
+      if (onboardingComplete && savedOnboarding === null) {
+        AsyncStorage.setItem(
+          getUserCacheKey(userId, 'onboarding-complete'),
+          'true',
+        );
+      }
+      setShowOnboardingGuide(false);
+      achievementWalletLoadedUserId.current = userId;
     } catch (error) {
       reportError(error, { area: 'load_user_cache' });
-      setWords(STARTER_WORDS);
+      setWords([]);
       setQuizProgress(null);
       setAnalytics(EMPTY_ANALYTICS);
+      setAchievementWallet(EMPTY_ACHIEVEMENT_WALLET);
+      setHasCompletedOnboarding(false);
+      achievementWalletLoadedUserId.current = userId;
       setReminderSettings(DEFAULT_REMINDER);
       setDailyQuizGoal(1);
       setTimedLearningEnabled(false);
       setTimeBasedLearningSettings(DEFAULT_TIME_BASED_LEARNING_SETTINGS);
       setQuizPreferences(DEFAULT_QUIZ_PREFERENCES);
-      setAppNotice('Saved data on this device could not be read. You can keep learning with starter words.');
+      setAppNotice('Saved data on this device could not be read. Please try again when you are connected.');
     }
   }
 
@@ -501,9 +609,7 @@ export default function AppContent() {
           }
           syncMissingLocalWords(userId, localWords, cloudData.words);
         } else {
-          setWords((currentWords) =>
-            currentWords.length > 0 ? currentWords : STARTER_WORDS,
-          );
+          setWords((currentWords) => currentWords.filter(isUserCreatedWord));
         }
 
         cloudHydratedUserId.current = userId;
@@ -581,12 +687,20 @@ export default function AppContent() {
     });
   }
 
-  async function completeOnboarding(enableReminder: boolean) {
-    await AsyncStorage.setItem(ONBOARDING_KEY, 'true');
+  async function completeOnboarding(enableReminder: boolean, isReplay = false) {
+    if (currentUser) {
+      await AsyncStorage.setItem(
+        getUserCacheKey(currentUser.id, 'onboarding-complete'),
+        'true',
+      );
+    }
     setHasCompletedOnboarding(true);
-    trackEvent('onboarding_completed', {
-      enabledReminder: enableReminder,
-    });
+    setShowOnboardingGuide(false);
+    if (!isReplay) {
+      trackEvent('onboarding_completed', {
+        enabledReminder: enableReminder,
+      });
+    }
 
     if (enableReminder) {
       await updateReminder({ ...reminderSettings, enabled: true });
@@ -603,8 +717,23 @@ export default function AppContent() {
     reason: 'quiz' | 'word-limit' | 'premium-feature',
     action?: () => void,
   ) {
-    if (hasFullLearningAccess) {
+    if (canUseFullLearningAccess()) {
       action?.();
+      return;
+    }
+    if (subscription.isAccessLoading || subscription.isLoading) {
+      pendingPlusAction.current = action ?? null;
+      return;
+    }
+    if (subscription.accessError) {
+      Alert.alert(
+        'Checking your access',
+        'WordWiz could not verify your complimentary access yet. Please try again in a moment.',
+        [
+          { text: 'Not Now', style: 'cancel' },
+          { text: 'Retry', onPress: () => void subscription.refresh() },
+        ],
+      );
       return;
     }
     pendingPlusAction.current = action ?? null;
@@ -613,7 +742,7 @@ export default function AppContent() {
   }
 
   function openQuiz(studyGroup?: 'flagged') {
-    if (!hasFullLearningAccess) {
+    if (!canUseFullLearningAccess()) {
       presentPlusPaywall('quiz', () => openQuiz(studyGroup));
       return;
     }
@@ -741,6 +870,7 @@ export default function AppContent() {
       id: createUuid(),
       name: trimmedName,
       createdAt: new Date().toISOString(),
+      kind: 'custom' as const,
     };
     const previousWords = words.filter((word) => selectedWordIds.has(word.id));
     const nextWords = previousWords.map((word) => ({
@@ -811,11 +941,22 @@ export default function AppContent() {
 
     if (currentUser && cloudHydratedUserId.current === currentUser.id) {
       try {
-        await saveCloudWords(
+        const membership = previousWords
+          .flatMap((word) => word.mastery?.studySets ?? [])
+          .find((set) => set.id === studySetId);
+        if (membership) {
+          await saveCloudStudySetMembership(
+            previousWords.map((word) => word.id),
+            membership,
+            false,
+          );
+        } else {
+          await saveCloudWords(
           currentUser.id,
           nextWords,
           getScreenContext('words', 'delete_study_set'),
-        );
+          );
+        }
         markCloudCacheFresh(currentUser.id);
       } catch (error) {
         reportError(error, { area: 'delete_study_set' });
@@ -928,7 +1069,7 @@ export default function AppContent() {
   }
 
   function openAddWord() {
-    if (!hasFullLearningAccess && !subscription.canAddWord(freeWordUsage?.wordsAdded ?? null)) {
+    if (!canUseFullLearningAccess() && !subscription.canAddWord) {
       presentPlusPaywall('word-limit', openAddWord);
       return;
     }
@@ -1018,6 +1159,58 @@ export default function AppContent() {
     }
   }, [currentUser, isReady, quizPreferences]);
 
+  useEffect(() => {
+    if (
+      !isReady ||
+      !currentUser ||
+      achievementWalletLoadedUserId.current !== currentUser.id
+    ) {
+      return;
+    }
+
+    const newlyUnlocked = currentAchievements.filter(
+      (achievement) =>
+        achievement.unlocked &&
+        !achievementWallet.claimedAchievementIds.includes(achievement.id),
+    );
+    if (newlyUnlocked.length === 0) {
+      return;
+    }
+
+    setAchievementWallet((currentWallet) => {
+      const claimable = newlyUnlocked.filter(
+        (achievement) => !currentWallet.claimedAchievementIds.includes(achievement.id),
+      );
+      if (claimable.length === 0) {
+        return currentWallet;
+      }
+
+      return {
+        claimedAchievementIds: [
+          ...currentWallet.claimedAchievementIds,
+          ...claimable.map((achievement) => achievement.id),
+        ],
+        points: currentWallet.points + claimable.reduce(
+          (total, achievement) => total + achievement.points,
+          0,
+        ),
+        refreshTokens: currentWallet.refreshTokens + claimable.reduce(
+          (total, achievement) => total + achievement.refreshTokens,
+          0,
+        ),
+      };
+    });
+  }, [achievementWallet.claimedAchievementIds, currentAchievements, currentUser, isReady]);
+
+  useEffect(() => {
+    if (isReady && currentUser && achievementWalletLoadedUserId.current === currentUser.id) {
+      AsyncStorage.setItem(
+        getUserCacheKey(currentUser.id, 'achievement-wallet'),
+        JSON.stringify(achievementWallet),
+      );
+    }
+  }, [achievementWallet, currentUser, isReady]);
+
   const sortedWords = useMemo(() => {
     return [...words].sort((first, second) => {
       if (sortMode === 'recent') {
@@ -1030,6 +1223,17 @@ export default function AppContent() {
 
   const todayQuizProgress =
     quizProgress?.date === currentDayKey ? quizProgress : null;
+
+  function useAchievementRefreshToken() {
+    if (achievementWallet.refreshTokens < 1) {
+      return false;
+    }
+    setAchievementWallet((currentWallet) => ({
+      ...currentWallet,
+      refreshTokens: Math.max(0, currentWallet.refreshTokens - 1),
+    }));
+    return true;
+  }
 
   async function login(email: string, password: string) {
     if (!ensureSupabaseReady()) {
@@ -1090,11 +1294,12 @@ export default function AppContent() {
         password,
         context: { screen: 'Login', reason: 'create_account' },
       });
+      await AsyncStorage.removeItem(LEGACY_ONBOARDING_KEY);
 
       if (result.needsEmailVerification) {
         Alert.alert(
           'Check your email',
-          'We sent you a verification link. Confirm your email, then log in to WordWiz.',
+          'We sent you a verification link. Confirm it to return to WordWiz and finish signing in.',
         );
         return true;
       }
@@ -1256,7 +1461,7 @@ export default function AppContent() {
       cloudHydratedUserId.current = null;
       cloudHydratingUserId.current = null;
       setCurrentUser(null);
-      setWords(STARTER_WORDS);
+      setWords([]);
       setQuizProgress(null);
       setAnalytics(EMPTY_ANALYTICS);
       setReminderSettings(DEFAULT_REMINDER);
@@ -1280,20 +1485,20 @@ export default function AppContent() {
     example: string,
     details: Partial<WordDetails> = {},
     options: { closeAfterSave?: boolean } = {},
-  ): Promise<boolean> {
+  ): Promise<boolean | 'duplicate' | 'save_failed'> {
     if (isSavingWord.current) {
       return false;
     }
-    const cleanTerm = term.trim();
+    const cleanTerm = term.trim().replace(/\s+/g, ' ');
     const isReplacingStarterWord = STARTER_WORDS.some(
       (starterWord) =>
-        starterWord.term.toLowerCase() === cleanTerm.toLowerCase(),
+        getSavedWordTermKey(starterWord.term) === getSavedWordTermKey(cleanTerm),
     );
     const existingWord = words.find(
-      (word) => word.term.toLowerCase() === cleanTerm.toLowerCase(),
+      (word) => getSavedWordTermKey(word.term) === getSavedWordTermKey(cleanTerm),
     );
     if (existingWord && wordToEdit?.id !== existingWord.id) {
-      return false;
+      return 'duplicate';
     }
     const isEditingExistingWord = Boolean(
       wordToEdit &&
@@ -1320,12 +1525,20 @@ export default function AppContent() {
     isSavingWord.current = true;
     try {
       if (!isEditingExistingWord) {
-        if (!hasFullLearningAccess && !subscription.canAddWord(freeWordUsage?.wordsAdded ?? null)) {
+        if (!canUseFullLearningAccess() && !subscription.canAddWord) {
           presentPlusPaywall('word-limit', openAddWord);
           return false;
         }
         savedWord = await createCloudWordWithFreeLimit(wordData);
-        await refreshFreeWordUsage();
+        // The word has already been saved at this point. Refreshing the
+        // complimentary-access display is helpful, but a temporary failure
+        // there must never turn a successful save into a failed one.
+        try {
+          await subscription.refreshAccess();
+        } catch (error) {
+          reportError(error, { area: 'refresh_access_after_word_save' });
+          trackEvent('cloud_sync_failed', { operation: 'refresh_access_after_word_save' });
+        }
       } else {
         savedWord = await saveCloudWord(
           currentUser.id,
@@ -1336,19 +1549,16 @@ export default function AppContent() {
       markCloudCacheFresh(currentUser.id);
     } catch (error) {
       if (error instanceof FreeWordLimitError) {
-        setFreeWordUsage((currentUsage) => currentUsage
-          ? { ...currentUsage, wordsAdded: currentUsage.limit }
-          : currentUsage);
+        void subscription.refreshAccess();
         presentPlusPaywall('word-limit', openAddWord);
         return false;
       }
+      if (error instanceof DuplicateWordError) {
+        return 'duplicate';
+      }
       reportError(error, { area: 'save_word' });
       trackEvent('cloud_sync_failed', { operation: 'save_word' });
-      Alert.alert(
-        'Could not save word',
-        'Your word was not saved. Please check your connection and try again.',
-      );
-      return false;
+      return 'save_failed';
     } finally {
       isSavingWord.current = false;
     }
@@ -1366,65 +1576,221 @@ export default function AppContent() {
     return true;
   }
 
+  async function enrichStarterCollectionWords(initialWords: Word[]) {
+    if (!currentUser || initialWords.length === 0) {
+      return;
+    }
+    const userId = currentUser.id;
+
+    const wordsToEnrich = initialWords.filter((word) => {
+      if (starterCollectionEnrichmentIds.current.has(word.id)) {
+        return false;
+      }
+      starterCollectionEnrichmentIds.current.add(word.id);
+      return true;
+    });
+
+    async function enrichWord(initialWord: Word) {
+      try {
+        const details = await lookupWordDetails(initialWord.term);
+        const currentWord = latestWords.current.find(
+          (word) => word.id === initialWord.id,
+        );
+        if (!currentWord) {
+          return;
+        }
+
+        // Keep the curated definition and example as the collection's clear
+        // learning path, while the lookup fills the optional reference fields.
+        const enrichedWord = buildWordFromInput({
+          existingWord: currentWord,
+          term: currentWord.term,
+          definition: currentWord.definition,
+          example: currentWord.example,
+          details: {
+            ...details,
+            simpleDefinition:
+              currentWord.simpleDefinition ?? details.simpleDefinition,
+            partOfSpeech: currentWord.partOfSpeech ?? details.partOfSpeech,
+            commonWords: currentWord.commonWords?.length
+              ? currentWord.commonWords
+              : details.commonWords,
+            basicInfo: currentWord.basicInfo ?? details.basicInfo,
+          },
+          id: currentWord.id,
+          createdAt: currentWord.createdAt,
+        });
+
+        setWords((currentWords) => upsertSavedWord(currentWords, enrichedWord));
+        await saveCloudWord(
+          userId,
+          enrichedWord,
+          getScreenContext('words', 'enrich_wordwiz_collection_word'),
+        );
+        markCloudCacheFresh(userId);
+      } catch (error) {
+        // Enrichment is additive. A temporary lookup failure never affects the
+        // usable, curated word that was already added to the collection.
+        reportError(error, { area: 'enrich_wordwiz_collection_word' });
+      } finally {
+        starterCollectionEnrichmentIds.current.delete(initialWord.id);
+      }
+    }
+
+    // Two lookups at a time keeps the collection responsive without flooding
+    // its dictionary sources when someone adds a large deck.
+    for (let index = 0; index < wordsToEnrich.length; index += 2) {
+      await Promise.all(
+        wordsToEnrich
+          .slice(index, index + 2)
+          .map((word) => enrichWord(word)),
+      );
+    }
+  }
+
   async function addStarterCollection(collection: WordWizStarterCollection) {
     if (!currentUser) {
       Alert.alert('Sign in required', 'Sign in before adding a WordWiz collection.');
       return { added: 0, alreadySaved: 0, blocked: true };
     }
 
+    const collectionSetId = `wordwiz-collection:${collection.id}`;
+    const existingCollectionWords = words.filter((word) =>
+      collection.words.some(
+        (collectionWord) =>
+          collectionWord.term.trim().toLowerCase() === word.term.trim().toLowerCase(),
+      ),
+    );
+    const existingMembership = existingCollectionWords
+      .flatMap((word) => word.mastery?.studySets ?? [])
+      .find((set) => set.id === collectionSetId);
+    const membership: StudySetMembership = existingMembership ?? {
+      id: collectionSetId,
+      name: collection.title,
+      createdAt: new Date().toISOString(),
+      kind: 'collection',
+    };
     const existingTerms = new Set(words.map((word) => word.term.trim().toLowerCase()));
     const newCollectionWords = collection.words.filter(
       (collectionWord) => !existingTerms.has(collectionWord.term.trim().toLowerCase()),
     );
-    const alreadySaved = collection.words.length - newCollectionWords.length;
-    if (newCollectionWords.length === 0) {
-      return { added: 0, alreadySaved };
-    }
-
-    if (!hasFullLearningAccess) {
-      presentPlusPaywall('word-limit');
+    const alreadySaved = existingCollectionWords.length;
+    if (newCollectionWords.length > 0 && !canUseFullLearningAccess()) {
+      presentPlusPaywall('premium-feature');
       return { added: 0, alreadySaved, blocked: true };
     }
+    const existingWordsMissingMembership = existingCollectionWords.filter(
+      (word) => !word.mastery?.studySets?.some((set) => set.id === collectionSetId),
+    );
+    const wordsToCreate = newCollectionWords.map((collectionWord) => {
+      const createdAt = new Date().toISOString();
+      const wordData = buildWordFromInput({
+        term: collectionWord.term,
+        definition: collectionWord.definition,
+        example: collectionWord.example,
+        details: {
+          simpleDefinition: collectionWord.definition,
+          partOfSpeech: collectionWord.partOfSpeech,
+          commonWords: collectionWord.group ? [collectionWord.group] : [],
+          basicInfo: collectionWord.group
+            ? `Part of the “${collectionWord.group}” group. Notice the difference while you practice.`
+            : `Part of the WordWiz “${collection.title}” collection.`,
+        },
+        id: createUuid(),
+        createdAt,
+      });
+      return {
+        ...wordData,
+        mastery: {
+          ...getWordMasteryProgress(wordData, analytics),
+          studySets: [membership],
+        },
+      };
+    });
 
-    const savedWords: Word[] = [];
+    const nextExistingWords = existingWordsMissingMembership.map((word) => ({
+      ...word,
+      mastery: {
+        ...getWordMasteryProgress(word, analytics),
+        studySets: [...(word.mastery?.studySets ?? []), membership],
+      },
+    }));
+    const nextExistingWordsById = new Map(
+      nextExistingWords.map((word) => [word.id, word]),
+    );
+    const originalExistingWordsById = new Map(
+      existingWordsMissingMembership.map((word) => [word.id, word]),
+    );
+    const createdWordIds = new Set(wordsToCreate.map((word) => word.id));
+    let savedWords: Word[] = [];
+
+    // Show the complete deck immediately. The cloud batch below remains the
+    // source of truth, but waiting for a large collection before updating the
+    // UI made the action feel like the app had frozen.
+    if (wordsToCreate.length > 0 || nextExistingWords.length > 0) {
+      setWords((currentWords) => {
+        const currentIds = new Set(currentWords.map((word) => word.id));
+        return [
+          ...currentWords.map((word) => nextExistingWordsById.get(word.id) ?? word),
+          ...wordsToCreate.filter((word) => !currentIds.has(word.id)),
+        ];
+      });
+    }
+
     try {
-      for (let index = 0; index < newCollectionWords.length; index += 4) {
-        const batch = newCollectionWords.slice(index, index + 4);
-        const savedBatch = await Promise.allSettled(batch.map((collectionWord) => {
-          const createdAt = new Date().toISOString();
-          const wordData = buildWordFromInput({
-            term: collectionWord.term,
-            definition: collectionWord.definition,
-            example: collectionWord.example,
-            details: {
-              simpleDefinition: collectionWord.definition,
-              partOfSpeech: collectionWord.partOfSpeech,
-              commonWords: collectionWord.group ? [collectionWord.group] : [],
-              basicInfo: collectionWord.group
-                ? `Part of the “${collectionWord.group}” group. Notice the difference while you practice.`
-                : `Part of the WordWiz “${collection.title}” collection.`,
-            },
-            id: createUuid(),
-            createdAt,
-          });
-          return createCloudWordWithFreeLimit(wordData);
-        }));
-        savedWords.push(
-          ...savedBatch.flatMap((result) =>
-            result.status === 'fulfilled' ? [result.value] : [],
-          ),
-        );
-        const failedSave = savedBatch.find((result) => result.status === 'rejected');
-        if (failedSave?.status === 'rejected') throw failedSave.reason;
+      if (wordsToCreate.length > 0) {
+        // Save through the same server-enforced path used for an individual
+        // word. This keeps collections reliable even if the optional bulk RPC
+        // has not been deployed to a production Supabase project yet.
+        for (let index = 0; index < wordsToCreate.length; index += 4) {
+          const batch = wordsToCreate.slice(index, index + 4);
+          const results = await Promise.allSettled(
+            batch.map(createCloudWordWithFreeLimit),
+          );
+          savedWords.push(
+            ...results.flatMap((result) =>
+              result.status === 'fulfilled' ? [result.value] : [],
+            ),
+          );
+          const failedSave = results.find(
+            (result): result is PromiseRejectedResult => result.status === 'rejected',
+          );
+          if (failedSave) throw failedSave.reason;
+        }
+      }
+
+      if (nextExistingWords.length > 0) {
+        try {
+          await saveCloudStudySetMembership(
+            nextExistingWords.map((word) => word.id),
+            membership,
+            true,
+          );
+        } catch (error) {
+          const message = error instanceof Error ? error.message : '';
+          const membershipEndpointIsUnavailable = /set_study_set_membership|schema cache/i.test(message);
+          if (!membershipEndpointIsUnavailable) throw error;
+          await saveCloudWords(
+            currentUser.id,
+            nextExistingWords,
+            getScreenContext('words', 'add_wordwiz_collection'),
+          );
+        }
       }
     } catch (error) {
+      const savedWordIds = new Set(savedWords.map((word) => word.id));
+      setWords((currentWords) =>
+        currentWords
+          .filter((word) => !createdWordIds.has(word.id) || savedWordIds.has(word.id))
+          .map((word) => originalExistingWordsById.get(word.id) ?? word),
+      );
       if (savedWords.length > 0) {
         setWords((currentWords) =>
           savedWords.reduce((nextWords, savedWord) => upsertSavedWord(nextWords, savedWord), currentWords),
         );
       }
       if (error instanceof FreeWordLimitError) {
-        await refreshFreeWordUsage();
+        await subscription.refreshAccess();
         presentPlusPaywall('word-limit');
         return { added: savedWords.length, alreadySaved, blocked: true };
       }
@@ -1440,15 +1806,25 @@ export default function AppContent() {
     }
 
     setWords((currentWords) =>
-      savedWords.reduce((nextWords, savedWord) => upsertSavedWord(nextWords, savedWord), currentWords),
+      savedWords.reduce(
+        (nextWords, savedWord) => upsertSavedWord(nextWords, savedWord),
+        currentWords.map((word) => nextExistingWordsById.get(word.id) ?? word),
+      ),
     );
-    await refreshFreeWordUsage();
+    if (wordsToCreate.length > 0) {
+      void enrichStarterCollectionWords(wordsToCreate);
+    }
+    if (wordsToCreate.length > 0) await subscription.refreshAccess();
     markCloudCacheFresh(currentUser.id);
     trackEvent('wordwiz_collection_added', {
       collection: collection.id,
       added: savedWords.length,
     });
-    return { added: savedWords.length, alreadySaved };
+    return {
+      added: savedWords.length,
+      alreadySaved,
+      enrichmentScheduled: wordsToCreate.length > 0,
+    };
   }
 
   useEffect(() => {
@@ -1456,7 +1832,7 @@ export default function AppContent() {
       activeTab === 'quiz' &&
       currentUser &&
       !subscription.isLoading &&
-      !hasFullLearningAccess
+      !canUseFullLearningAccess()
     ) {
       setActiveTab('home');
       presentPlusPaywall('quiz', () => openQuiz());
@@ -1491,18 +1867,7 @@ export default function AppContent() {
   }
 
   function confirmRemoveWord(word: Word) {
-    Alert.alert(
-      `Delete “${word.term}”?`,
-      'This will remove the word and its local learning progress. This cannot be undone.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete word',
-          style: 'destructive',
-          onPress: () => removeWord(word),
-        },
-      ],
-    );
+    setWordToRemove(word);
   }
 
   function recordCardReview(
@@ -1569,8 +1934,9 @@ export default function AppContent() {
     total: number,
     durationSeconds: number,
     answers: QuizAnswer[],
+    options: { isDailyScoreRetry?: boolean } = {},
   ) {
-    if (!hasFullLearningAccess) {
+    if (!canUseFullLearningAccess()) {
       presentPlusPaywall('quiz');
       return;
     }
@@ -1583,9 +1949,21 @@ export default function AppContent() {
       completedAt: new Date().toISOString(),
     });
 
-    setQuizProgress((currentProgress) =>
-      currentProgress?.date === progress.date ? currentProgress : progress,
-    );
+    setQuizProgress((currentProgress) => {
+      if (currentProgress?.date !== progress.date) {
+        return progress;
+      }
+
+      if (!options.isDailyScoreRetry) {
+        return currentProgress;
+      }
+
+      const currentAccuracy = currentProgress.total
+        ? currentProgress.score / currentProgress.total
+        : 0;
+      const retryAccuracy = progress.total ? progress.score / progress.total : 0;
+      return retryAccuracy >= currentAccuracy ? progress : currentProgress;
+    });
     const updatedWords = applyQuizMastery(words, answers, analytics);
     setWords(updatedWords);
     setQuizPriorityWordIds([]);
@@ -1627,7 +2005,7 @@ export default function AppContent() {
   }
 
   function openDueReview(priorityWordIds: string[] = []) {
-    if (!hasFullLearningAccess) {
+    if (!canUseFullLearningAccess()) {
       presentPlusPaywall('quiz', () => openDueReview(priorityWordIds));
       return;
     }
@@ -1761,7 +2139,10 @@ export default function AppContent() {
           onReviewWord={(wordId) => openCards(wordId)}
           onQuiz={() => openQuiz()}
           onStats={() => setActiveTab('dashboard')}
-          freeTrial={freeTrial?.isActive ? freeTrial : null}
+          complimentaryAccess={subscription.hasActiveComplimentaryAccess ? {
+            expiresAt: subscription.complimentaryExpiresAt,
+            daysRemaining: subscription.complimentaryDaysRemaining,
+          } : null}
         />
       );
     }
@@ -1815,10 +2196,17 @@ export default function AppContent() {
           timedLearningEnabled={timedLearningEnabled}
           timeBasedLearningSettings={timeBasedLearningSettings}
           quizPreferences={quizPreferences}
+          refreshTokens={achievementWallet.refreshTokens}
+          onUseRefreshToken={useAchievementRefreshToken}
           onComplete={completeQuiz}
-          onReviewCards={() => openCards()}
           onToggleFlag={toggleWordFlag}
           onOpenStudySetBuilder={openStudySetBuilder}
+          pausedSession={pausedQuizSession}
+          onPauseSession={setPausedQuizSession}
+          onDiscardPausedSession={() => setPausedQuizSession(null)}
+          onRegisterPauseHandler={(handler) => {
+            pauseActiveQuizRef.current = handler;
+          }}
         />
       );
     }
@@ -1833,6 +2221,8 @@ export default function AppContent() {
         currentUser={currentUser}
         reminderSettings={reminderSettings}
         dailyQuizGoal={dailyQuizGoal}
+        achievementPoints={achievementWallet.points}
+        refreshTokens={achievementWallet.refreshTokens}
         onReviewDue={openDueReview}
         onStudyFlaggedCards={() => openCards(undefined, 'flagged')}
         onStudyFlaggedQuiz={openFlaggedQuiz}
@@ -1847,17 +2237,14 @@ export default function AppContent() {
         onOpenLegal={openLegalPage}
         onLogout={logout}
         onDeleteAccount={deleteAccount}
+        onOpenOnboardingGuide={() => setShowOnboardingGuide(true)}
+        onOpenPlus={() => presentPlusPaywall('premium-feature')}
       />
     );
   }
 
   if (!isReady) {
-    return (
-      <SafeAreaView style={styles.loadingScreen} onLayout={hideNativeSplash}>
-        <Ionicons name="sparkles" size={34} color={COLORS.purpleDark} />
-        <Text style={styles.loadingTitle}>Getting WordWiz ready...</Text>
-      </SafeAreaView>
-    );
+    return <WordWizLoadingScreen onLayout={hideNativeSplash} />;
   }
 
   if (!env.isSupabaseConfigured) {
@@ -1891,8 +2278,11 @@ export default function AppContent() {
         />
       ) : (
         <>
-          {!hasCompletedOnboarding ? (
-            <OnboardingScreen onComplete={completeOnboarding} />
+          {!hasCompletedOnboarding || showOnboardingGuide ? (
+            <OnboardingScreen
+              isReplay={showOnboardingGuide}
+              onComplete={completeOnboarding}
+            />
           ) : (
             <>
               {appNotice ? (
@@ -1929,6 +2319,9 @@ export default function AppContent() {
                 bottomInset={insets.bottom}
                 quizComplete={Boolean(todayQuizProgress)}
                 onChange={(tab) => {
+                  if (activeTab === 'quiz' && tab !== 'quiz') {
+                    pauseActiveQuizRef.current?.();
+                  }
                   if (tab !== 'cards') {
                     setInitialCardWordId(null);
                     setInitialCardStudyGroup(undefined);
@@ -1955,6 +2348,16 @@ export default function AppContent() {
         onClose={closeWordModal}
         onAdd={addWord}
       />
+      <DeleteWordModal
+        word={wordToRemove}
+        onClose={() => setWordToRemove(null)}
+        onConfirm={() => {
+          if (wordToRemove) {
+            removeWord(wordToRemove);
+          }
+          setWordToRemove(null);
+        }}
+      />
       <WordWizPlusModal
         visible={showPlusPaywall}
         reason={plusPaywallReason}
@@ -1963,19 +2366,31 @@ export default function AppContent() {
           setShowPlusPaywall(false);
         }}
         onPlusActivated={() => {
+          const action = pendingPlusAction.current;
+          pendingPlusAction.current = null;
+
+          // RevenueCat has already confirmed the purchase at this point. Open
+          // the requested feature immediately instead of waiting for the
+          // optional server-side entitlement mirror to finish.
+          if (currentUser) {
+            immediatelyActivatedPlusUserId.current = currentUser.id;
+            setJustActivatedPlusUserId(currentUser.id);
+          }
+          void subscription.refreshAccess();
+          setShowPlusPaywall(false);
+          action?.();
+
           void syncRevenueCatEntitlement()
             .catch((error) => {
               reportError(error, { area: 'revenuecat_entitlement_sync' });
-            })
-            .finally(() => {
-              setShowPlusPaywall(false);
-              const action = pendingPlusAction.current;
-              pendingPlusAction.current = null;
-              void refreshFreeWordUsage();
-              action?.();
             });
         }}
         onOpenLegal={openLegalPage}
+      />
+      <ComplimentaryAccessModal
+        visible={showComplimentaryWelcome}
+        expiresAt={subscription.complimentaryExpiresAt}
+        onClose={() => setShowComplimentaryWelcome(false)}
       />
     </SafeAreaView>
   );
@@ -1983,15 +2398,52 @@ export default function AppContent() {
 
 function OnboardingScreen({
   onComplete,
+  isReplay,
 }: {
-  onComplete: (enableReminder: boolean) => Promise<void>;
+  onComplete: (enableReminder: boolean, isReplay?: boolean) => Promise<void>;
+  isReplay: boolean;
 }) {
   const [isSaving, setIsSaving] = useState(false);
+  const [page, setPage] = useState(0);
+  const pages = [
+    {
+      eyebrow: 'WELCOME TO WORDWIZ',
+      icon: 'sparkles' as const,
+      title: 'Make words stick',
+      text: 'Save a word once, then let a few small reviews turn it into knowledge you can use.',
+      steps: [
+        ['add-circle-outline', 'Save what you meet', 'WordWiz builds a clear learning card with meaning, examples, and history.'],
+        ['layers-outline', 'Keep it organized', 'Your words, collections, and focus tools stay together in one place.'],
+      ],
+    },
+    {
+      eyebrow: 'A LITTLE PRACTICE',
+      icon: 'albums-outline' as const,
+      title: 'Review, then recall',
+      text: 'Short sessions work best when they ask your brain to bring the answer back.',
+      steps: [
+        ['copy-outline', 'Use cards first', 'Flip through flashcards whenever you want a quick refresher.'],
+        ['trophy-outline', 'Take a fresh quiz', 'Daily quizzes and varied prompts help move words into long-term memory.'],
+      ],
+    },
+    {
+      eyebrow: 'MAKE PROGRESS VISIBLE',
+      icon: 'trending-up-outline' as const,
+      title: 'Build your word power',
+      text: 'Stats show what is sticking, while achievements and reminders help you keep a relaxed rhythm.',
+      steps: [
+        ['bar-chart-outline', 'Watch mastery grow', 'See strong words, quiz accuracy, and the next best review.'],
+        ['ticket-outline', 'Earn useful rewards', 'Achievements earn refreshes for an extra daily quiz or Omega Test.'],
+      ],
+    },
+  ];
+  const currentPage = pages[page];
+  const isLastPage = page === pages.length - 1;
 
   async function finish(enableReminder: boolean) {
     setIsSaving(true);
     try {
-      await onComplete(enableReminder);
+      await onComplete(enableReminder, isReplay);
     } finally {
       setIsSaving(false);
     }
@@ -1999,78 +2451,110 @@ function OnboardingScreen({
 
   return (
     <View style={styles.onboardingScreen}>
+      <View style={styles.onboardingTopRow}>
+        <Text style={styles.onboardingPageLabel}>
+          {isReplay ? 'HOW WORDWIZ WORKS' : `STEP ${page + 1} OF ${pages.length}`}
+        </Text>
+        {!isLastPage ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Skip introduction"
+            disabled={isSaving}
+            onPress={() => finish(false)}
+            style={({ pressed }) => [styles.onboardingSkipButton, pressed && styles.pressed]}
+          >
+            <Text style={styles.onboardingSkipText}>SKIP</Text>
+          </Pressable>
+        ) : null}
+      </View>
       <View style={styles.onboardingHero}>
         <View style={styles.onboardingIcon}>
-          <Ionicons name="sparkles" size={34} color={COLORS.white} />
+          <Ionicons name={currentPage.icon} size={34} color={COLORS.white} />
         </View>
-        <Text style={styles.onboardingTitle}>Make words stick</Text>
+        <Text style={styles.onboardingEyebrow}>{currentPage.eyebrow}</Text>
+        <Text style={styles.onboardingTitle}>{currentPage.title}</Text>
         <Text style={styles.onboardingText}>
-          Save words you meet, practice them as cards, and take one short quiz each day.
+          {currentPage.text}
         </Text>
       </View>
 
       <View style={styles.onboardingSteps}>
-        {[
-          {
-            icon: 'add-circle-outline',
-            title: 'Save a word',
-            text: 'Type it once and WordWiz fills in meaning, examples, and history.',
-          },
-          {
-            icon: 'albums-outline',
-            title: 'Review it quickly',
-            text: 'Flashcards and quizzes help move new words into memory.',
-          },
-          {
-            icon: 'notifications-outline',
-            title: 'Come back tomorrow',
-            text: 'A gentle reminder is optional and can be changed anytime.',
-          },
-        ].map((step, index) => (
-          <View key={step.title} style={styles.onboardingStep}>
+        {currentPage.steps.map(([icon, title, text], index) => (
+          <View key={title} style={styles.onboardingStep}>
             <View style={styles.onboardingStepMarker}>
               <Text style={styles.onboardingStepNumber}>{index + 1}</Text>
             </View>
             <View style={styles.onboardingStepIcon}>
               <Ionicons
-                name={step.icon as keyof typeof Ionicons.glyphMap}
+                name={icon as keyof typeof Ionicons.glyphMap}
                 size={20}
                 color={COLORS.purpleDark}
               />
             </View>
             <View style={styles.onboardingStepCopy}>
-              <Text style={styles.onboardingStepTitle}>{step.title}</Text>
-              <Text style={styles.onboardingStepText}>{step.text}</Text>
+              <Text style={styles.onboardingStepTitle}>{title}</Text>
+              <Text style={styles.onboardingStepText}>{text}</Text>
             </View>
           </View>
         ))}
       </View>
 
+      <View style={styles.onboardingPageDots}>
+        {pages.map((item, index) => (
+          <View
+            key={item.title}
+            style={[
+              styles.onboardingPageDot,
+              index === page && styles.onboardingPageDotActive,
+            ]}
+          />
+        ))}
+      </View>
       <Pressable
         disabled={isSaving}
-        onPress={() => finish(false)}
+        onPress={() => {
+          if (isLastPage) {
+            void finish(false);
+            return;
+          }
+          setPage((current) => current + 1);
+        }}
         style={({ pressed }) => [
           styles.primaryButton,
           isSaving && styles.primaryButtonDisabled,
           pressed && !isSaving && styles.primaryButtonPressed,
         ]}
       >
-        <Text style={styles.primaryButtonText}>START LEARNING</Text>
+        <Text style={styles.primaryButtonText}>
+          {isLastPage ? (isReplay ? 'BACK TO WORDWIZ' : 'START LEARNING') : 'CONTINUE'}
+        </Text>
         <Ionicons name="arrow-forward" size={21} color={COLORS.white} />
       </Pressable>
-      <Pressable
-        disabled={isSaving}
-        onPress={() => finish(true)}
-        style={({ pressed }) => [
-          styles.onboardingReminderButton,
-          pressed && !isSaving && styles.pressed,
-        ]}
-      >
-        <Ionicons name="notifications-outline" size={18} color={COLORS.blue} />
-        <Text style={styles.onboardingReminderText}>
-          Start with a 7 PM reminder
-        </Text>
-      </Pressable>
+      {page > 0 ? (
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => setPage((current) => current - 1)}
+          style={({ pressed }) => [styles.onboardingBackButton, pressed && styles.pressed]}
+        >
+          <Ionicons name="arrow-back" size={17} color={COLORS.purpleDark} />
+          <Text style={styles.onboardingBackText}>BACK</Text>
+        </Pressable>
+      ) : null}
+      {isLastPage ? (
+        <Pressable
+          disabled={isSaving}
+          onPress={() => finish(true)}
+          style={({ pressed }) => [
+            styles.onboardingReminderButton,
+            pressed && !isSaving && styles.pressed,
+          ]}
+        >
+          <Ionicons name="notifications-outline" size={18} color={COLORS.blue} />
+          <Text style={styles.onboardingReminderText}>
+            Start with a 7 PM reminder
+          </Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }
@@ -2085,7 +2569,9 @@ async function clearLocalLearningData(userId: string) {
     getUserCacheKey(userId, 'timed-learning-enabled'),
     getUserCacheKey(userId, 'time-based-learning-settings'),
     getUserCacheKey(userId, 'quiz-preferences'),
+    getUserCacheKey(userId, 'achievement-wallet'),
     getUserCacheKey(userId, 'cloud-hydrated-at'),
+    getUserCacheKey(userId, 'onboarding-complete'),
   ]);
 }
 
@@ -2154,6 +2640,14 @@ function buildCurrentReminderContext(
   const hasCardPracticeToday = analytics.cardHistory.some(
     (event) => event.date === dayKey,
   );
+  const totalQuizQuestions = analytics.quizHistory.reduce(
+    (total, attempt) => total + attempt.total,
+    0,
+  );
+  const totalCorrect = analytics.quizHistory.reduce(
+    (total, attempt) => total + attempt.score,
+    0,
+  );
 
   return {
     currentStreak: calculateStreakStats(analytics).current,
@@ -2161,6 +2655,10 @@ function buildCurrentReminderContext(
     dueReviewCount: getDueReviewWords(userWords, analytics).length,
     quizzesToday,
     dailyQuizGoal,
+    totalQuizQuestions,
+    overallAccuracy: totalQuizQuestions
+      ? Math.round((totalCorrect / totalQuizQuestions) * 100)
+      : null,
     unreviewedNewWordCount: userWords.filter((word) => word.reviews === 0)
       .length,
     pointsToNextLevel: nextLevel
@@ -2177,6 +2675,85 @@ async function clearLegacyLearningData() {
     '@wordwiz/analytics',
     '@wordwiz/reminder-settings',
   ]);
+}
+
+function WordWizLoadingScreen({ onLayout }: { onLayout: () => void }) {
+  const float = useRef(new Animated.Value(0)).current;
+  const shimmer = useRef(new Animated.Value(0.35)).current;
+
+  useEffect(() => {
+    const animation = Animated.loop(
+      Animated.parallel([
+        Animated.sequence([
+          Animated.timing(float, {
+            toValue: -7,
+            duration: 1600,
+            useNativeDriver: true,
+          }),
+          Animated.timing(float, {
+            toValue: 0,
+            duration: 1600,
+            useNativeDriver: true,
+          }),
+        ]),
+        Animated.sequence([
+          Animated.timing(shimmer, {
+            toValue: 1,
+            duration: 1100,
+            useNativeDriver: true,
+          }),
+          Animated.timing(shimmer, {
+            toValue: 0.35,
+            duration: 1100,
+            useNativeDriver: true,
+          }),
+        ]),
+      ]),
+    );
+
+    animation.start();
+    return () => animation.stop();
+  }, [float, shimmer]);
+
+  return (
+    <SafeAreaView style={styles.loadingScreen} onLayout={onLayout}>
+      <View pointerEvents="none" style={styles.loadingAura}>
+        <View style={styles.loadingAuraTop} />
+        <View style={styles.loadingAuraBottom} />
+      </View>
+
+      <View style={styles.loadingContent}>
+        <Animated.View
+          style={[
+            styles.loadingWizardBadge,
+            { transform: [{ translateY: float }] },
+          ]}
+        >
+          <View style={styles.loadingWizardHatCone} />
+          <View style={styles.loadingWizardHatBrim} />
+          <Animated.View style={[styles.loadingWizardSparkle, { opacity: shimmer }]}>
+            <Ionicons name="sparkles" size={20} color="#FFE58A" />
+          </Animated.View>
+        </Animated.View>
+
+        <Text style={styles.loadingEyebrow}>WORDWIZ</Text>
+        <Text style={styles.loadingTitle}>Preparing your next{`\n`}word adventure</Text>
+        <Text style={styles.loadingText}>
+          “To learn ... is to light a fire; every syllable that is spelling out is a spark.”
+        </Text>
+
+        <View style={styles.loadingProgressTrack} accessibilityLabel="Loading WordWiz">
+          <Animated.View style={[styles.loadingProgressGlow, { opacity: shimmer }]} />
+        </View>
+      </View>
+
+      <Animated.View style={[styles.loadingMagicFooter, { opacity: shimmer }]}>
+        <Ionicons name="sparkles" size={15} color={COLORS.purpleDark} />
+        <Text style={styles.loadingMagicText}>A little magic for every new word</Text>
+        <Ionicons name="star" size={11} color="#F4C866" />
+      </Animated.View>
+    </SafeAreaView>
+  );
 }
 
 function createUuid() {

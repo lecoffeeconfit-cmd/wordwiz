@@ -387,9 +387,13 @@ export function formatSavedWordTerm(term: string) {
   return cleanTerm.charAt(0).toUpperCase() + cleanTerm.slice(1);
 }
 
+export function getSavedWordTermKey(term: string) {
+  return formatSavedWordTerm(term).toLocaleLowerCase();
+}
+
 export function upsertSavedWord(words: Word[], savedWord: Word) {
   const existingWord = words.find(
-    (word) => word.term.toLowerCase() === savedWord.term.toLowerCase(),
+    (word) => getSavedWordTermKey(word.term) === getSavedWordTermKey(savedWord.term),
   );
 
   if (existingWord) {
@@ -408,7 +412,7 @@ export function mergeWordLists(primaryWords: Word[], secondaryWords: Word[]) {
     const existingIndex = merged.findIndex(
       (item) =>
         item.id === word.id ||
-        item.term.trim().toLowerCase() === word.term.trim().toLowerCase(),
+        getSavedWordTermKey(item.term) === getSavedWordTermKey(word.term),
     );
 
     if (existingIndex < 0) {
@@ -1362,6 +1366,33 @@ export function calculateStreakStats(analytics: AnalyticsData): StreakStats {
   };
 }
 
+/** Returns the three completed streaks immediately before the current one. */
+export function getRecentStreakLengths(stats: StreakStats, count = 3) {
+  const activeDays = Array.from(stats.activeDates).sort().reverse();
+  const runs: number[] = [];
+  let previousDay: string | null = null;
+  let currentRun = 0;
+
+  activeDays.forEach((day) => {
+    if (previousDay && getPreviousDayKey(previousDay) !== day) {
+      runs.push(currentRun);
+      currentRun = 0;
+    }
+    currentRun += 1;
+    previousDay = day;
+  });
+
+  if (currentRun > 0) {
+    runs.push(currentRun);
+  }
+
+  const completedRuns = stats.current > 0 && runs[0] === stats.current
+    ? runs.slice(1)
+    : runs;
+
+  return completedRuns.slice(0, count);
+}
+
 
 export function calculateStreak(analytics: AnalyticsData) {
   return calculateStreakStats(analytics).current;
@@ -1418,7 +1449,7 @@ export function getStreakMilestone(stats: StreakStats) {
   }
   if (streak >= 1) {
     return {
-      title: streak === 1 ? 'First spark' : 'Growing spark',
+      title: streak === 1 ? 'Learning streak' : 'Growing streak',
       description:
         streak === 1
           ? 'Your word habit has begun.'
@@ -1453,6 +1484,9 @@ export function buildAchievements({
   const perfectQuizCount = analytics.quizHistory.filter(
     (attempt) => attempt.total > 0 && attempt.score === attempt.total,
   ).length;
+  const longestPerfectQuizStreak = getLongestPerfectQuizStreak(
+    analytics.quizHistory,
+  );
   const quizzesByDay = analytics.quizHistory.reduce<Record<string, number>>(
     (counts, attempt) => ({
       ...counts,
@@ -1468,6 +1502,15 @@ export function buildAchievements({
   const strongWords = words.filter(
     (word) => getWordMastery(word, analytics) >= 80,
   ).length;
+  const fullyMasteredWords = words.filter(
+    (word) => getWordMastery(word, analytics) >= 100,
+  ).length;
+  const averageMastery = words.length
+    ? Math.round(
+        words.reduce((total, word) => total + getWordMastery(word, analytics), 0) /
+          words.length,
+      )
+    : 0;
   const topWordReviews = Math.max(0, ...words.map((word) => word.reviews));
   const totalReviews = totalCardReviews + totalQuizQuestions;
   const nextReviewHorizon = getNextReviewHorizon(totalReviews);
@@ -1482,6 +1525,16 @@ export function buildAchievements({
       background: '#EAF2FF',
       progress: words.length,
       target: 1,
+    }),
+    createAchievement({
+      id: 'collector-3',
+      title: '3-word starter set',
+      description: 'Enough words for a varied mini quiz.',
+      icon: 'layers',
+      color: '#5B4DE4',
+      background: '#F2EFFF',
+      progress: words.length,
+      target: 3,
     }),
     createAchievement({
       id: 'word-collector',
@@ -1514,6 +1567,37 @@ export function buildAchievements({
       target: 1,
     }),
     createAchievement({
+      id: 'perfect-streak-3',
+      title: 'Three flawless quizzes',
+      description: 'Score 100% on 3 quizzes in a row.',
+      icon: 'flame',
+      color: '#FF7E9F',
+      background: '#FFEAF1',
+      progress: longestPerfectQuizStreak,
+      target: 3,
+      points: 15,
+    }),
+    createAchievement({
+      id: 'review-10',
+      title: '10 reviews',
+      description: 'Your first memory reps are in.',
+      icon: 'refresh-circle',
+      color: '#39C69A',
+      background: '#E8FBF4',
+      progress: totalReviews,
+      target: 10,
+    }),
+    createAchievement({
+      id: 'review-25',
+      title: '25 reviews',
+      description: 'You are building a practice rhythm.',
+      icon: 'sync-circle',
+      color: '#2879E8',
+      background: '#EAF2FF',
+      progress: totalReviews,
+      target: 25,
+    }),
+    createAchievement({
       id: 'review-50',
       title: '50 reviews',
       description: 'Practice is doing its work.',
@@ -1532,6 +1616,16 @@ export function buildAchievements({
       background: '#EAF2FF',
       progress: topWordReviews,
       target: 5,
+    }),
+    createAchievement({
+      id: 'strong-one',
+      title: 'First strong word',
+      description: 'One word is becoming dependable.',
+      icon: 'school',
+      color: '#2AA987',
+      background: '#EFFFF8',
+      progress: strongWords,
+      target: 1,
     }),
     createAchievement({
       id: 'strong-five',
@@ -1584,6 +1678,16 @@ export function buildAchievements({
       target: 5,
     }),
     createAchievement({
+      id: 'quiz-3',
+      title: '3 quizzes complete',
+      description: 'A real recall routine is forming.',
+      icon: 'trophy',
+      color: '#F2A65A',
+      background: '#FFF0DC',
+      progress: analytics.quizHistory.length,
+      target: 3,
+    }),
+    createAchievement({
       id: 'quiz-10',
       title: '10 quizzes complete',
       description: 'Your recall routine is taking shape.',
@@ -1604,6 +1708,17 @@ export function buildAchievements({
       target: 5,
     }),
     createAchievement({
+      id: 'perfect-streak-5',
+      title: 'Five flawless quizzes',
+      description: 'Keep a 100% score across 5 quizzes in a row.',
+      icon: 'flame',
+      color: '#F2A65A',
+      background: '#FFF0DC',
+      progress: longestPerfectQuizStreak,
+      target: 5,
+      points: 25,
+    }),
+    createAchievement({
       id: 'collector-25',
       title: '25-word collection',
       description: 'Your vocabulary shelf keeps growing.',
@@ -1614,6 +1729,36 @@ export function buildAchievements({
       target: 25,
     }),
     createAchievement({
+      id: 'collector-50',
+      title: '50-word collection',
+      description: 'A growing personal vocabulary library.',
+      icon: 'library',
+      color: '#8E78FF',
+      background: '#F2EFFF',
+      progress: words.length,
+      target: 50,
+    }),
+    createAchievement({
+      id: 'collector-100',
+      title: '100-word collection',
+      description: 'One hundred words, ready to make your own.',
+      icon: 'library',
+      color: '#5B4DE4',
+      background: '#F2EFFF',
+      progress: words.length,
+      target: 100,
+    }),
+    createAchievement({
+      id: 'strong-10',
+      title: '10 strong words',
+      description: 'Your dependable vocabulary is growing.',
+      icon: 'school',
+      color: '#2AA987',
+      background: '#EFFFF8',
+      progress: strongWords,
+      target: 10,
+    }),
+    createAchievement({
       id: 'strong-25',
       title: '25 strong words',
       description: 'A dependable vocabulary foundation.',
@@ -1622,6 +1767,16 @@ export function buildAchievements({
       background: '#EFFFF8',
       progress: strongWords,
       target: 25,
+    }),
+    createAchievement({
+      id: 'strong-50',
+      title: '50 strong words',
+      description: 'A powerful base of confident recall.',
+      icon: 'school',
+      color: '#158B70',
+      background: '#EFFFF8',
+      progress: strongWords,
+      target: 50,
     }),
     createAchievement({
       id: 'streak-14',
@@ -1642,6 +1797,16 @@ export function buildAchievements({
       background: '#FFEAF1',
       progress: streakStats.longest,
       target: 30,
+    }),
+    createAchievement({
+      id: 'streak-60',
+      title: '60-day momentum',
+      description: 'Two months of showing up for your words.',
+      icon: 'medal',
+      color: '#FF7E9F',
+      background: '#FFEAF1',
+      progress: streakStats.longest,
+      target: 60,
     }),
     createAchievement({
       id: 'remembered-100',
@@ -1684,6 +1849,67 @@ export function buildAchievements({
       target: 500,
     }),
     createAchievement({
+      id: 'quiz-25',
+      title: '25 quizzes complete',
+      description: 'Retrieval practice is part of your routine.',
+      icon: 'ribbon',
+      color: '#8E78FF',
+      background: '#F2EFFF',
+      progress: analytics.quizHistory.length,
+      target: 25,
+    }),
+    createAchievement({
+      id: 'quiz-50',
+      title: '50 quizzes complete',
+      description: 'You have put in serious recall work.',
+      icon: 'medal',
+      color: '#5B4DE4',
+      background: '#F2EFFF',
+      progress: analytics.quizHistory.length,
+      target: 50,
+    }),
+    createAchievement({
+      id: 'mastery-25',
+      title: '25% collection mastery',
+      description: 'Your collection is starting to feel familiar.',
+      icon: 'trending-up',
+      color: '#2879E8',
+      background: '#EAF2FF',
+      progress: averageMastery,
+      target: 25,
+    }),
+    createAchievement({
+      id: 'mastery-50',
+      title: '50% collection mastery',
+      description: 'Halfway to a fully learned collection.',
+      icon: 'trending-up',
+      color: '#8E78FF',
+      background: '#F2EFFF',
+      progress: averageMastery,
+      target: 50,
+    }),
+    createAchievement({
+      id: 'mastery-75',
+      title: '75% collection mastery',
+      description: 'Your words are becoming second nature.',
+      icon: 'ribbon',
+      color: '#F2A65A',
+      background: '#FFF0DC',
+      progress: averageMastery,
+      target: 75,
+    }),
+    createAchievement({
+      id: 'mastery-all-words',
+      title: 'Every word mastered',
+      description: 'Reach 100% knowledge across your whole collection.',
+      icon: 'diamond',
+      color: '#39C69A',
+      background: '#E8FBF4',
+      progress: fullyMasteredWords,
+      target: Math.max(words.length, 1),
+      points: 100,
+    }),
+    createAchievement({
       id: `review-horizon-${nextReviewHorizon}`,
       title: `${nextReviewHorizon} review horizon`,
       description: 'A harder practice milestone is always ahead.',
@@ -1700,6 +1926,27 @@ function getNextReviewHorizon(totalReviews: number) {
   return Math.max(1000, (Math.floor(totalReviews / 500) + 1) * 500);
 }
 
+function getLongestPerfectQuizStreak(attempts: QuizAttempt[]) {
+  const orderedAttempts = [...attempts].sort(
+    (first, second) =>
+      new Date(first.completedAt).getTime() -
+      new Date(second.completedAt).getTime(),
+  );
+  let currentStreak = 0;
+  let longestStreak = 0;
+
+  orderedAttempts.forEach((attempt) => {
+    if (attempt.total > 0 && attempt.score === attempt.total) {
+      currentStreak += 1;
+      longestStreak = Math.max(longestStreak, currentStreak);
+      return;
+    }
+    currentStreak = 0;
+  });
+
+  return longestStreak;
+}
+
 function createAchievement({
   id,
   title,
@@ -1709,7 +1956,10 @@ function createAchievement({
   background,
   progress,
   target,
-}: Omit<Achievement, 'unlocked'>): Achievement {
+  points = getAchievementPoints(target),
+  refreshTokens = 1,
+}: Omit<Achievement, 'unlocked' | 'points' | 'refreshTokens'> &
+  Partial<Pick<Achievement, 'points' | 'refreshTokens'>>): Achievement {
   return {
     id,
     title,
@@ -1720,5 +1970,19 @@ function createAchievement({
     progress: Math.min(progress, target),
     target,
     unlocked: progress >= target,
+    points,
+    refreshTokens,
   };
+}
+
+function getAchievementPoints(target: number) {
+  if (target >= 1000) return 80;
+  if (target >= 500) return 55;
+  if (target >= 250) return 40;
+  if (target >= 100) return 30;
+  if (target >= 50) return 20;
+  if (target >= 25) return 15;
+  if (target >= 10) return 10;
+  if (target >= 5) return 7;
+  return 5;
 }

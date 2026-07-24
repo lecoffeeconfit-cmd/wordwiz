@@ -26,6 +26,16 @@
       ],
       "expo-web-browser",
       [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "Allow $(PRODUCT_NAME) to use your microphone for dictation.",
+          "speechRecognitionPermission": "Allow $(PRODUCT_NAME) to turn your speech into words.",
+          "androidSpeechServicePackages": [
+            "com.google.android.googlequicksearchbox"
+          ]
+        }
+      ],
+      [
         "expo-splash-screen",
         {
           "image": "./assets/splash-icon.png",

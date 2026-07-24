@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useEffect, useMemo, useState } from 'react';
-import { Text, View } from 'react-native';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Animated, Easing, Text, View } from 'react-native';
 import { COLORS } from '../../constants/theme';
 import { styles } from '../../styles';
 
@@ -19,8 +19,87 @@ export function QuizComplete({
   const isPractice = mode === 'practice';
   const isPerfect = percentage === 100;
   const isStrongScore = percentage >= 80;
+  const scoreColor = getQuizScoreColor(percentage);
   const [now, setNow] = useState(() => Date.now());
+  const [displayedScore, setDisplayedScore] = useState(0);
   const refreshParts = useMemo(() => getDailyRefreshParts(now), [now]);
+  const cardEntrance = useRef(new Animated.Value(0)).current;
+  const scoreScale = useRef(new Animated.Value(0.72)).current;
+  const badgeScale = useRef(new Animated.Value(0.5)).current;
+  const sparkleProgress = useRef(new Animated.Value(0)).current;
+  const sparklePulse = useRef(new Animated.Value(0.45)).current;
+
+  useEffect(() => {
+    cardEntrance.setValue(0);
+    scoreScale.setValue(0.72);
+    badgeScale.setValue(0.5);
+    sparkleProgress.setValue(0);
+    setDisplayedScore(0);
+
+    const entrance = Animated.sequence([
+      Animated.delay(80),
+      Animated.parallel([
+        Animated.timing(cardEntrance, {
+          toValue: 1,
+          duration: 360,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.spring(badgeScale, {
+          toValue: 1,
+          friction: 5,
+          tension: 90,
+          useNativeDriver: true,
+        }),
+        Animated.spring(scoreScale, {
+          toValue: 1,
+          friction: 5,
+          tension: 80,
+          useNativeDriver: true,
+        }),
+        Animated.timing(sparkleProgress, {
+          toValue: 1,
+          duration: 700,
+          easing: Easing.out(Easing.quad),
+          useNativeDriver: true,
+        }),
+      ]),
+    ]);
+    entrance.start();
+
+    const countStartedAt = Date.now();
+    let animationFrame = 0;
+    const countScore = () => {
+      const progress = Math.min(1, (Date.now() - countStartedAt) / 680);
+      setDisplayedScore(Math.round(score * (1 - Math.pow(1 - progress, 3))));
+      if (progress < 1) animationFrame = requestAnimationFrame(countScore);
+    };
+    animationFrame = requestAnimationFrame(countScore);
+
+    return () => {
+      entrance.stop();
+      cancelAnimationFrame(animationFrame);
+    };
+  }, [badgeScale, cardEntrance, score, scoreScale, sparkleProgress]);
+
+  useEffect(() => {
+    const animation = Animated.loop(
+      Animated.sequence([
+        Animated.timing(sparklePulse, {
+          toValue: 1,
+          duration: 1300,
+          useNativeDriver: true,
+        }),
+        Animated.timing(sparklePulse, {
+          toValue: 0.45,
+          duration: 1300,
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    animation.start();
+    return () => animation.stop();
+  }, [sparklePulse]);
 
   useEffect(() => {
     if (isPractice) {
@@ -35,15 +114,101 @@ export function QuizComplete({
   }, [isPractice]);
 
   return (
-    <View style={[styles.completeCard, !isPractice && styles.completeCardDaily]}>
+    <Animated.View
+      style={[
+        styles.completeCard,
+        !isPractice && styles.completeCardDaily,
+        {
+          opacity: cardEntrance,
+          transform: [
+            {
+              translateY: cardEntrance.interpolate({
+                inputRange: [0, 1],
+                outputRange: [18, 0],
+              }),
+            },
+          ],
+        },
+      ]}
+    >
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          styles.completeCelebrationSparkle,
+          styles.completeCelebrationSparkleOne,
+          {
+            opacity: Animated.multiply(sparkleProgress, sparklePulse),
+            transform: [
+              {
+                translateY: sparkleProgress.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [10, 0],
+                }),
+              },
+            ],
+          },
+        ]}
+      >
+        <Ionicons name="sparkles" size={18} color="#FFC14D" />
+      </Animated.View>
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          styles.completeCelebrationSparkle,
+          styles.completeCelebrationSparkleTwo,
+          {
+            opacity: sparkleProgress.interpolate({
+              inputRange: [0, 0.35, 1],
+              outputRange: [0, 1, 0.75],
+            }),
+            transform: [
+              {
+                scale: sparkleProgress.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [0.5, 1],
+                }),
+              },
+            ],
+          },
+        ]}
+      >
+        <Ionicons name="star" size={14} color="#F4C866" />
+      </Animated.View>
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          styles.completeCelebrationSparkle,
+          styles.completeCelebrationSparkleThree,
+          {
+            opacity: Animated.multiply(sparkleProgress, sparklePulse),
+            transform: [
+              {
+                scale: sparklePulse.interpolate({
+                  inputRange: [0.45, 1],
+                  outputRange: [0.8, 1.1],
+                }),
+              },
+            ],
+          },
+        ]}
+      >
+        <Ionicons name="sparkles" size={10} color="#E2AF2F" />
+      </Animated.View>
       <View style={styles.completeHeaderRow}>
-        <View style={[styles.completeBadge, !isPractice && styles.completeBadgeDaily]}>
+        <Animated.View
+          style={[
+            styles.completeBadge,
+            !isPractice && styles.completeBadgeDaily,
+            isStrongScore && styles.completeBadgeTrophy,
+            { transform: [{ scale: badgeScale }] },
+          ]}
+        >
           <Ionicons
-            name={isPerfect ? 'trophy' : isPractice ? 'sparkles' : 'checkmark'}
+            name="trophy"
             size={34}
             color={COLORS.white}
           />
-        </View>
+        </Animated.View>
         <View style={styles.completeHeaderCopy}>
           <Text style={[styles.completeEyebrow, !isPractice && styles.completeEyebrowDaily]}>
             {isPractice ? 'PRACTICE ROUND' : 'DAILY QUIZ'}
@@ -65,18 +230,34 @@ export function QuizComplete({
         ]}
       >
         <View style={styles.completeScoreMain}>
-          <Text style={styles.completeScoreLabel}>YOUR SCORE</Text>
-          <Text
-            style={[
-              styles.completeScore,
-              !isPractice && { color: getDailyScoreColor(percentage) },
-            ]}
-          >
-            {score} <Text style={styles.completeTotal}>/ {total}</Text>
-          </Text>
-          <Text style={styles.completeScoreMeta}>
+          <View style={styles.completeScoreLabelRow}>
+            <Ionicons name="ribbon-outline" size={13} color={COLORS.purpleDark} />
+            <Text style={styles.completeScoreLabel}>YOUR SCORE</Text>
+          </View>
+          <Animated.View style={{ transform: [{ scale: scoreScale }] }}>
+            <Text
+              style={[
+                styles.completeScore,
+                { color: scoreColor },
+              ]}
+            >
+              {displayedScore} <Text style={styles.completeTotal}>/ {total}</Text>
+            </Text>
+          </Animated.View>
+          <Text style={[styles.completeScoreMeta, { color: scoreColor }]}>
             CORRECT · {percentage}% ACCURACY
           </Text>
+          <View style={styles.completeAccuracyTrack}>
+            <View
+              style={[
+                styles.completeAccuracyFill,
+                {
+                  width: `${percentage}%`,
+                  backgroundColor: scoreColor,
+                },
+              ]}
+            />
+          </View>
           {isStrongScore ? (
             <View
               style={[
@@ -165,7 +346,7 @@ export function QuizComplete({
           </View>
         )}
       </View>
-    </View>
+    </Animated.View>
   );
 }
 
@@ -190,8 +371,9 @@ function formatTimerPart(value: number) {
   return `${value}`.padStart(2, '0');
 }
 
-function getDailyScoreColor(percentage: number) {
+function getQuizScoreColor(percentage: number) {
   if (percentage >= 100) return '#F4B400';
-  if (percentage >= 60) return COLORS.greenDark;
+  if (percentage >= 80) return COLORS.greenDark;
+  if (percentage >= 60) return COLORS.blue;
   return COLORS.orange;
 }

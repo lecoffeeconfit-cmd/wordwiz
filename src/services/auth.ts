@@ -89,6 +89,50 @@ export function getAuthRedirectUrl() {
   return Linking.createURL('auth/callback');
 }
 
+/**
+ * Completes an Auth session after Supabase redirects from a confirmation email.
+ * Native sessions do not automatically read URLs, so only this trusted callback
+ * path is allowed to set a session from a deep link.
+ */
+export async function completeSupabaseAuthRedirect(
+  url: string,
+  context?: AuthRequestContext,
+) {
+  if (!isAuthRedirectUrl(url)) {
+    return null;
+  }
+
+  const params = getAuthParams(url);
+  const authError = params.get('error_description') ?? params.get('error');
+  if (authError) {
+    throw new Error(authError);
+  }
+
+  const code = params.get('code');
+  if (code) {
+    const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+    if (error) throw error;
+
+    logAuthRequest('auth:email_redirect_code', data.user, context);
+    return data.user ? toAuthUser(data.user) : null;
+  }
+
+  const accessToken = params.get('access_token');
+  const refreshToken = params.get('refresh_token');
+  if (!accessToken || !refreshToken) {
+    return null;
+  }
+
+  const { data, error } = await supabase.auth.setSession({
+    access_token: accessToken,
+    refresh_token: refreshToken,
+  });
+  if (error) throw error;
+
+  logAuthRequest('auth:email_redirect_session', data.user, context);
+  return data.user ? toAuthUser(data.user) : null;
+}
+
 export async function signInWithSupabase(
   email: string,
   password: string,
@@ -290,6 +334,11 @@ function getWebRedirectUrl() {
   }
 
   return window.location.origin;
+}
+
+function isAuthRedirectUrl(url: string) {
+  const redirectUrl = getAuthRedirectUrl();
+  return Boolean(redirectUrl && url.startsWith(redirectUrl));
 }
 
 function getAuthParams(url: string) {

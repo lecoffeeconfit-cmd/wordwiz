@@ -1,4 +1,4 @@
-import type { Word } from '../types';
+import type { StudySetMembership, Word } from '../types';
 import { supabase } from './supabase';
 
 export const FREE_WORD_LIMIT = 10;
@@ -9,17 +9,17 @@ export type FreeWordUsage = {
   limit: number;
 };
 
-export type FreeTrialAccess = {
-  isActive: boolean;
-  startedAt: string | null;
-  expiresAt: string | null;
-  daysRemaining: number;
-};
-
 export class FreeWordLimitError extends Error {
   constructor() {
     super('You’ve used your 10 free word additions for this month.');
     this.name = 'FreeWordLimitError';
+  }
+}
+
+export class DuplicateWordError extends Error {
+  constructor() {
+    super('This word is already saved in your account.');
+    this.name = 'DuplicateWordError';
   }
 }
 
@@ -39,29 +39,6 @@ export async function getFreeWordUsage(): Promise<FreeWordUsage> {
   };
 }
 
-export async function getFreeTrialAccess(): Promise<FreeTrialAccess> {
-  const { data, error } = await supabase.rpc('get_trial_access');
-  if (error) throw new Error(`trial_access: ${error.message}`);
-
-  const trial = data as {
-    trial_active?: unknown;
-    trial_started_at?: unknown;
-    trial_expires_at?: unknown;
-    days_remaining?: unknown;
-  } | null;
-
-  return {
-    isActive: trial?.trial_active === true,
-    startedAt: typeof trial?.trial_started_at === 'string'
-      ? trial.trial_started_at
-      : null,
-    expiresAt: typeof trial?.trial_expires_at === 'string'
-      ? trial.trial_expires_at
-      : null,
-    daysRemaining: toSafeCount(trial?.days_remaining),
-  };
-}
-
 export async function createCloudWordWithFreeLimit(word: Word): Promise<Word> {
   const payload = toWordPayload(word);
   const { data, error } = await supabase.rpc('create_word_with_monthly_limit', {
@@ -72,10 +49,58 @@ export async function createCloudWordWithFreeLimit(word: Word): Promise<Word> {
     if (/free_word_limit_reached|free word additions/i.test(error.message)) {
       throw new FreeWordLimitError();
     }
+    if (
+      error.code === '23505' ||
+      /duplicate key|unique constraint|words_user_id_lower_term_idx/i.test(error.message)
+    ) {
+      throw new DuplicateWordError();
+    }
     throw new Error(`words: ${error.message}`);
   }
 
   return mapWordRow(data as WordRow);
+}
+
+/**
+ * Creates an optional WordWiz collection in one server transaction. This keeps
+ * large starter decks responsive while preserving the server-enforced allowance.
+ */
+export async function createCloudWordsWithFreeLimit(words: Word[]): Promise<Word[]> {
+  if (words.length === 0) return [];
+
+  const { data, error } = await supabase.rpc('create_words_with_monthly_limit', {
+    p_words: words.map(toWordPayload),
+  });
+
+  if (error) {
+    if (/free_word_limit_reached|free word additions/i.test(error.message)) {
+      throw new FreeWordLimitError();
+    }
+    throw new Error(`words: ${error.message}`);
+  }
+
+  if (!Array.isArray(data) || data.length !== words.length) {
+    throw new Error('words: the collection could not be saved completely');
+  }
+
+  return (data as WordRow[]).map(mapWordRow);
+}
+
+/** Updates a deck membership in one cloud request so large decks stay quick to manage. */
+export async function saveCloudStudySetMembership(
+  wordIds: string[],
+  membership: StudySetMembership,
+  enabled: boolean,
+) {
+  if (wordIds.length === 0) return;
+
+  const { error } = await supabase.rpc('set_study_set_membership', {
+    p_word_ids: wordIds,
+    p_membership: membership,
+    p_enabled: enabled,
+  });
+
+  if (error) throw new Error(`words: ${error.message}`);
 }
 
 export async function syncRevenueCatEntitlement() {

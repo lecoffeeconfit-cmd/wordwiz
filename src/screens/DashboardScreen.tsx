@@ -1,22 +1,34 @@
 import { Ionicons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, FlatList, Pressable, ScrollView, Text, View } from 'react-native';
+import { Canvas as SkiaCanvas, Circle as SkiaCircle, Group as SkiaGroup, Path as SkiaPath, Skia, vec } from '@shopify/react-native-skia';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { LayoutChangeEvent } from 'react-native';
+import { ActivityIndicator, Alert, Animated, Easing, FlatList, Pressable, ScrollView, Text, View } from 'react-native';
 import { COLORS } from '../constants/theme';
 import type { AnalyticsData, LegalPage, QuizAnswer, QuizDifficultyPreference, QuizPreferences, QuizProgress, QuizQuestion, QuizQuestionMode, ReminderSettings, SortMode, TimeBasedLearningSettings, Word } from '../types';
 import type { QuizFeedbackSummary } from '../utils';
 import type { AuthUser } from '../types';
 import { styles } from '../styles';
-import { DEFAULT_TIME_BASED_LEARNING_SETTINGS, MASTERY_LEVELS, buildAchievements, buildQuiz, calculateStreakStats, FLUENT_RECALL_SECONDS, formatReminderTime, formatStudyTime, getDayKey, getDueReviewWords, getHeroProgressColor, getMasteryLevel, getMasteryLevelProgress, getNextMasteryLevel, getOmegaTestAttempts, getProgressColor, getProgressPaleColor, getQuizAttemptKind, getQuizFeedbackByWord, getQuizFeedbackSummary, getQuizRecallPaceByQuestionType, getQuizRecallPaceByWord, getQuizResponseSignalSummary, getQuizRetrievalProfile, getRecentDays, getStreakMessage, getStreakMilestone, getStreakWeek, getWordMastery, getWordMasteryCategory, getWordMasteryCategoryForWord, normalizeQuestionTypePreferences, normalizeTimeBasedLearningSettings, shuffle } from '../utils';
+import { DEFAULT_TIME_BASED_LEARNING_SETTINGS, MASTERY_LEVELS, buildAchievements, buildQuiz, calculateStreakStats, FLUENT_RECALL_SECONDS, formatReminderTime, formatStudyTime, getDayKey, getDueReviewWords, getHeroProgressColor, getMasteryLevel, getMasteryLevelProgress, getNextMasteryLevel, getOmegaTestAttempts, getProgressColor, getProgressPaleColor, getQuizAttemptKind, getQuizFeedbackByWord, getQuizFeedbackSummary, getQuizRecallPaceByQuestionType, getQuizRecallPaceByWord, getQuizResponseSignalSummary, getQuizRetrievalProfile, getRecentDays, getRecentStreakLengths, getStreakMessage, getStreakMilestone, getStreakWeek, getWordMastery, getWordMasteryCategory, getWordMasteryCategoryForWord, normalizeQuestionTypePreferences, normalizeTimeBasedLearningSettings, shuffle } from '../utils';
 import { CompactPagination, DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, ProgressFill, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 import { LessonProgressRing } from '../components/dashboard/LessonProgressRing';
 import { useSubscription } from '../subscription/SubscriptionProvider';
 
 const EXPANDED_LIST_PAGE_SIZE = 8;
+const RETRIEVAL_PROGRESSION_STEPS = [
+  'See the word and meaning',
+  'Choose the definition',
+  'Choose the word from its meaning',
+  'Use context and distinguish close meanings',
+  'Type the word from its definition',
+  'Recall it again after a longer delay',
+];
 const QUIZ_TREND_PAGE_SIZE = 6;
 const DUE_REVIEW_PREVIEW_SIZE = 6;
 const ACHIEVEMENT_PAGE_SIZE = 4;
 const DAILY_ACTIVITY_TARGET_STUDY_SECONDS = 10 * 60;
+const QUIZ_ACCURACY_RING_SIZE = 116;
+const QUIZ_ACCURACY_RING_STROKE = 14;
+const QUIZ_ACCURACY_RING_RADIUS = (QUIZ_ACCURACY_RING_SIZE - QUIZ_ACCURACY_RING_STROKE) / 2;
 const QUIZ_DIFFICULTY_OPTIONS: { id: QuizDifficultyPreference; label: string }[] = [
   { id: 'automatic', label: 'Auto' },
   { id: 'easy', label: 'Easy' },
@@ -91,22 +103,6 @@ const QUESTION_TYPE_OPTIONS: {
   },
 ];
 
-function tintHex(color: string, target: string, amount: number) {
-  const normalizedColor = color.replace('#', '');
-  const normalizedTarget = target.replace('#', '');
-  const blend = Math.max(0, Math.min(1, amount));
-
-  if (normalizedColor.length !== 6 || normalizedTarget.length !== 6) return color;
-
-  return `#${[0, 2, 4]
-    .map((offset) => {
-      const from = Number.parseInt(normalizedColor.slice(offset, offset + 2), 16);
-      const to = Number.parseInt(normalizedTarget.slice(offset, offset + 2), 16);
-      return Math.round(from + (to - from) * blend).toString(16).padStart(2, '0');
-    })
-    .join('')}`;
-}
-
 export function DashboardScreen({
   words,
   analytics,
@@ -116,6 +112,8 @@ export function DashboardScreen({
   currentUser,
   reminderSettings,
   dailyQuizGoal,
+  achievementPoints,
+  refreshTokens,
   onReviewDue,
   onStudyFlaggedCards,
   onStudyFlaggedQuiz,
@@ -130,6 +128,8 @@ export function DashboardScreen({
   onOpenLegal,
   onLogout,
   onDeleteAccount,
+  onOpenOnboardingGuide,
+  onOpenPlus,
 }: {
   words: Word[];
   analytics: AnalyticsData;
@@ -139,6 +139,8 @@ export function DashboardScreen({
   currentUser: AuthUser | null;
   reminderSettings: ReminderSettings;
   dailyQuizGoal: number;
+  achievementPoints: number;
+  refreshTokens: number;
   onReviewDue: (priorityWordIds?: string[]) => void;
   onStudyFlaggedCards: () => void;
   onStudyFlaggedQuiz: () => void;
@@ -153,13 +155,47 @@ export function DashboardScreen({
   onOpenLegal: (page: LegalPage) => void;
   onLogout: () => void;
   onDeleteAccount: () => void;
+  onOpenOnboardingGuide: () => void;
+  onOpenPlus: () => void;
 }) {
   const subscription = useSubscription();
+  const plusEntitlement = subscription.customerInfo?.entitlements.active.Plus;
+  const isComplimentary = subscription.accessSource === 'complimentary';
+  const isSubscribed = subscription.accessSource === 'subscription';
+  const subscriptionStatus = subscription.isAccessLoading || subscription.isLoading
+    ? 'CHECKING'
+    : isSubscribed
+      ? 'ACTIVE'
+      : isComplimentary
+        ? 'ACTIVE'
+        : 'FREE';
+  const subscriptionDate = isComplimentary
+    ? subscription.complimentaryExpiresAt
+    : plusEntitlement?.expirationDate ?? subscription.customerInfo?.allExpirationDates.Plus ?? null;
+  const subscriptionDateLabel = isComplimentary
+    ? 'COMPLIMENTARY ENDS'
+    : isSubscribed
+      ? plusEntitlement?.willRenew
+        ? 'RENEWS'
+        : 'EXPIRES'
+      : 'WORD LIMIT';
+  const subscriptionDateValue = isComplimentary
+    ? subscriptionDate
+      ? formatSubscriptionDate(subscriptionDate)
+      : 'Checking access'
+    : isSubscribed
+      ? subscriptionDate
+        ? formatSubscriptionDate(subscriptionDate)
+        : 'Managed by Apple'
+      : subscription.monthlyWordsAdded === null
+        ? 'Checking usage'
+        : `${subscription.monthlyWordsAdded} of ${subscription.monthlyWordLimit} added`;
   const [achievementsExpanded, setAchievementsExpanded] = useState(false);
   const [achievementPage, setAchievementPage] = useState(0);
   const [masteryExpanded, setMasteryExpanded] = useState(false);
   const [quizTrendExpanded, setQuizTrendExpanded] = useState(false);
   const [practiceEstimateExpanded, setPracticeEstimateExpanded] = useState(false);
+  const [isRetrievalProgressionExpanded, setIsRetrievalProgressionExpanded] = useState(false);
   const [dueReviewsExpanded, setDueReviewsExpanded] = useState(false);
   const [dueReviewPage, setDueReviewPage] = useState(0);
   const pendingDueReviewTap = useRef<{
@@ -185,6 +221,11 @@ export function DashboardScreen({
   ).length;
   const masterSparkleScale = useRef(new Animated.Value(1)).current;
   const flaggedCountScale = useRef(new Animated.Value(1)).current;
+  const streakSparkleFloat = useRef(new Animated.Value(0)).current;
+  const streakSparklePulse = useRef(new Animated.Value(0.38)).current;
+  const refreshTokenPulse = useRef(new Animated.Value(1)).current;
+  const refreshTokenFloat = useRef(new Animated.Value(0)).current;
+  const refreshTokenGlow = useRef(new Animated.Value(0.45)).current;
   const [recentlyUnflaggedWordIds, setRecentlyUnflaggedWordIds] = useState<string[]>([]);
   const lastMasteryRowTapAt = useRef(0);
   const lastAchievementTapAt = useRef(0);
@@ -203,6 +244,8 @@ export function DashboardScreen({
   const accuracy = totalQuizQuestions
     ? Math.round((totalCorrect / totalQuizQuestions) * 100)
     : 0;
+  const hasQuizAnswers = totalQuizQuestions > 0;
+  const hasNoCorrectAnswers = hasQuizAnswers && totalCorrect === 0;
   const omegaTestAttempts = getOmegaTestAttempts(analytics);
   const omegaTestAverage = omegaTestAttempts.length
     ? Math.round(
@@ -240,6 +283,91 @@ export function DashboardScreen({
     ]).start();
   }, [flaggedCount, flaggedCountScale]);
 
+  useEffect(() => {
+    const animation = Animated.loop(
+      Animated.parallel([
+        Animated.sequence([
+          Animated.timing(streakSparkleFloat, {
+            toValue: -4,
+            duration: 1700,
+            useNativeDriver: true,
+          }),
+          Animated.timing(streakSparkleFloat, {
+            toValue: 0,
+            duration: 1700,
+            useNativeDriver: true,
+          }),
+        ]),
+        Animated.sequence([
+          Animated.timing(streakSparklePulse, {
+            toValue: 0.95,
+            duration: 1200,
+            useNativeDriver: true,
+          }),
+          Animated.timing(streakSparklePulse, {
+            toValue: 0.38,
+            duration: 1200,
+            useNativeDriver: true,
+          }),
+        ]),
+      ]),
+    );
+    animation.start();
+    return () => animation.stop();
+  }, [streakSparkleFloat, streakSparklePulse]);
+
+  useEffect(() => {
+    if (refreshTokens === 0) {
+      refreshTokenPulse.setValue(1);
+      refreshTokenFloat.setValue(0);
+      refreshTokenGlow.setValue(0.28);
+      return;
+    }
+
+    const animation = Animated.loop(
+      Animated.parallel([
+        Animated.sequence([
+          Animated.timing(refreshTokenPulse, {
+            toValue: 1.08,
+            duration: 1050,
+            useNativeDriver: true,
+          }),
+          Animated.timing(refreshTokenPulse, {
+            toValue: 1,
+            duration: 1050,
+            useNativeDriver: true,
+          }),
+        ]),
+        Animated.sequence([
+          Animated.timing(refreshTokenFloat, {
+            toValue: -2,
+            duration: 1300,
+            useNativeDriver: true,
+          }),
+          Animated.timing(refreshTokenFloat, {
+            toValue: 0,
+            duration: 1300,
+            useNativeDriver: true,
+          }),
+        ]),
+        Animated.sequence([
+          Animated.timing(refreshTokenGlow, {
+            toValue: 0.9,
+            duration: 1050,
+            useNativeDriver: true,
+          }),
+          Animated.timing(refreshTokenGlow, {
+            toValue: 0.38,
+            duration: 1050,
+            useNativeDriver: true,
+          }),
+        ]),
+      ]),
+    );
+    animation.start();
+    return () => animation.stop();
+  }, [refreshTokenFloat, refreshTokenGlow, refreshTokenPulse, refreshTokens]);
+
   function toggleAllFlags() {
     if (recentlyUnflaggedWordIds.length > 0) {
       onSetWordFlagState(recentlyUnflaggedWordIds, true);
@@ -251,10 +379,6 @@ export function DashboardScreen({
     onSetWordFlagState(flaggedWordIds, false);
     setRecentlyUnflaggedWordIds(flaggedWordIds);
   }
-  const quizAccuracySegments = buildQuizAccuracySegments(
-    totalCorrect,
-    totalWrong,
-  );
   const feedbackSummary = getQuizFeedbackSummary(analytics);
   const wordsById = new Map(words.map((word) => [word.id, word]));
   const feedbackByWord = getQuizFeedbackByWord(analytics)
@@ -416,6 +540,13 @@ export function DashboardScreen({
     const dayQuizAttempts = analytics.quizHistory.filter(
       (attempt) => attempt.date === day.key,
     );
+    const dayTestAttempts = dayQuizAttempts.filter((attempt) =>
+      attempt.answers.some(
+        (answer) =>
+          answer.sessionMode === 'omega-test' ||
+          answer.sessionMode === 'mastery-test',
+      ),
+    );
     const studySeconds =
       dayCardEvents.reduce(
         (total, event) => total + event.durationSeconds,
@@ -434,7 +565,8 @@ export function DashboardScreen({
     return {
       ...day,
       activityCount,
-      quizCount: dayQuizAttempts.length,
+      quizCount: dayQuizAttempts.length - dayTestAttempts.length,
+      testCount: dayTestAttempts.length,
       studySeconds,
       dailyProgress: getDailyActivityProgress(studySeconds, dayQuizAttempts.length),
     };
@@ -460,6 +592,7 @@ export function DashboardScreen({
     : recentQuizzes;
   const streakStats = calculateStreakStats(analytics);
   const streak = streakStats.current;
+  const recentStreakLengths = getRecentStreakLengths(streakStats);
   const streakMilestone = getStreakMilestone(streakStats);
   const streakWeek = getStreakWeek(streakStats);
   const achievements = buildAchievements({ words, analytics, streakStats });
@@ -492,6 +625,29 @@ export function DashboardScreen({
       minute: nextTime.minute,
     });
   };
+  async function restoreSubscription() {
+    const result = await subscription.restore();
+    if (result.status === 'restored') {
+      Alert.alert('WordWiz Plus restored', 'Your Plus learning tools are ready.');
+      return;
+    }
+    if (result.status === 'not-found') {
+      Alert.alert('No active subscription found', 'We could not find an active WordWiz Plus subscription for this Apple ID.');
+      return;
+    }
+    Alert.alert('Could not restore purchases', result.message);
+  }
+
+  async function manageSubscription() {
+    try {
+      await subscription.manageSubscription();
+    } catch {
+      Alert.alert(
+        'Subscription settings unavailable',
+        'Apple subscription settings are unavailable right now. Please try again shortly.',
+      );
+    }
+  }
 
   const collapseMasteryListOnDoubleTap = () => {
     if (!masteryExpanded) return;
@@ -613,6 +769,137 @@ export function DashboardScreen({
     </Pressable>
   );
 
+  const wordMasterySection = (
+    <DashboardSection title="WORD MASTERY" badge={`${words.length} words`}>
+      {mastery.length === 0 ? (
+        <Text style={styles.dashboardEmptyText}>
+          Add your first word to start measuring mastery.
+        </Text>
+      ) : (
+        <>
+          {masteryExpanded ? (
+            <Text style={styles.expandedListHint}>Double-tap any word to show fewer</Text>
+          ) : null}
+          {masteryPreview.map((item) => {
+            const wordCategory = item.category;
+            const isMasterWord = wordCategory.id === 'master';
+
+            return (
+              <Pressable
+                key={item.word.id}
+                accessibilityRole={masteryExpanded ? 'button' : undefined}
+                accessibilityHint={
+                  masteryExpanded
+                    ? 'Double-tap twice quickly to collapse the word list'
+                    : undefined
+                }
+                disabled={!masteryExpanded}
+                onPress={collapseMasteryListOnDoubleTap}
+                style={[
+                  styles.masteryRow,
+                  isMasterWord && styles.masteryRowComplete,
+                ]}
+              >
+                <View style={styles.masteryRowTop}>
+                  <View style={styles.masteryWordCopy}>
+                    <Text style={styles.masteryWord}>{item.word.term}</Text>
+                    <Text style={[styles.masteryWordLevel, { color: wordCategory.color }]}>
+                      {isMasterWord
+                        ? wordCategory.shortLabel
+                        : getMasteryLevel(item.score).shortTitle}
+                    </Text>
+                  </View>
+                  <View style={styles.masteryPercentRow}>
+                    {isMasterWord ? (
+                      <Animated.View
+                        style={[
+                          styles.masteryCompleteSparkle,
+                          { transform: [{ scale: masterSparkleScale }] },
+                        ]}
+                      >
+                        <Ionicons name="sparkles" size={15} color="#D39A16" />
+                        <Ionicons
+                          name="star"
+                          size={6}
+                          color="#F4C866"
+                          style={styles.masteryCompleteSparkleMini}
+                        />
+                      </Animated.View>
+                    ) : null}
+                    <Text style={[styles.masteryPercent, { color: wordCategory.color }]}>
+                      {item.score}%
+                    </Text>
+                  </View>
+                </View>
+                <View
+                  style={[
+                    styles.masteryTrack,
+                    isMasterWord && { backgroundColor: wordCategory.pale },
+                  ]}
+                >
+                  <ProgressFill
+                    color={wordCategory.color}
+                    progress={Math.max(item.score, 3)}
+                    radius={5}
+                    variant={isMasterWord ? 'main' : 'standard'}
+                    style={{ width: `${Math.max(item.score, 3)}%` }}
+                  />
+                </View>
+              </Pressable>
+            );
+          })}
+          {masteryExpanded && masteryPageCount > 1 ? (
+            <CompactPagination
+              page={currentMasteryPage}
+              pageCount={masteryPageCount}
+              pageSize={EXPANDED_LIST_PAGE_SIZE}
+              total={mastery.length}
+              itemLabel="word mastery rows"
+              onPrevious={() => setMasteryPage(Math.max(0, currentMasteryPage - 1))}
+              onNext={() => setMasteryPage(Math.min(masteryPageCount - 1, currentMasteryPage + 1))}
+            />
+          ) : null}
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={
+              masteryExpanded ? 'Show fewer word mastery rows' : 'Show all word mastery rows'
+            }
+            accessibilityState={{ expanded: masteryExpanded }}
+            onPress={() => {
+              if (masteryExpanded) {
+                setMasteryExpanded(false);
+                return;
+              }
+
+              setMasteryPage(0);
+              setMasteryExpanded(true);
+            }}
+            style={({ pressed }) => [styles.masterySummary, pressed && styles.pressed]}
+          >
+            <View style={styles.masterySummaryCopy}>
+              <Text style={styles.masterySummaryTitle}>
+                {masteryExpanded
+                  ? `Showing ${masteryStartIndex + 1}–${masteryRangeEnd} of ${mastery.length} words`
+                  : 'Showing top words'}
+              </Text>
+              <Text style={styles.masterySummaryText}>
+                {masteredWords} proficient · {strongWords} strong · {buildingWords} building
+              </Text>
+            </View>
+            <Text style={styles.masterySummaryAction}>
+              {masteryExpanded ? 'Collapse' : 'View all'}
+            </Text>
+            <Ionicons
+              name={masteryExpanded ? 'chevron-up' : 'chevron-down'}
+              size={18}
+              color={COLORS.muted}
+            />
+          </Pressable>
+        </>
+      )}
+    </DashboardSection>
+  );
+
   return (
     <ScrollView
       style={styles.screen}
@@ -641,6 +928,7 @@ export function DashboardScreen({
               progress={Math.max(masteryLevelProgress, words.length ? 6 : 0)}
               radius={4}
               style={{ width: `${Math.max(masteryLevelProgress, words.length ? 6 : 0)}%` }}
+              variant="hero"
             />
           </View>
           <Text style={styles.heroLevelNext}>
@@ -686,38 +974,81 @@ export function DashboardScreen({
       <DashboardStat
         icon="time"
         color={COLORS.blue}
-        background={COLORS.bluePale}
+        background="#F3F7FF"
         value={formatStudyTime(totalSeconds)}
         label="Study time"
       />
       <DashboardStat
         icon="trophy"
         color={COLORS.orange}
-        background={COLORS.orangePale}
+        background="#FFF7EB"
         value={`${analytics.quizHistory.length}`}
         label="Quizzes"
       />
       <DashboardStat
         icon="close-circle"
         color={COLORS.red}
-        background={COLORS.redPale}
+        background="#FFF5F8"
         value={`${totalWrong}`}
         label="Missed"
       />
-      <DashboardStat
-        icon="flame"
-        color={COLORS.teal}
-        background={COLORS.tealPale}
-        value={`${streak}d`}
-        label="Streak"
-      />
+      <StreakHistoryStat current={streak} recent={recentStreakLengths} />
       </View>
 
       <View style={styles.streakReminderGrid}>
         <View style={styles.streakCard}>
+          <View pointerEvents="none" style={styles.streakMagicAura} />
+          <View pointerEvents="none" style={styles.streakMagicGoldAura} />
+          <View pointerEvents="none" style={styles.streakSparkleLayer}>
+            <Animated.View
+              style={[
+                styles.streakSparkleLarge,
+                {
+                  opacity: streakSparklePulse,
+                  transform: [{ translateY: streakSparkleFloat }],
+                },
+              ]}
+            >
+              <Ionicons name="sparkles" size={18} color="#E2AF2F" />
+            </Animated.View>
+            <Animated.View
+              style={[
+                styles.streakSparkleSmall,
+                {
+                  opacity: streakSparklePulse,
+                  transform: [{ translateY: Animated.multiply(streakSparkleFloat, -0.55) }],
+                },
+              ]}
+            >
+              <Ionicons name="sparkles" size={11} color="#F4C866" />
+            </Animated.View>
+            <Animated.View
+              style={[
+                styles.streakSparkleTiny,
+                {
+                  opacity: streakSparklePulse,
+                  transform: [{ translateY: Animated.multiply(streakSparkleFloat, 0.4) }],
+                },
+              ]}
+            >
+              <Ionicons name="star" size={8} color="#FFE7A1" />
+            </Animated.View>
+            <Animated.View
+              style={[
+                styles.streakSparkleGold,
+                {
+                  opacity: streakSparklePulse,
+                  transform: [{ translateY: Animated.multiply(streakSparkleFloat, -0.3) }],
+                },
+              ]}
+            >
+              <Ionicons name="sparkles" size={10} color="#E2AF2F" />
+            </Animated.View>
+          </View>
           <View style={styles.streakCardHeader}>
             <View style={styles.streakFlame}>
-              <Ionicons name="flame" size={24} color={COLORS.white} />
+              <Ionicons name="sparkles" size={25} color={COLORS.white} />
+              <Ionicons name="star" size={7} color="#FFE58A" style={styles.streakFlameStar} />
             </View>
             <View style={styles.streakHeaderCopy}>
               <Text style={styles.streakLabel}>STREAKS</Text>
@@ -726,7 +1057,7 @@ export function DashboardScreen({
             <View style={styles.streakSummary}>
               <View style={styles.streakSummaryMetric}>
                 <View style={styles.streakCurrentIcon}>
-                  <Ionicons name="flame" size={13} color={COLORS.orange} />
+                  <Ionicons name="sparkles" size={13} color="#C88612" />
                 </View>
                 <View>
                   <Text style={styles.streakMetricValue}>{streakStats.current}d</Text>
@@ -840,6 +1171,12 @@ export function DashboardScreen({
             />
             <Text style={styles.chartLegendText}>Quizzes</Text>
           </View>
+          <View style={styles.chartLegendItem}>
+            <View
+              style={[styles.legendDot, { backgroundColor: COLORS.purple }]}
+            />
+            <Text style={styles.chartLegendText}>Tests</Text>
+          </View>
         </View>
       </DashboardSection>
 
@@ -847,30 +1184,46 @@ export function DashboardScreen({
         <View style={styles.accuracyCard}>
           <Text style={styles.dashboardCardLabel}>QUIZ ACCURACY</Text>
           <View style={styles.accuracyGauge}>
-            <View style={styles.accuracyGaugeRing}>
-              {quizAccuracySegments.map((segment) => (
-                <View
-                  key={segment.key}
-                  style={[
-                    styles.accuracyGaugeSegment,
-                    {
-                      backgroundColor: segment.color,
-                      transform: [
-                        { rotate: `${segment.angle}deg` },
-                        { translateY: -50 },
-                      ],
-                    },
-                  ]}
-                />
-              ))}
-            </View>
-            <View style={styles.accuracyGaugeInner}>
-              <Text style={styles.accuracyValue}>{accuracy}%</Text>
-              <Text style={styles.accuracyLabel}>CORRECT</Text>
+            <QuizAccuracyRing
+              accuracy={accuracy}
+              state={hasQuizAnswers ? (hasNoCorrectAnswers ? 'zero' : 'scored') : 'empty'}
+            />
+            <View
+              style={[
+                styles.accuracyGaugeInner,
+                !hasQuizAnswers && styles.accuracyGaugeInnerEmpty,
+              ]}
+            >
+              {hasQuizAnswers ? (
+                <Text style={styles.accuracyValue}>{accuracy}%</Text>
+              ) : (
+                <Ionicons name="sparkles" size={22} color={COLORS.purpleDark} />
+              )}
+              <Text
+                style={[
+                  styles.accuracyLabel,
+                  !hasQuizAnswers && styles.accuracyLabelReady,
+                  hasNoCorrectAnswers && styles.accuracyLabelEncouraging,
+                ]}
+              >
+                {hasQuizAnswers
+                  ? hasNoCorrectAnswers
+                    ? 'KEEP GOING'
+                    : 'CORRECT'
+                  : 'READY'}
+              </Text>
             </View>
           </View>
           <Text style={styles.accuracyDetail}>
-            {totalCorrect} right · {totalWrong} missed
+            {hasQuizAnswers ? (
+              <>
+                <Text style={styles.accuracyDetailCorrect}>{totalCorrect} correct</Text>
+                <Text> · </Text>
+                <Text style={styles.accuracyDetailMissed}>{totalWrong} to revisit</Text>
+              </>
+            ) : (
+              <Text style={styles.accuracyDetailReady}>Take a quiz to begin</Text>
+            )}
           </Text>
         </View>
 
@@ -899,51 +1252,16 @@ export function DashboardScreen({
               value={learningWords}
             />
           </View>
-          <View style={styles.distributionBar}>
-            {words.length > 0 && (
-              <>
-                {masteredWords > 0 ? (
-                  <View
-                    style={[
-                      styles.distributionSegment,
-                      styles.distributionMasteredSegment,
-                      {
-                        flex: masteredWords,
-                        backgroundColor: getWordMasteryCategory(100).color,
-                      },
-                    ]}
-                  >
-                    <Ionicons
-                      name="sparkles"
-                      size={10}
-                      color={COLORS.white}
-                      style={styles.distributionSparkle}
-                    />
-                  </View>
-                ) : null}
-                <View
-                  style={{
-                    flex: strongWords,
-                    backgroundColor: getWordMasteryCategory(80).color,
-                  }}
-                />
-                <View
-                  style={{
-                    flex: buildingWords,
-                    backgroundColor: getWordMasteryCategory(40).color,
-                  }}
-                />
-                <View
-                  style={{
-                    flex: learningWords,
-                    backgroundColor: getWordMasteryCategory(0).color,
-                  }}
-                />
-              </>
-            )}
-          </View>
+          <WordLevelDistributionBar
+            buildingWords={buildingWords}
+            learningWords={learningWords}
+            proficientWords={masteredWords}
+            strongWords={strongWords}
+          />
         </View>
       </View>
+
+      {wordMasterySection}
 
       <DashboardSection
         title="RETRIEVAL PROFILE"
@@ -985,24 +1303,57 @@ export function DashboardScreen({
             </View>
           </>
         )}
-        <View style={styles.retrievalProgression}>
-          <Text style={styles.retrievalProgressionTitle}>HOW WORDWIZ BUILDS RETRIEVAL</Text>
-          {[
-            'See the word and meaning',
-            'Choose the definition',
-            'Choose the word from its meaning',
-            'Use context and distinguish close meanings',
-            'Type the word from its definition',
-            'Recall it again after a longer delay',
-          ].map((step, index) => (
-            <View key={step} style={styles.retrievalProgressionStep}>
-              <View style={styles.retrievalProgressionNumber}>
-                <Text style={styles.retrievalProgressionNumberText}>{index + 1}</Text>
-              </View>
-              <Text style={styles.retrievalProgressionText}>{step}</Text>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="How WordWiz builds retrieval"
+          accessibilityHint={
+            isRetrievalProgressionExpanded
+              ? 'Hides the six-step retrieval path.'
+              : 'Shows the six-step retrieval path.'
+          }
+          accessibilityState={{ expanded: isRetrievalProgressionExpanded }}
+          onPress={() => setIsRetrievalProgressionExpanded((current) => !current)}
+          style={({ pressed }) => [
+            styles.retrievalProgression,
+            pressed && styles.pressed,
+          ]}
+        >
+          <View style={styles.retrievalProgressionHeader}>
+            <View style={styles.retrievalProgressionHeaderCopy}>
+              <Text style={styles.retrievalProgressionTitle}>
+                HOW WORDWIZ BUILDS RETRIEVAL
+              </Text>
+              <Text style={styles.retrievalProgressionSummary}>
+                6 steps from recognition to recall
+              </Text>
             </View>
-          ))}
-        </View>
+            <View style={styles.retrievalProgressionChevron}>
+              <Ionicons
+                name={
+                  isRetrievalProgressionExpanded
+                    ? 'chevron-up'
+                    : 'chevron-down'
+                }
+                size={17}
+                color={COLORS.purpleDark}
+              />
+            </View>
+          </View>
+          {isRetrievalProgressionExpanded ? (
+            <View style={styles.retrievalProgressionSteps}>
+              {RETRIEVAL_PROGRESSION_STEPS.map((step, index) => (
+                <View key={step} style={styles.retrievalProgressionStep}>
+                  <View style={styles.retrievalProgressionNumber}>
+                    <Text style={styles.retrievalProgressionNumberText}>
+                      {index + 1}
+                    </Text>
+                  </View>
+                  <Text style={styles.retrievalProgressionText}>{step}</Text>
+                </View>
+              ))}
+            </View>
+          ) : null}
+        </Pressable>
       </DashboardSection>
 
       <DashboardSection
@@ -1120,155 +1471,6 @@ export function DashboardScreen({
             items={recallPace}
             view={recallPaceView}
           />
-        )}
-      </DashboardSection>
-
-      <DashboardSection title="WORD MASTERY" badge={`${words.length} words`}>
-        {mastery.length === 0 ? (
-          <Text style={styles.dashboardEmptyText}>
-            Add your first word to start measuring mastery.
-          </Text>
-        ) : (
-          <>
-            {masteryExpanded ? (
-              <Text style={styles.expandedListHint}>
-                Double-tap any word to show fewer
-              </Text>
-            ) : null}
-            {masteryPreview.map((item) => {
-              const wordCategory = item.category;
-              const isMasterWord = wordCategory.id === 'master';
-
-              return (
-                <Pressable
-                  key={item.word.id}
-                  accessibilityRole={masteryExpanded ? 'button' : undefined}
-                  accessibilityHint={
-                    masteryExpanded
-                      ? 'Double-tap twice quickly to collapse the word list'
-                      : undefined
-                  }
-                  disabled={!masteryExpanded}
-                  onPress={collapseMasteryListOnDoubleTap}
-                  style={[
-                    styles.masteryRow,
-                    isMasterWord && styles.masteryRowComplete,
-                  ]}
-                >
-                  <View style={styles.masteryRowTop}>
-                    <View style={styles.masteryWordCopy}>
-                      <Text style={styles.masteryWord}>{item.word.term}</Text>
-                      <Text
-                        style={[
-                          styles.masteryWordLevel,
-                          { color: wordCategory.color },
-                        ]}
-                      >
-                        {getMasteryLevel(item.score).shortTitle}
-                      </Text>
-                    </View>
-                    <View style={styles.masteryPercentRow}>
-                      {isMasterWord ? (
-                        <Animated.View
-                          style={[
-                            styles.masteryCompleteSparkle,
-                            {
-                              transform: [{ scale: masterSparkleScale }],
-                            },
-                          ]}
-                        >
-                          <Ionicons
-                            name="sparkles"
-                            size={15}
-                            color={wordCategory.color}
-                          />
-                        </Animated.View>
-                      ) : null}
-                      <Text
-                        style={[
-                          styles.masteryPercent,
-                          {
-                            color: wordCategory.color,
-                          },
-                        ]}
-                      >
-                        {item.score}%
-                      </Text>
-                    </View>
-                  </View>
-                  <View
-                    style={[
-                      styles.masteryTrack,
-                      isMasterWord && { backgroundColor: wordCategory.pale },
-                    ]}
-                  >
-                    <ProgressFill
-                      color={wordCategory.color}
-                      progress={Math.max(item.score, 3)}
-                      radius={5}
-                      style={{ width: `${Math.max(item.score, 3)}%` }}
-                    />
-                  </View>
-                </Pressable>
-              );
-            })}
-            {masteryExpanded && masteryPageCount > 1 ? (
-              <CompactPagination
-                page={currentMasteryPage}
-                pageCount={masteryPageCount}
-                pageSize={EXPANDED_LIST_PAGE_SIZE}
-                total={mastery.length}
-                itemLabel="word mastery rows"
-                onPrevious={() => setMasteryPage(Math.max(0, currentMasteryPage - 1))}
-                onNext={() =>
-                  setMasteryPage(
-                    Math.min(masteryPageCount - 1, currentMasteryPage + 1),
-                  )
-                }
-              />
-            ) : null}
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={
-                masteryExpanded
-                  ? 'Show fewer word mastery rows'
-                  : 'Show all word mastery rows'
-              }
-              accessibilityState={{ expanded: masteryExpanded }}
-              onPress={() => {
-                if (masteryExpanded) {
-                  setMasteryExpanded(false);
-                  return;
-                }
-
-                setMasteryPage(0);
-                setMasteryExpanded(true);
-              }}
-              style={({ pressed }) => [
-                styles.masterySummary,
-                pressed && styles.pressed,
-              ]}
-            >
-              <View style={styles.masterySummaryCopy}>
-                <Text style={styles.masterySummaryTitle}>
-                  {masteryExpanded
-                    ? `Showing ${masteryStartIndex + 1}–${masteryRangeEnd} of ${mastery.length} words`
-                    : 'Showing top words'}
-                </Text>
-                <Text style={styles.masterySummaryText}>
-                  {masteredWords} proficient · {strongWords} strong · {buildingWords} building
-                </Text>
-              </View>
-              <Text style={styles.masterySummaryAction}>
-                {masteryExpanded ? 'Collapse' : 'View all'}
-              </Text>
-              <Ionicons
-                name={masteryExpanded ? 'chevron-up' : 'chevron-down'}
-                size={18}
-                color={COLORS.muted}
-              />
-            </Pressable>
-          </>
         )}
       </DashboardSection>
 
@@ -1504,6 +1706,73 @@ export function DashboardScreen({
         title="ACHIEVEMENTS"
         badge={`${unlockedAchievements}/${achievements.length} unlocked`}
       >
+        <View style={styles.achievementRewardBar}>
+          <View style={styles.achievementRewardItem}>
+            <View style={[styles.achievementRewardIcon, styles.achievementRewardIconPoints]}>
+              <Ionicons name="sparkles" size={15} color={COLORS.purpleDark} />
+            </View>
+            <View>
+              <Text style={styles.achievementRewardValue}>{achievementPoints}</Text>
+              <Text style={styles.achievementRewardLabel}>POINTS EARNED</Text>
+            </View>
+          </View>
+          <View style={styles.achievementRewardDivider} />
+          <View style={styles.achievementTokenVault}>
+            <Animated.View
+              pointerEvents="none"
+              style={[
+                styles.achievementTokenGlow,
+                {
+                  opacity: refreshTokenGlow,
+                  transform: [{ scale: refreshTokenPulse }],
+                },
+              ]}
+            />
+            {refreshTokens > 0 ? (
+              <Animated.View
+                pointerEvents="none"
+                style={[
+                  styles.achievementTokenMagicSparkle,
+                  {
+                    opacity: refreshTokenGlow,
+                    transform: [{ translateY: refreshTokenFloat }],
+                  },
+                ]}
+              >
+                <Ionicons name="sparkles" size={16} color="#D39A16" />
+              </Animated.View>
+            ) : null}
+            <Animated.View
+              style={[
+                styles.achievementTokenIcon,
+                {
+                  transform: [
+                    { translateY: refreshTokenFloat },
+                    { scale: refreshTokenPulse },
+                  ],
+                },
+              ]}
+            >
+              <Ionicons name="ticket" size={17} color={COLORS.white} />
+              {refreshTokens > 0 ? (
+                <View style={styles.achievementTokenSparkle}>
+                  <Ionicons name="sparkles" size={9} color="#FFF2A7" />
+                </View>
+              ) : null}
+            </Animated.View>
+            <View style={styles.achievementTokenCopy}>
+              <View style={styles.achievementTokenValueRow}>
+                <Text style={styles.achievementTokenValue}>{refreshTokens}</Text>
+                <Text style={styles.achievementTokenName}>
+                  {refreshTokens === 1 ? 'MAGIC PASS' : 'MAGIC PASSES'}
+                </Text>
+              </View>
+              <Text style={styles.achievementTokenLabel}>
+                {refreshTokens > 0 ? 'UNLOCK DAILY + OMEGA' : 'EARN FROM ACHIEVEMENTS'}
+              </Text>
+            </View>
+          </View>
+        </View>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={
@@ -1551,7 +1820,7 @@ export function DashboardScreen({
               {achievementsExpanded ? 'Hide achievement details' : 'View achievement details'}
             </Text>
             <Text style={styles.achievementSummaryText}>
-              {unlockedAchievements} unlocked · {achievements.length - unlockedAchievements} still waiting
+              {unlockedAchievements} unlocked · every milestone earns a refresh
             </Text>
           </View>
           <Ionicons
@@ -1609,12 +1878,22 @@ export function DashboardScreen({
                       { color: achievement.unlocked ? achievement.color : COLORS.muted },
                     ]}
                   >
-                    {achievement.unlocked ? 'DONE' : `${achievement.progress}/${achievement.target}`}
+                    {achievement.unlocked ? `+${achievement.points} PTS` : `${achievement.progress}/${achievement.target}`}
                   </Text>
                 </View>
                 <Text style={styles.achievementTitle}>{achievement.title}</Text>
                 <Text style={styles.achievementText}>
                   {achievement.description}
+                </Text>
+                <Text
+                  style={[
+                    styles.achievementRewardText,
+                    { color: achievement.unlocked ? achievement.color : COLORS.muted },
+                  ]}
+                >
+                  {achievement.unlocked
+                    ? `DONE · +${achievement.refreshTokens} REFRESH`
+                    : `REWARD · ${achievement.points} PTS + ${achievement.refreshTokens} REFRESH`}
                 </Text>
                 <View style={styles.achievementTrack}>
                   <ProgressFill
@@ -1898,21 +2177,32 @@ export function DashboardScreen({
         <View style={styles.questionMixCard}>
           <Pressable
             accessibilityRole="button"
+            accessibilityHint="Opens controls for the question types WordWiz uses in quizzes"
             accessibilityState={{ expanded: isQuestionMixExpanded }}
             onPress={() => setIsQuestionMixExpanded((expanded) => !expanded)}
             style={({ pressed }) => [styles.questionMixHeader, pressed && styles.pressed]}
           >
-            <View style={styles.questionMixHeaderCopy}>
-              <Text style={styles.quizPreferenceLabel}>QUESTION MIX</Text>
-              <Text style={styles.questionMixSummary}>
-                {enabledQuestionTypeCount} types on · More appears about twice as often
-              </Text>
+            <View style={styles.questionMixHeaderContent}>
+              <View style={styles.questionMixHeaderIcon}>
+                <Ionicons name="shuffle" size={18} color={COLORS.purpleDark} />
+              </View>
+              <View style={styles.questionMixHeaderCopy}>
+                <Text style={styles.quizPreferenceLabel}>QUESTION MIX</Text>
+                <Text style={styles.questionMixSummary}>
+                  {enabledQuestionTypeCount} types on · More appears about twice as often
+                </Text>
+              </View>
             </View>
-            <Ionicons
-              name={isQuestionMixExpanded ? 'chevron-up' : 'chevron-down'}
-              size={18}
-              color={COLORS.purpleDark}
-            />
+            <View style={styles.questionMixAction}>
+              <Text style={styles.questionMixActionText}>
+                {isQuestionMixExpanded ? 'DONE' : 'EDIT'}
+              </Text>
+              <Ionicons
+                name={isQuestionMixExpanded ? 'chevron-up' : 'chevron-down'}
+                size={15}
+                color={COLORS.purpleDark}
+              />
+            </View>
           </Pressable>
 
           {isQuestionMixExpanded ? (
@@ -2139,9 +2429,7 @@ export function DashboardScreen({
       >
         {omegaTestAttempts.length === 0 ? (
           <View style={styles.omegaStatsEmpty}>
-            <View style={styles.omegaStatsEmptyIcon}>
-              <Ionicons name="planet-outline" size={21} color={COLORS.purpleDark} />
-            </View>
+            <AnimatedOmegaStatsIcon />
             <View style={styles.omegaStatsEmptyCopy}>
               <Text style={styles.omegaStatsEmptyTitle}>Your full-word assessment lives here</Text>
               <Text style={styles.omegaStatsEmptyText}>
@@ -2152,6 +2440,7 @@ export function DashboardScreen({
         ) : (
           <>
             <View style={styles.omegaStatsSummaryRow}>
+              <AnimatedOmegaStatsIcon compact />
               <View style={styles.omegaStatsMetric}>
                 <Text style={styles.omegaStatsMetricValue}>{omegaTestBest}%</Text>
                 <Text style={styles.omegaStatsMetricLabel}>Best score</Text>
@@ -2179,7 +2468,7 @@ export function DashboardScreen({
                 return (
                   <View key={attempt.id} style={styles.omegaStatsHistoryRow}>
                     <View style={styles.omegaStatsHistoryIcon}>
-                      <Ionicons name="sparkles" size={15} color={COLORS.purpleDark} />
+                      <Ionicons name="shield-checkmark" size={15} color={COLORS.purpleDark} />
                     </View>
                     <View style={styles.omegaStatsHistoryCopy}>
                       <Text style={styles.omegaStatsHistoryTitle}>Omega Test · {dateLabel}</Text>
@@ -2351,6 +2640,123 @@ export function DashboardScreen({
 
 
 
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Open the WordWiz guide"
+        onPress={onOpenOnboardingGuide}
+        style={({ pressed }) => [styles.wordWizGuideCard, pressed && styles.pressed]}
+      >
+        <View style={styles.wordWizGuideIcon}>
+          <Ionicons name="compass-outline" size={21} color={COLORS.purpleDark} />
+        </View>
+        <View style={styles.wordWizGuideCopy}>
+          <Text style={styles.wordWizGuideLabel}>NEED A REFRESHER?</Text>
+          <Text style={styles.wordWizGuideTitle}>How WordWiz works</Text>
+          <Text style={styles.wordWizGuideText}>
+            Revisit the quick guide to saving, reviewing, and growing your words.
+          </Text>
+        </View>
+        <View style={styles.wordWizGuideArrow}>
+          <Ionicons name="arrow-forward" size={16} color={COLORS.purpleDark} />
+        </View>
+      </Pressable>
+
+      <View style={styles.subscriptionOverviewCard}>
+        <View style={styles.subscriptionOverviewHeader}>
+          <View style={styles.subscriptionOverviewIcon}>
+            <Ionicons
+              name={isSubscribed || isComplimentary ? 'sparkles' : 'card-outline'}
+              size={21}
+              color={isSubscribed || isComplimentary ? COLORS.purpleDark : COLORS.blue}
+            />
+          </View>
+          <View style={styles.subscriptionOverviewHeaderCopy}>
+            <Text style={styles.subscriptionOverviewLabel}>SUBSCRIPTION</Text>
+            <Text style={styles.subscriptionOverviewTitle}>Your WordWiz access</Text>
+          </View>
+          <View
+            style={[
+              styles.subscriptionStatusPill,
+              subscriptionStatus === 'ACTIVE' && styles.subscriptionStatusPillActive,
+              isComplimentary && styles.subscriptionStatusPillTrial,
+            ]}
+          >
+            <Text
+              style={[
+                styles.subscriptionStatusPillText,
+                subscriptionStatus === 'ACTIVE' && styles.subscriptionStatusPillTextActive,
+                isComplimentary && styles.subscriptionStatusPillTextTrial,
+              ]}
+            >
+              {subscriptionStatus}
+            </Text>
+          </View>
+        </View>
+        <View style={styles.subscriptionOverviewDetails}>
+          <View style={styles.subscriptionOverviewDetail}>
+            <Text style={styles.subscriptionOverviewDetailLabel}>CURRENT PLAN</Text>
+            <Text style={styles.subscriptionOverviewDetailValue}>{subscription.currentPlan}</Text>
+          </View>
+          <View style={styles.subscriptionOverviewDivider} />
+          <View style={styles.subscriptionOverviewDetail}>
+            <Text style={styles.subscriptionOverviewDetailLabel}>{subscriptionDateLabel}</Text>
+            <Text style={styles.subscriptionOverviewDetailValue}>{subscriptionDateValue}</Text>
+          </View>
+        </View>
+        {subscription.statusMessage ? (
+          <Text style={styles.subscriptionOverviewNote}>{subscription.statusMessage}</Text>
+        ) : null}
+        {isComplimentary ? (
+          <Text style={styles.subscriptionOverviewNote}>
+            {subscription.complimentaryDaysRemaining} {subscription.complimentaryDaysRemaining === 1 ? 'day' : 'days'} of full Plus access remain. No subscription is active yet.
+          </Text>
+        ) : subscription.accessSource === 'free' && subscription.monthlyWordsRemaining !== null ? (
+          <Text style={styles.subscriptionOverviewNote}>
+            {subscription.monthlyWordsRemaining} {subscription.monthlyWordsRemaining === 1 ? 'word' : 'words'} remaining this month. Flashcards for saved words stay available.
+          </Text>
+        ) : null}
+        <View style={styles.subscriptionOverviewActions}>
+          {isSubscribed ? (
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => void manageSubscription()}
+              style={({ pressed }) => [styles.subscriptionManageAction, pressed && styles.pressed]}
+            >
+              <Ionicons name="settings-outline" size={16} color={COLORS.purpleDark} />
+              <Text style={styles.subscriptionManageActionText}>MANAGE SUBSCRIPTION</Text>
+            </Pressable>
+          ) : (
+            <Pressable
+              accessibilityRole="button"
+              onPress={onOpenPlus}
+              style={({ pressed }) => [styles.subscriptionManageAction, pressed && styles.pressed]}
+            >
+              <Ionicons name="sparkles-outline" size={16} color={COLORS.purpleDark} />
+              <Text style={styles.subscriptionManageActionText}>
+                {isComplimentary ? 'VIEW PLANS' : 'UPGRADE TO PLUS'}
+              </Text>
+            </Pressable>
+          )}
+          <Pressable
+            accessibilityRole="button"
+            disabled={subscription.isRestoring}
+            onPress={() => void restoreSubscription()}
+            style={({ pressed }) => [
+              styles.subscriptionRestoreAction,
+              subscription.isRestoring && styles.practiceButtonDisabled,
+              pressed && styles.pressed,
+            ]}
+          >
+            {subscription.isRestoring ? (
+              <ActivityIndicator size="small" color={COLORS.blue} />
+            ) : (
+              <Ionicons name="refresh-outline" size={16} color={COLORS.blue} />
+            )}
+            <Text style={styles.subscriptionRestoreActionText}>RESTORE PURCHASES</Text>
+          </Pressable>
+        </View>
+      </View>
+
       <View style={styles.accountCard}>
         <View style={styles.accountAvatar}>
           <Text style={styles.accountAvatarText}>
@@ -2362,43 +2768,26 @@ export function DashboardScreen({
           <Text style={styles.accountName}>
             {currentUser?.name || 'WordWiz learner'}
           </Text>
-          <Text style={styles.accountEmail}>
+          <Text
+            style={styles.accountEmail}
+            numberOfLines={1}
+            ellipsizeMode="middle"
+            adjustsFontSizeToFit
+            minimumFontScale={0.78}
+          >
             {currentUser?.email || 'Local prototype account'}
           </Text>
         </View>
         <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Log out of WordWiz"
           onPress={onLogout}
-          style={({ pressed }) => [
-            styles.logoutButton,
-            pressed && styles.pressed,
-          ]}
+          style={({ pressed }) => [styles.logoutButton, pressed && styles.pressed]}
         >
           <Ionicons name="log-out-outline" size={18} color={COLORS.red} />
           <Text style={styles.logoutButtonText}>Log out</Text>
         </Pressable>
       </View>
-
-      {subscription.hasPlusAccess ? (
-        <View style={styles.subscriptionStatusCard}>
-          <View style={styles.subscriptionStatusIcon}>
-            <Ionicons name="sparkles" size={21} color={COLORS.purpleDark} />
-          </View>
-          <View style={styles.subscriptionStatusCopy}>
-            <Text style={styles.subscriptionStatusLabel}>WORDWIZ PLUS</Text>
-            <Text style={styles.subscriptionStatusTitle}>Plus is active</Text>
-            <Text style={styles.subscriptionStatusText}>
-              Manage renewal or billing through Apple.
-            </Text>
-          </View>
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => void subscription.manageSubscription()}
-            style={({ pressed }) => [styles.subscriptionManageButton, pressed && styles.pressed]}
-          >
-            <Text style={styles.subscriptionManageButtonText}>Manage</Text>
-          </Pressable>
-        </View>
-      ) : null}
 
       <View style={styles.deleteAccountCard}>
         <View style={styles.deleteAccountIcon}>
@@ -2444,6 +2833,38 @@ export function DashboardScreen({
         repeated reviews. It is not a scientific assessment.
       </Text>
     </ScrollView>
+  );
+}
+
+function StreakHistoryStat({
+  current,
+  recent,
+}: {
+  current: number;
+  recent: number[];
+}) {
+  return (
+    <View style={styles.streakHistoryStat}>
+      <View style={styles.streakHistoryStatTopRow}>
+        <View style={styles.streakHistoryStatIcon}>
+          <Ionicons name="flame" size={20} color={COLORS.teal} />
+        </View>
+        <Text style={styles.streakHistoryStatCurrent}>{current}d</Text>
+      </View>
+      <Text style={styles.streakHistoryStatLabel}>CURRENT STREAK</Text>
+      {recent.length > 0 ? (
+        <View style={styles.streakHistoryStatRecentRow}>
+          <Text style={styles.streakHistoryStatRecentLabel}>RECENT</Text>
+          {recent.map((length, index) => (
+            <View key={`${length}-${index}`} style={styles.streakHistoryStatChip}>
+              <Text style={styles.streakHistoryStatChipText}>{length}d</Text>
+            </View>
+          ))}
+        </View>
+      ) : (
+        <Text style={styles.streakHistoryStatEmpty}>Your streak story starts here</Text>
+      )}
+    </View>
   );
 }
 
@@ -2709,114 +3130,219 @@ function ReminderTimeStepper({
   );
 }
 
-function DailyBarGloss() {
-  const translateY = useRef(new Animated.Value(-8)).current;
-  const opacity = useRef(new Animated.Value(0.15)).current;
+function AnimatedOmegaStatsIcon({ compact = false }: { compact?: boolean }) {
+  const orbit = useRef(new Animated.Value(0)).current;
+  const pulse = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
-    const animation = Animated.loop(
-      Animated.sequence([
-        Animated.parallel([
-          Animated.timing(translateY, {
-            toValue: 82,
-            duration: 1250,
-            useNativeDriver: true,
-          }),
-          Animated.timing(opacity, {
-            toValue: 0.72,
-            duration: 430,
-            useNativeDriver: true,
-          }),
-        ]),
-        Animated.timing(opacity, {
-          toValue: 0.12,
-          duration: 450,
+    const animation = Animated.parallel([
+      Animated.loop(
+        Animated.timing(orbit, {
+          toValue: 1,
+          duration: 6000,
+          easing: Easing.linear,
           useNativeDriver: true,
         }),
-        Animated.parallel([
-          Animated.timing(translateY, {
-            toValue: -8,
-            duration: 0,
+      ),
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulse, {
+            toValue: 1.07,
+            duration: 1050,
+            easing: Easing.inOut(Easing.quad),
             useNativeDriver: true,
           }),
-          Animated.timing(opacity, {
-            toValue: 0.12,
-            duration: 0,
+          Animated.timing(pulse, {
+            toValue: 1,
+            duration: 1050,
+            easing: Easing.inOut(Easing.quad),
             useNativeDriver: true,
           }),
         ]),
-        Animated.delay(650),
-      ]),
-    );
+      ),
+    ]);
     animation.start();
     return () => animation.stop();
-  }, [opacity, translateY]);
+  }, [orbit, pulse]);
+
+  const rotate = orbit.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '360deg'],
+  });
 
   return (
-    <Animated.View
+    <View
       accessible={false}
       pointerEvents="none"
-      style={[
-        styles.barGlossSweep,
-        { opacity, transform: [{ translateY }] },
-      ]}
+      style={[styles.omegaStatsOrb, compact && styles.omegaStatsOrbCompact]}
     >
-      <LinearGradient
-        colors={[
-          'rgba(255,186,48,0)',
-          'rgba(255,214,104,0.98)',
-          'rgba(255,186,48,0)',
-        ]}
-        end={{ x: 1, y: 0.5 }}
-        start={{ x: 0, y: 0.5 }}
-        style={styles.barGlossGradient}
-      />
-    </Animated.View>
+      <View style={styles.omegaStatsOrbHalo} />
+      <Animated.View
+        style={[styles.omegaStatsOrbOrbit, { transform: [{ rotate }] }]}
+      >
+        <Ionicons name="ellipse-outline" size={45} color="#C7B3FF" />
+        <View style={styles.omegaStatsOrbSatellite}>
+          <Ionicons name="sparkles" size={10} color="#FFD36B" />
+        </View>
+      </Animated.View>
+      <Animated.View
+        style={[styles.omegaStatsOrbCore, { transform: [{ scale: pulse }] }]}
+      >
+        <Ionicons name="shield-checkmark" size={compact ? 15 : 18} color={COLORS.white} />
+      </Animated.View>
+    </View>
   );
 }
 
-function DailyBarSparkle({ delay = 0 }: { delay?: number }) {
-  const opacity = useRef(new Animated.Value(0)).current;
-  const translateX = useRef(new Animated.Value(0)).current;
-  const translateY = useRef(new Animated.Value(0)).current;
-  const scale = useRef(new Animated.Value(0.5)).current;
+function createGoldSparklePath(centerX: number, centerY: number, radius: number) {
+  const innerRadius = radius * 0.32;
+  const path = Skia.Path.Make();
 
-  useEffect(() => {
-    const animation = Animated.loop(
-      Animated.sequence([
-        Animated.delay(delay),
-        Animated.parallel([
-          Animated.timing(opacity, { toValue: 1, duration: 170, useNativeDriver: true }),
-          Animated.timing(scale, { toValue: 1.05, duration: 170, useNativeDriver: true }),
-          Animated.timing(translateX, { toValue: 5, duration: 170, useNativeDriver: true }),
-          Animated.timing(translateY, { toValue: -4, duration: 170, useNativeDriver: true }),
-        ]),
-        Animated.parallel([
-          Animated.timing(opacity, { toValue: 0, duration: 570, useNativeDriver: true }),
-          Animated.timing(scale, { toValue: 0.6, duration: 570, useNativeDriver: true }),
-          Animated.timing(translateX, { toValue: 12, duration: 570, useNativeDriver: true }),
-          Animated.timing(translateY, { toValue: -16, duration: 570, useNativeDriver: true }),
-        ]),
-      ]),
-    );
-    animation.start();
-    return () => animation.stop();
-  }, [delay, opacity, scale, translateX, translateY]);
+  path.moveTo(centerX, centerY - radius);
+  path.lineTo(centerX + innerRadius, centerY - innerRadius);
+  path.lineTo(centerX + radius, centerY);
+  path.lineTo(centerX + innerRadius, centerY + innerRadius);
+  path.lineTo(centerX, centerY + radius);
+  path.lineTo(centerX - innerRadius, centerY + innerRadius);
+  path.lineTo(centerX - radius, centerY);
+  path.lineTo(centerX - innerRadius, centerY - innerRadius);
+  path.close();
+
+  return path;
+}
+
+function WordLevelDistributionBar({
+  proficientWords,
+  strongWords,
+  buildingWords,
+  learningWords,
+}: {
+  proficientWords: number;
+  strongWords: number;
+  buildingWords: number;
+  learningWords: number;
+}) {
+  const [barWidth, setBarWidth] = useState(0);
+  const total = proficientWords + strongWords + buildingWords + learningWords;
+  const proficientFraction = total > 0 ? proficientWords / total : 0;
+  const hasProficientWords = proficientWords > 0 && barWidth > 0;
+  const sparkleX = Math.max(7, Math.min(barWidth - 7, barWidth * proficientFraction));
+  const mainSparkle = useMemo(
+    () => createGoldSparklePath(sparkleX, 6, 4.2),
+    [sparkleX],
+  );
+  const smallSparkle = useMemo(
+    () => createGoldSparklePath(Math.min(barWidth - 3, sparkleX + 5.2), 2.5, 1.5),
+    [barWidth, sparkleX],
+  );
+  const onLayout = useCallback((event: LayoutChangeEvent) => {
+    const nextWidth = event.nativeEvent.layout.width;
+    setBarWidth((current) => (current === nextWidth ? current : nextWidth));
+  }, []);
 
   return (
-    <Animated.View
-      accessible={false}
-      pointerEvents="none"
-      style={[
-        styles.dailyBarSparkle,
-        {
-          opacity,
-          transform: [{ translateX }, { translateY }, { scale }],
-        },
-      ]}
-    >
-      <Ionicons name="sparkles" size={9} color="#FFF0AD" />
-    </Animated.View>
+    <View onLayout={onLayout} style={styles.distributionBar}>
+      {total > 0 ? (
+        <>
+          {proficientWords > 0 ? (
+            <View
+              style={[
+                styles.distributionSegment,
+                styles.distributionMasteredSegment,
+                {
+                  flex: proficientWords,
+                  backgroundColor: getWordMasteryCategory(100).color,
+                },
+              ]}
+            />
+          ) : null}
+          <View style={{ flex: strongWords, backgroundColor: getWordMasteryCategory(80).color }} />
+          <View style={{ flex: buildingWords, backgroundColor: getWordMasteryCategory(40).color }} />
+          <View style={{ flex: learningWords, backgroundColor: getWordMasteryCategory(0).color }} />
+        </>
+      ) : null}
+      {hasProficientWords ? (
+        <SkiaCanvas pointerEvents="none" style={styles.distributionSparkleCanvas}>
+          <SkiaCircle cx={sparkleX} cy={6} color="#9B7424" opacity={0.6} r={5.5} />
+          <SkiaPath color="#FFD66E" path={mainSparkle} />
+          <SkiaPath color="#FFF4C5" path={smallSparkle} />
+          <SkiaCircle cx={Math.max(2, sparkleX - 5.8)} cy={8.6} color="#FFE9A4" r={1.05} />
+        </SkiaCanvas>
+      ) : null}
+    </View>
+  );
+}
+
+function QuizAccuracyRing({
+  accuracy,
+  state,
+}: {
+  accuracy: number;
+  state: 'empty' | 'zero' | 'scored';
+}) {
+  const safeProgress = Math.max(0, Math.min(100, accuracy)) / 100;
+  const ringPath = useMemo(() => {
+    const path = Skia.Path.Make();
+    path.addCircle(
+      QUIZ_ACCURACY_RING_SIZE / 2,
+      QUIZ_ACCURACY_RING_SIZE / 2,
+      QUIZ_ACCURACY_RING_RADIUS,
+    );
+    return path;
+  }, []);
+  const glowOpacity = safeProgress >= 75 ? 0.2 : safeProgress >= 50 ? 0.11 : 0;
+  const trackColor = state === 'empty'
+    ? '#DED8F3'
+    : state === 'zero'
+      ? '#F4B9CF'
+      : '#F06E99';
+  const endpointAngle = -Math.PI / 2 + safeProgress * Math.PI * 2;
+  const endpointX = QUIZ_ACCURACY_RING_SIZE / 2 + Math.cos(endpointAngle) * QUIZ_ACCURACY_RING_RADIUS;
+  const endpointY = QUIZ_ACCURACY_RING_SIZE / 2 + Math.sin(endpointAngle) * QUIZ_ACCURACY_RING_RADIUS;
+
+  return (
+    <SkiaCanvas pointerEvents="none" style={styles.accuracyGaugeRing}>
+      <SkiaGroup
+        origin={vec(QUIZ_ACCURACY_RING_SIZE / 2, QUIZ_ACCURACY_RING_SIZE / 2)}
+        transform={[{ rotate: -Math.PI / 2 }]}
+      >
+        <SkiaPath
+          path={ringPath}
+          color={trackColor}
+          end={1}
+          start={0}
+          style="stroke"
+          strokeCap="butt"
+          strokeWidth={QUIZ_ACCURACY_RING_STROKE}
+        />
+        {glowOpacity > 0 ? (
+          <SkiaPath
+            path={ringPath}
+            color="#28C99A"
+            end={safeProgress}
+            opacity={glowOpacity}
+            start={0}
+            style="stroke"
+            strokeCap="butt"
+            strokeWidth={QUIZ_ACCURACY_RING_STROKE + 3}
+          />
+        ) : null}
+        {safeProgress > 0 ? (
+          <SkiaPath
+            path={ringPath}
+            color="#28C99A"
+            end={safeProgress}
+            start={0}
+            style="stroke"
+            strokeCap="butt"
+            strokeWidth={QUIZ_ACCURACY_RING_STROKE}
+          />
+        ) : null}
+      </SkiaGroup>
+      {safeProgress >= 100 ? (
+        <SkiaCircle cx={endpointX} cy={endpointY} color="#FFE9A7" r={4.4} />
+      ) : null}
+    </SkiaCanvas>
   );
 }
 
@@ -2830,6 +3356,7 @@ function DailyActivityBar({
     label: string;
     activityCount: number;
     quizCount: number;
+    testCount: number;
     studySeconds: number;
     dailyProgress: number;
   };
@@ -2846,15 +3373,19 @@ function DailyActivityBar({
         ),
       )
     : 0;
+  const testShare = day.testCount
+    ? Math.max(
+        22,
+        Math.min(
+          58,
+          (day.testCount / Math.max(1, day.activityCount)) * 100,
+        ),
+      )
+    : 0;
   const fillColor = isToday ? COLORS.green : COLORS.blue;
-  const hasGlow = isActive && day.dailyProgress >= 50;
-  const isGlossy = isActive && day.dailyProgress >= 75;
-  const hasSparkles = isActive && day.dailyProgress >= 90;
-  const polishColors = [
-    tintHex(fillColor, COLORS.white, 0.2),
-    fillColor,
-    tintHex(fillColor, COLORS.ink, 0.1),
-  ] as const;
+  const fillPercent = Math.max(isActive ? 12 : 18, day.dailyProgress);
+  const quizPercent = fillPercent * (quizShare / 100);
+  const testPercent = fillPercent * (testShare / 100);
 
   return (
     <View style={[styles.barColumn, compact && styles.barColumnCompact]}>
@@ -2865,46 +3396,42 @@ function DailyActivityBar({
         <View
           style={[
             styles.barFill,
-            hasGlow && styles.barFillGlow,
-            {
-              height: `${Math.max(isActive ? 12 : 18, day.dailyProgress)}%`,
-              backgroundColor: fillColor,
-              shadowColor: fillColor,
-            },
+            { height: `${fillPercent}%`, backgroundColor: fillColor },
           ]}
-        >
-          {quizShare ? (
-            <View
-              style={[
-                styles.barQuizSegment,
-                { height: `${quizShare}%` },
-              ]}
-            />
-          ) : null}
-          {isGlossy ? (
-            <LinearGradient
-              colors={polishColors}
-              end={{ x: 0, y: 1 }}
-              pointerEvents="none"
-              start={{ x: 0, y: 0 }}
-              style={styles.barGloss}
-            >
-              <DailyBarGloss />
-            </LinearGradient>
-          ) : null}
-          {hasSparkles ? (
-            <View pointerEvents="none" style={styles.dailyBarSparkleLayer}>
-              <DailyBarSparkle />
-              {day.dailyProgress >= 98 ? <DailyBarSparkle delay={360} /> : null}
-            </View>
-          ) : null}
-        </View>
+        />
+        {quizShare ? (
+          <View
+            pointerEvents="none"
+            style={[
+              styles.barQuizSegment,
+              styles.barActivitySegmentOverlay,
+              testPercent === 0 && styles.barQuizSegmentRounded,
+              { height: `${quizPercent}%`, bottom: `${testPercent}%` },
+            ]}
+          />
+        ) : null}
+        {testShare ? (
+          <View
+            pointerEvents="none"
+            style={[
+              styles.barTestSegment,
+              styles.barActivitySegmentOverlay,
+              { height: `${testPercent}%` },
+            ]}
+          />
+        ) : null}
       </View>
       <Text style={[styles.barLabel, isToday && styles.barLabelToday]}>
         {compact ? new Date(`${day.key}T12:00:00`).getDate() : day.label}
       </Text>
       <Text style={styles.practiceBarQuizText}>
-        {isActive ? `${day.quizCount}q` : ''}
+        {isActive
+          ? day.testCount > 0
+            ? `${day.testCount}t`
+            : day.quizCount > 0
+              ? `${day.quizCount}q`
+              : ''
+          : ''}
       </Text>
     </View>
   );
@@ -3007,25 +3534,6 @@ function getQuizTrendTone(percent: number) {
   };
 }
 
-function buildQuizAccuracySegments(correct: number, missed: number) {
-  const segmentCount = 100;
-  const total = correct + missed;
-  const correctSegments = total
-    ? Math.round((correct / total) * segmentCount)
-    : 0;
-
-  return Array.from({ length: segmentCount }, (_, index) => ({
-    key: `accuracy-${index}`,
-    angle: (index / segmentCount) * 360,
-    color:
-      total === 0
-        ? '#EDE8F7'
-        : index < correctSegments
-          ? COLORS.teal
-          : COLORS.red,
-  }));
-}
-
 function formatReminderHour(hour: number) {
   const period = hour >= 12 ? 'PM' : 'AM';
   const displayHour = hour % 12 || 12;
@@ -3046,4 +3554,15 @@ function formatLastReviewed(value: string | undefined) {
     month: 'short',
     day: 'numeric',
   })}`;
+}
+
+function formatSubscriptionDate(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Date unavailable';
+
+  return date.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: date.getFullYear() === new Date().getFullYear() ? undefined : 'numeric',
+  });
 }

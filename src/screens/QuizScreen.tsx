@@ -1,16 +1,38 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, FlatList, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { useEffect, useMemo, useState } from 'react';
+import { Alert, FlatList, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { COLORS } from '../constants/theme';
 import type { AnalyticsData, LegalPage, QuizAnswer, QuizPreferences, QuizProgress, QuizQuestion, QuizSessionMode, ReminderSettings, ReviewRating, SortMode, TimeBasedLearningSettings, Word } from '../types';
 import { styles } from '../styles';
-import { buildCategoryPracticeQuiz, buildOmegaTest, buildQuiz, calculateStreakStats, evaluateQuizAnswer, formatReminderTime, formatStudyTime, formatWordFlaggedDate, getCategoryPracticeQuizTarget, getDayKey, getMistakeReviewWordIds, getNewStudyWords, getOmegaTestStatus, getQuizRecallPaceSignal, getRecentDays, getStreakMessage, getStreakWeek, getStudySets, getTimeBasedLearningLimitSeconds, getTimedLearningBonusXp, getTypedRecallHint, getWordMastery, getWordMasteryCategoryForWord, NEW_STUDY_GROUP, normalizeTimeBasedLearningSettings, shuffle, TIMED_LEARNING_SECONDS, WORD_MASTERY_CATEGORIES, type WordMasteryCategoryId } from '../utils';
+import { buildCategoryPracticeQuiz, buildOmegaTest, buildQuiz, calculateStreakStats, evaluateQuizAnswer, formatReminderTime, formatStudyTime, formatWordFlaggedDate, getDayKey, getMistakeReviewWordIds, getNewStudyWords, getOmegaTestStatus, getQuizRecallPaceSignal, getRecentDays, getStreakMessage, getStreakWeek, getStudySets, getTimeBasedLearningLimitSeconds, getTimedLearningBonusXp, getTypedRecallHint, getWordMastery, getWordMasteryCategoryForWord, NEW_STUDY_GROUP, normalizeTimeBasedLearningSettings, shuffle, TIMED_LEARNING_SECONDS, WORD_MASTERY_CATEGORIES, type WordMasteryCategoryId } from '../utils';
 import { DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, ProgressFill, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 import { reportError, trackEvent } from '../services';
 
 const REVEALED_TYPED_ANSWER = '__wordwiz-revealed-answer__';
 const TIMED_OUT_ANSWER = '__wordwiz-timed-out__';
-type QuizStudyGroupId = WordMasteryCategoryId | 'new' | 'flagged' | `set:${string}`;
+export type QuizStudyGroupId = WordMasteryCategoryId | 'new' | 'flagged' | `set:${string}`;
+
+export type PausedQuizSession = {
+  quiz: QuizQuestion[];
+  questionIndex: number;
+  selected: string | null;
+  typedResponse: string;
+  hintStep: number;
+  reviewRating: ReviewRating;
+  score: number;
+  answers: QuizAnswer[];
+  quizElapsedMs: number;
+  questionElapsedMs: number;
+  secondsRemaining: number;
+  isPracticeRound: boolean;
+  dailyRefreshActive: boolean;
+  omegaRefreshActive: boolean;
+  sessionMode: QuizSessionMode;
+  quickQuestionCount: 5 | 10 | 20;
+  challengeMistakes: number;
+  challengeCorrectStreak: number;
+  selectedCategory: QuizStudyGroupId;
+};
 
 type QuizStudyGroup = {
   id: QuizStudyGroupId;
@@ -48,15 +70,22 @@ const QUIZ_SESSION_OPTIONS: {
   description: string;
 }[] = [
   { id: 'standard', label: 'Standard', icon: 'sparkles-outline', description: 'Adaptive mix' },
-  { id: 'quick', label: 'Quick', icon: 'flash-outline', description: '5–20 questions' },
+  { id: 'quick', label: 'Quick', icon: 'flash-outline', description: '5–20 timed questions' },
   { id: 'challenge', label: 'Challenge', icon: 'flame-outline', description: 'No hints · 3 misses ends it' },
   { id: 'mistake-review', label: 'Mistake review', icon: 'refresh-outline', description: 'Missed and slow words' },
   { id: 'mastery-test', label: 'Mastery test', icon: 'ribbon-outline', description: 'Recall, no hints' },
-  { id: 'omega-test', label: 'Omega test', icon: 'planet-outline', description: 'Weekly full assessment' },
 ];
 
 function getQuizSessionLabel(sessionMode: QuizSessionMode) {
+  if (sessionMode === 'omega-test') return 'Omega Test';
   return QUIZ_SESSION_OPTIONS.find((option) => option.id === sessionMode)?.label ?? 'Standard';
+}
+
+function supportsQuestionCount(sessionMode: QuizSessionMode) {
+  return sessionMode === 'standard' ||
+    sessionMode === 'quick' ||
+    sessionMode === 'challenge' ||
+    sessionMode === 'mistake-review';
 }
 
 export function QuizScreen({
@@ -68,10 +97,15 @@ export function QuizScreen({
   timedLearningEnabled,
   timeBasedLearningSettings,
   quizPreferences,
+  refreshTokens,
+  onUseRefreshToken,
   onComplete,
-  onReviewCards,
   onToggleFlag,
   onOpenStudySetBuilder,
+  pausedSession,
+  onPauseSession,
+  onDiscardPausedSession,
+  onRegisterPauseHandler,
 }: {
   words: Word[];
   analytics: AnalyticsData;
@@ -81,15 +115,21 @@ export function QuizScreen({
   timedLearningEnabled: boolean;
   timeBasedLearningSettings: TimeBasedLearningSettings;
   quizPreferences: QuizPreferences;
+  refreshTokens: number;
+  onUseRefreshToken: () => boolean;
   onComplete: (
     score: number,
     total: number,
     durationSeconds: number,
     answers: QuizAnswer[],
+    options?: { isDailyScoreRetry?: boolean },
   ) => Promise<void>;
-  onReviewCards: () => void;
   onToggleFlag: (wordId: string) => void;
   onOpenStudySetBuilder: () => void;
+  pausedSession: PausedQuizSession | null;
+  onPauseSession: (session: PausedQuizSession) => void;
+  onDiscardPausedSession: () => void;
+  onRegisterPauseHandler: (handler: (() => void) | null) => void;
 }) {
   const [quiz, setQuiz] = useState<QuizQuestion[]>([]);
   const [questionIndex, setQuestionIndex] = useState(0);
@@ -106,14 +146,16 @@ export function QuizScreen({
   const [finishedBonusXp, setFinishedBonusXp] = useState(0);
   const [isQuizSetupExpanded, setIsQuizSetupExpanded] = useState(false);
   const [isPracticeRound, setIsPracticeRound] = useState(false);
+  const [dailyRefreshActive, setDailyRefreshActive] = useState(false);
+  const [omegaRefreshActive, setOmegaRefreshActive] = useState(false);
   const [sessionMode, setSessionMode] = useState<QuizSessionMode>('standard');
-  const [quickQuestionCount, setQuickQuestionCount] = useState<5 | 10 | 20>(5);
+  const [questionCount, setQuestionCount] = useState<5 | 10 | 20>(5);
   const [challengeMistakes, setChallengeMistakes] = useState(0);
   const [challengeCorrectStreak, setChallengeCorrectStreak] = useState(0);
   const [finishedTotal, setFinishedTotal] = useState<number | null>(null);
+  const [finishedWasDailyRetry, setFinishedWasDailyRetry] = useState(false);
   const [selectedCategory, setSelectedCategory] =
     useState<QuizStudyGroupId>(initialStudyGroup ?? 'all');
-  const omegaTestPulse = useRef(new Animated.Value(1)).current;
   const wordMastery = useMemo(
     () =>
       words.map((word) => ({
@@ -189,6 +231,8 @@ export function QuizScreen({
     () => getOmegaTestStatus(analytics),
     [analytics],
   );
+  const omegaTestAvailable = omegaTestStatus.available || omegaRefreshActive;
+  const sessionUsesQuestionCount = supportsQuestionCount(sessionMode);
   const activeQuizWords =
     sessionMode === 'omega-test'
       ? omegaTestWords
@@ -198,30 +242,6 @@ export function QuizScreen({
         ? mistakeReviewWords
       : filteredQuizWords;
 
-  useEffect(() => {
-    if (!omegaTestStatus.available || quiz.length > 0) {
-      omegaTestPulse.stopAnimation();
-      omegaTestPulse.setValue(1);
-      return;
-    }
-
-    const animation = Animated.loop(
-      Animated.sequence([
-        Animated.timing(omegaTestPulse, {
-          toValue: 1.025,
-          duration: 1100,
-          useNativeDriver: true,
-        }),
-        Animated.timing(omegaTestPulse, {
-          toValue: 1,
-          duration: 1100,
-          useNativeDriver: true,
-        }),
-      ]),
-    );
-    animation.start();
-    return () => animation.stop();
-  }, [omegaTestPulse, omegaTestStatus.available, quiz.length]);
   const studyGroups: QuizStudyGroup[] = [
     WORD_MASTERY_CATEGORIES[0],
     NEW_STUDY_GROUP,
@@ -241,31 +261,155 @@ export function QuizScreen({
       (category) => category.id === selectedCategory,
     ) ?? WORD_MASTERY_CATEGORIES[0];
   const categoryQuizQuestionCount =
-    sessionMode === 'quick'
-      ? quickQuestionCount
-      : sessionMode === 'omega-test'
-        ? activeQuizWords.length * 2
+    sessionMode === 'omega-test'
+      ? activeQuizWords.length * 2
       : sessionMode === 'mastery-test'
         ? Math.min(activeQuizWords.length, 10)
-        : selectedCategory === 'all'
-          ? Math.min(activeQuizWords.length, 10)
-          : getCategoryPracticeQuizTarget(activeQuizWords.length);
+        : questionCount;
   const canChangeCategory = quiz.length === 0 || finishedScore !== null;
   const activeQuestion = quiz[questionIndex];
   const normalizedTimeSettings = normalizeTimeBasedLearningSettings(
     timeBasedLearningSettings,
   );
-  const activeTimeLimitSeconds = activeQuestion
-    ? getTimeBasedLearningLimitSeconds(
-        activeQuestion.difficulty,
-        normalizedTimeSettings,
-      )
-    : TIMED_LEARNING_SECONDS;
+  const activeTimeLimitSeconds = sessionMode === 'quick'
+    ? TIMED_LEARNING_SECONDS
+    : activeQuestion
+      ? getTimeBasedLearningLimitSeconds(
+          activeQuestion.difficulty,
+          normalizedTimeSettings,
+        )
+      : TIMED_LEARNING_SECONDS;
   const timedQuestionActive = Boolean(
     activeQuestion &&
-      timedLearningEnabled &&
-      getWordMastery(activeQuestion.word, analytics) >= 80,
+      (sessionMode === 'quick' || (
+        timedLearningEnabled &&
+        getWordMastery(activeQuestion.word, analytics) >= 80
+      )),
   );
+
+  function saveQuizForLater() {
+    if (quiz.length === 0 || finishedScore !== null) return;
+
+    const now = Date.now();
+    onPauseSession({
+      quiz,
+      questionIndex,
+      selected,
+      typedResponse,
+      hintStep,
+      reviewRating,
+      score,
+      answers,
+      quizElapsedMs: Math.max(0, now - quizStartedAt),
+      questionElapsedMs: Math.max(0, now - questionStartedAt),
+      secondsRemaining,
+      isPracticeRound,
+      dailyRefreshActive,
+      omegaRefreshActive,
+      sessionMode,
+      quickQuestionCount: questionCount,
+      challengeMistakes,
+      challengeCorrectStreak,
+      selectedCategory,
+    });
+  }
+
+  function resetActiveQuiz() {
+    setQuiz([]);
+    setQuestionIndex(0);
+    setSelected(null);
+    setTypedResponse('');
+    setHintStep(0);
+    setReviewRating('correct');
+    setScore(0);
+    setAnswers([]);
+    setFinishedScore(null);
+    setFinishedTotal(null);
+    setFinishedBonusXp(0);
+    setIsPracticeRound(false);
+    setDailyRefreshActive(false);
+    setOmegaRefreshActive(false);
+    setChallengeMistakes(0);
+    setChallengeCorrectStreak(0);
+  }
+
+  function resumePausedQuiz() {
+    if (!pausedSession) return;
+
+    const now = Date.now();
+    setQuiz(pausedSession.quiz);
+    setQuestionIndex(pausedSession.questionIndex);
+    setSelected(pausedSession.selected);
+    setTypedResponse(pausedSession.typedResponse);
+    setHintStep(pausedSession.hintStep);
+    setReviewRating(pausedSession.reviewRating);
+    setScore(pausedSession.score);
+    setAnswers(pausedSession.answers);
+    setQuizStartedAt(now - pausedSession.quizElapsedMs);
+    setQuestionStartedAt(now - pausedSession.questionElapsedMs);
+    setSecondsRemaining(pausedSession.secondsRemaining);
+    setIsPracticeRound(pausedSession.isPracticeRound);
+    setDailyRefreshActive(pausedSession.dailyRefreshActive);
+    setOmegaRefreshActive(pausedSession.omegaRefreshActive);
+    setSessionMode(pausedSession.sessionMode);
+    setQuestionCount(pausedSession.quickQuestionCount);
+    setChallengeMistakes(pausedSession.challengeMistakes);
+    setChallengeCorrectStreak(pausedSession.challengeCorrectStreak);
+    setSelectedCategory(pausedSession.selectedCategory);
+    onDiscardPausedSession();
+  }
+
+  function confirmExitQuiz() {
+    Alert.alert(
+      'Leave this quiz?',
+      'Save your place and come back whenever you are ready, or end this attempt now.',
+      [
+        { text: 'Keep learning', style: 'cancel' },
+        {
+          text: 'Save & exit',
+          onPress: () => {
+            saveQuizForLater();
+            resetActiveQuiz();
+          },
+        },
+        {
+          text: 'End quiz',
+          style: 'destructive',
+          onPress: () => {
+            onDiscardPausedSession();
+            resetActiveQuiz();
+          },
+        },
+      ],
+    );
+  }
+
+  useEffect(() => {
+    onRegisterPauseHandler(saveQuizForLater);
+    return () => onRegisterPauseHandler(null);
+  }, [
+    answers,
+    challengeCorrectStreak,
+    challengeMistakes,
+    dailyRefreshActive,
+    finishedScore,
+    hintStep,
+    isPracticeRound,
+    onRegisterPauseHandler,
+    omegaRefreshActive,
+    questionIndex,
+    questionStartedAt,
+    questionCount,
+    quiz,
+    quizStartedAt,
+    reviewRating,
+    score,
+    secondsRemaining,
+    selected,
+    selectedCategory,
+    sessionMode,
+    typedResponse,
+  ]);
 
   useEffect(() => {
     if (initialStudyGroup === 'flagged' && canChangeCategory) {
@@ -421,53 +565,58 @@ export function QuizScreen({
     </View>
   );
 
-  function startQuiz() {
+  function startQuiz(
+    modeOverride: QuizSessionMode = sessionMode,
+    hasOmegaAccess = omegaTestAvailable,
+  ) {
+    const quizWords = modeOverride === 'omega-test'
+      ? omegaTestWords
+      : activeQuizWords;
+
     if (
       !quizPreferences.enabled ||
-      activeQuizWords.length === 0 ||
-      (sessionMode === 'omega-test' && !omegaTestStatus.available)
+      quizWords.length === 0 ||
+      (modeOverride === 'omega-test' && !hasOmegaAccess)
     ) {
       return;
     }
 
+    onDiscardPausedSession();
+
     const masteryByWordId = Object.fromEntries(
-      activeQuizWords.map((word) => [
+      quizWords.map((word) => [
         word.id,
         getWordMastery(word, analytics),
       ]),
     );
     const sessionOptions = {
       difficulty: quizPreferences.difficulty,
-      sessionMode,
+      sessionMode: modeOverride,
       questionTypePreferences: quizPreferences.questionTypes,
       questionLimit:
-        sessionMode === 'quick'
-          ? quickQuestionCount
-          : sessionMode === 'mistake-review'
-            ? Math.min(10, Math.max(activeQuizWords.length, activeQuizWords.length * 2))
-            : undefined,
+        supportsQuestionCount(modeOverride) ? questionCount : undefined,
     };
-    const sessionPriorityWordIds = sessionMode === 'mistake-review'
+    const sessionPriorityWordIds = modeOverride === 'mistake-review'
       ? [
           ...mistakeReviewWordIds.filter((wordId) =>
-            activeQuizWords.some((word) => word.id === wordId),
+            quizWords.some((word) => word.id === wordId),
           ),
           ...priorityWordIds,
         ]
       : priorityWordIds;
     const nextQuiz =
-      sessionMode === 'omega-test'
-        ? buildOmegaTest(activeQuizWords, analytics.quizHistory)
+      modeOverride === 'omega-test'
+        ? buildOmegaTest(quizWords, analytics.quizHistory)
         : selectedCategory === 'all'
         ? buildQuiz(
-            activeQuizWords,
+            quizWords,
             analytics.quizHistory,
             masteryByWordId,
             sessionPriorityWordIds,
             sessionOptions,
           )
         : buildCategoryPracticeQuiz(
-            activeQuizWords,
+            quizWords,
             analytics.quizHistory,
             masteryByWordId,
             sessionPriorityWordIds,
@@ -483,22 +632,29 @@ export function QuizScreen({
     setScore(0);
     setFinishedScore(null);
     setFinishedTotal(null);
+    setFinishedWasDailyRetry(
+      modeOverride === 'omega-test' ? false : dailyRefreshActive,
+    );
     setAnswers([]);
     setChallengeMistakes(0);
     setChallengeCorrectStreak(0);
     setQuizStartedAt(Date.now());
     setQuestionStartedAt(Date.now());
     setSecondsRemaining(
-      getTimeBasedLearningLimitSeconds(
-        nextQuiz[0]?.difficulty,
-        normalizedTimeSettings,
-      ),
+      modeOverride === 'quick'
+        ? TIMED_LEARNING_SECONDS
+        : getTimeBasedLearningLimitSeconds(
+            nextQuiz[0]?.difficulty,
+            normalizedTimeSettings,
+          ),
     );
     setFinishedBonusXp(0);
-    setIsPracticeRound(sessionMode === 'omega-test' || Boolean(progress));
+    setIsPracticeRound(
+      modeOverride === 'omega-test' || (Boolean(progress) && !dailyRefreshActive),
+    );
     trackEvent('quiz_started', {
       category: selectedCategory,
-      mode: sessionMode,
+      mode: modeOverride,
       difficulty: quizPreferences.difficulty,
       questions: nextQuiz.length,
     });
@@ -640,10 +796,16 @@ export function QuizScreen({
           0,
         ),
       );
+      onDiscardPausedSession();
       try {
-        await onComplete(finalScore, completedAnswers.length, durationSeconds, completedAnswers);
+        await onComplete(finalScore, completedAnswers.length, durationSeconds, completedAnswers, {
+          isDailyScoreRetry: dailyRefreshActive,
+        });
       } catch (error) {
         reportError(error, { area: 'complete_quiz' });
+      } finally {
+        if (dailyRefreshActive) setDailyRefreshActive(false);
+        if (sessionMode === 'omega-test') setOmegaRefreshActive(false);
       }
       return;
     }
@@ -654,10 +816,12 @@ export function QuizScreen({
     setReviewRating('correct');
     setQuestionStartedAt(Date.now());
     setSecondsRemaining(
-      getTimeBasedLearningLimitSeconds(
-        quiz[questionIndex + 1]?.difficulty,
-        normalizedTimeSettings,
-      ),
+      sessionMode === 'quick'
+        ? TIMED_LEARNING_SECONDS
+        : getTimeBasedLearningLimitSeconds(
+            quiz[questionIndex + 1]?.difficulty,
+            normalizedTimeSettings,
+          ),
     );
   }
 
@@ -694,7 +858,7 @@ export function QuizScreen({
           <Text style={styles.quizSetupTitle}>Choose quiz type</Text>
           <Text style={styles.quizSetupText}>
             {quizPreferences.enabled
-              ? `${getQuizSessionLabel(sessionMode)} · tap to change`
+              ? `${getQuizSessionLabel(sessionMode)}${sessionUsesQuestionCount ? ` · ${questionCount} questions` : ''} selected`
               : 'Quizzes paused · manage in Stats'}
           </Text>
         </View>
@@ -723,7 +887,9 @@ export function QuizScreen({
                   key={option.id}
                   accessibilityRole="button"
                   accessibilityState={{ selected: active }}
-                  onPress={() => setSessionMode(option.id)}
+                  onPress={() => {
+                    setSessionMode(option.id);
+                  }}
                   style={({ pressed }) => [
                     styles.quizSessionOption,
                     active && styles.quizSessionOptionActive,
@@ -738,24 +904,32 @@ export function QuizScreen({
             })}
           </ScrollView>
 
-          {sessionMode === 'quick' ? (
+          {sessionUsesQuestionCount ? (
             <View style={styles.quickLengthRow}>
-              <Text style={styles.quizSetupLabel}>QUICK PRACTICE</Text>
+              <Text style={styles.quizSetupLabel}>QUESTIONS IN THIS QUIZ</Text>
               <View style={styles.quickLengthOptions}>
                 {([5, 10, 20] as const).map((count) => (
                   <Pressable
                     key={count}
                     accessibilityRole="button"
-                    accessibilityState={{ selected: quickQuestionCount === count }}
-                    onPress={() => setQuickQuestionCount(count)}
-                    style={({ pressed }) => [styles.quickLengthButton, quickQuestionCount === count && styles.quickLengthButtonActive, pressed && styles.pressed]}
+                    accessibilityState={{ selected: questionCount === count }}
+                    onPress={() => {
+                      setQuestionCount(count);
+                    }}
+                    style={({ pressed }) => [styles.quickLengthButton, questionCount === count && styles.quickLengthButtonActive, pressed && styles.pressed]}
                   >
-                    <Text style={[styles.quickLengthText, quickQuestionCount === count && styles.quickLengthTextActive]}>{count}</Text>
+                    <Text style={[styles.quickLengthText, questionCount === count && styles.quickLengthTextActive]}>{count}</Text>
                   </Pressable>
                 ))}
               </View>
             </View>
           ) : null}
+          <View style={styles.quizSetupStartHint}>
+            <Ionicons name="play-circle-outline" size={15} color={COLORS.purpleDark} />
+            <Text style={styles.quizSetupStartHintText}>
+              Choosing a type only sets up your next quiz. Press Practice below when you’re ready.
+            </Text>
+          </View>
         </>
       ) : null}
         </>
@@ -764,12 +938,7 @@ export function QuizScreen({
   );
 
   const omegaTestCard = (
-    <Animated.View
-      style={[
-        styles.omegaTestCard,
-        { transform: [{ scale: omegaTestPulse }] },
-      ]}
-    >
+    <View style={styles.omegaTestCard}>
       <View style={styles.omegaTestIcon}>
         <Ionicons name="planet" size={25} color={COLORS.white} />
         <Ionicons
@@ -783,68 +952,202 @@ export function QuizScreen({
         <Text style={styles.omegaTestEyebrow}>WEEKLY OMEGA TEST</Text>
         <Text style={styles.omegaTestTitle}>Test every saved word</Text>
         <Text style={styles.omegaTestText}>
-          Two varied prompts per word: meaning, context, and direct recall.
+          {sessionMode === 'omega-test'
+            ? 'Full-library assessment selected. Two varied prompts per word, with no hints.'
+            : 'A full-library assessment with two varied prompts per word and no hints.'}
         </Text>
       </View>
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={
-          omegaTestStatus.available
-            ? 'Choose Omega Test'
-            : 'Omega Test is on cooldown'
+          omegaTestAvailable
+            ? 'Start the final boss Omega Test'
+            : refreshTokens > 0
+              ? 'Use one refresh token and start the final boss Omega Test'
+              : 'Omega Test is on cooldown'
         }
         accessibilityHint={
-          omegaTestStatus.available
+          omegaTestAvailable
             ? 'A full assessment of every saved word.'
-            : 'Omega Tests are available every seven days.'
+            : refreshTokens > 0
+              ? 'Achievement refresh tokens can unlock a test early.'
+              : 'Omega Tests are available every seven days.'
         }
         disabled={
           !quizPreferences.enabled ||
-          !omegaTestStatus.available ||
+          (!omegaTestAvailable && refreshTokens === 0) ||
           omegaTestWords.length === 0
         }
         onPress={() => {
+          let hasOmegaAccess = omegaTestAvailable;
+          if (!omegaTestAvailable) {
+            if (!onUseRefreshToken()) return;
+            hasOmegaAccess = true;
+            setOmegaRefreshActive(true);
+          }
+          setDailyRefreshActive(false);
           setSessionMode('omega-test');
           setIsQuizSetupExpanded(false);
+          startQuiz('omega-test', hasOmegaAccess);
         }}
         style={({ pressed }) => [
           styles.omegaTestButton,
           (!quizPreferences.enabled ||
-            !omegaTestStatus.available ||
+            (!omegaTestAvailable && refreshTokens === 0) ||
             omegaTestWords.length === 0) && styles.omegaTestButtonDisabled,
           pressed && styles.pressed,
         ]}
       >
         <Text style={styles.omegaTestButtonText}>
-          {omegaTestStatus.available
-            ? 'READY'
-            : formatOmegaCountdown(omegaTestStatus.remainingMs)}
+          {omegaTestAvailable
+            ? 'FACE FINAL BOSS'
+            : refreshTokens > 0
+              ? 'USE 1 TOKEN'
+              : formatOmegaCountdown(omegaTestStatus.remainingMs)}
         </Text>
         <Ionicons
-          name={omegaTestStatus.available ? 'arrow-forward' : 'time-outline'}
+          name={omegaTestAvailable ? 'arrow-forward' : refreshTokens > 0 ? 'ticket-outline' : 'time-outline'}
           size={14}
           color={COLORS.white}
         />
       </Pressable>
-    </Animated.View>
+    </View>
   );
 
-  if (progress && quiz.length === 0) {
+  const quizScopeControls = sessionMode === 'omega-test' ? (
+    <View style={styles.omegaTestScopeNote}>
+      <Ionicons name="planet-outline" size={17} color={COLORS.purpleDark} />
+      <Text style={styles.omegaTestScopeNoteText}>
+        Omega uses your full library, so category and deck filters do not apply.
+      </Text>
+    </View>
+  ) : (
+    <>
+      {categorySelector}
+      {studySetSelector}
+    </>
+  );
+
+  if (pausedSession && quiz.length === 0) {
+    const questionNumber = pausedSession.questionIndex + 1;
+    const totalQuestions = pausedSession.quiz.length;
+    const pausedLabel = pausedSession.sessionMode === 'omega-test'
+      ? 'Omega Test'
+      : `${getQuizSessionLabel(pausedSession.sessionMode)} quiz`;
+
+    return (
+      <ScrollView contentContainerStyle={styles.singleScreenContent}>
+        <ScreenHeader
+          eyebrow={pausedSession.sessionMode === 'omega-test' ? 'OMEGA TEST' : 'DAILY QUIZ'}
+          title="Your quiz is waiting"
+          subtitle="Your place is saved. Pick up exactly where you left off."
+        />
+        <View style={styles.quizPausedCard}>
+          <View pointerEvents="none" style={styles.quizPausedGlow} />
+          <View style={styles.quizPausedIcon}>
+            <Ionicons name="pause" size={29} color={COLORS.white} />
+          </View>
+          <Text style={styles.quizPausedTitle}>{pausedLabel} paused</Text>
+          <Text style={styles.quizPausedText}>
+            Your timer is paused too, so there is no rush.
+          </Text>
+          <View style={styles.quizPausedProgress}>
+            <Text style={styles.quizPausedProgressText}>
+              QUESTION {questionNumber} OF {totalQuestions} · {pausedSession.score} CORRECT
+            </Text>
+          </View>
+          <View style={styles.quizPausedActions}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Resume paused quiz"
+              onPress={resumePausedQuiz}
+              style={({ pressed }) => [
+                styles.primaryButton,
+                pressed && styles.primaryButtonPressed,
+              ]}
+            >
+              <Text style={styles.primaryButtonText}>RESUME QUIZ</Text>
+              <Ionicons name="play" size={18} color={COLORS.white} />
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="End paused quiz"
+              onPress={onDiscardPausedSession}
+              style={({ pressed }) => [
+                styles.quizPausedDiscardButton,
+                pressed && styles.pressed,
+              ]}
+            >
+              <Text style={styles.quizPausedDiscardText}>END THIS ATTEMPT</Text>
+            </Pressable>
+          </View>
+        </View>
+      </ScrollView>
+    );
+  }
+
+  if (progress && quiz.length === 0 && !dailyRefreshActive) {
     return (
       <ScrollView contentContainerStyle={styles.singleScreenContent}>
         <ScreenHeader
           eyebrow="DAILY QUIZ"
-          title="Today’s practice"
-          subtitle="A little review each day makes words stick."
+          title={dailyRefreshActive ? 'Improve today’s score' : 'Today’s practice'}
+          subtitle={
+            dailyRefreshActive
+              ? 'A fresh Daily Quiz is ready. Daily and regular quizzes add to your streak.'
+              : 'A little review each day makes words stick.'
+          }
         />
         <QuizComplete score={progress.score} total={progress.total} />
-        {categorySelector}
-        {studySetSelector}
-        {omegaTestCard}
+        <View style={styles.quizRefreshTokenCard}>
+          <View pointerEvents="none" style={styles.quizRefreshTokenGlow} />
+          {refreshTokens > 0 ? (
+            <View pointerEvents="none" style={styles.quizRefreshTokenMagicSparkle}>
+              <Ionicons name="sparkles" size={17} color="#D39A16" />
+            </View>
+          ) : null}
+          <View style={styles.quizRefreshTokenCopy}>
+            <View style={styles.quizRefreshTokenIcon}>
+              <Ionicons name="ticket" size={17} color={COLORS.white} />
+              {refreshTokens > 0 ? (
+                <View style={styles.quizRefreshTokenSparkle}>
+                  <Ionicons name="sparkles" size={9} color="#FFF2A7" />
+                </View>
+              ) : null}
+            </View>
+            <View style={styles.quizRefreshTokenTextWrap}>
+              <Text style={styles.quizRefreshTokenTitle}>Improve today’s score</Text>
+              <Text style={styles.quizRefreshTokenText}>
+                {refreshTokens > 0
+                  ? 'Use a token for one more Daily Quiz. Daily and regular quizzes add to your streak.'
+                  : 'Complete achievements to earn a refresh token.'}
+              </Text>
+            </View>
+          </View>
+          {refreshTokens > 0 ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Use one refresh token to retry today’s daily quiz score"
+              onPress={() => {
+                if (onUseRefreshToken()) {
+                  setDailyRefreshActive(true);
+                }
+              }}
+              style={({ pressed }) => [
+                styles.quizRefreshTokenButton,
+                pressed && styles.pressed,
+              ]}
+            >
+              <Text style={styles.quizRefreshTokenButtonText}>RETRY DAILY SCORE</Text>
+            </Pressable>
+          ) : null}
+        </View>
         {quizSetupControls}
+        {omegaTestCard}
+        {quizScopeControls}
         <Pressable
           disabled={!quizPreferences.enabled || activeQuizWords.length === 0}
-          onPress={startQuiz}
+          onPress={() => startQuiz()}
           style={({ pressed }) => [
             styles.quizPracticeButton,
             (!quizPreferences.enabled || activeQuizWords.length === 0) && styles.practiceButtonDisabled,
@@ -853,20 +1156,8 @@ export function QuizScreen({
         >
           <Ionicons name="refresh" size={18} color={COLORS.blue} />
           <Text style={styles.quizPracticeButtonText}>
-            PRACTICE ANOTHER QUIZ
+            PRACTICE {getQuizSessionLabel(sessionMode).toUpperCase()} QUIZ
           </Text>
-        </Pressable>
-        <Pressable
-          onPress={onReviewCards}
-          style={({ pressed }) => [
-            styles.quizFlashcardButton,
-            styles.quizFlashcardButtonPaired,
-            pressed && styles.pressed,
-          ]}
-        >
-          <Ionicons name="albums-outline" size={19} color={COLORS.greenDark} />
-          <Text style={styles.quizFlashcardButtonText}>REVIEW FLASHCARDS</Text>
-          <Ionicons name="arrow-forward" size={17} color={COLORS.greenDark} />
         </Pressable>
       </ScrollView>
     );
@@ -893,7 +1184,7 @@ export function QuizScreen({
       <ScrollView contentContainerStyle={styles.singleScreenContent}>
         <ScreenHeader
           eyebrow="DAILY QUIZ"
-          title="Practice complete!"
+          title={finishedWasDailyRetry ? 'Daily score refreshed!' : 'Practice complete!'}
           subtitle="You gave your brain a useful workout."
         />
         <QuizComplete
@@ -903,17 +1194,18 @@ export function QuizScreen({
           bonusXp={finishedBonusXp}
         />
         <Text style={styles.quizPracticeNote}>
-          {isPracticeRound
+          {finishedWasDailyRetry
+            ? 'Your best daily score is safely kept on record.'
+            : isPracticeRound
             ? 'Practice did not replace today’s daily score. It still counted as real review.'
             : 'Practice again anytime to keep learning.'}
         </Text>
-        {categorySelector}
-        {studySetSelector}
-        {omegaTestCard}
         {quizSetupControls}
+        {omegaTestCard}
+        {quizScopeControls}
         <Pressable
           disabled={!quizPreferences.enabled || activeQuizWords.length === 0}
-          onPress={startQuiz}
+          onPress={() => startQuiz()}
           style={({ pressed }) => [
             styles.quizPracticeButton,
             (!quizPreferences.enabled || activeQuizWords.length === 0) && styles.practiceButtonDisabled,
@@ -924,18 +1216,6 @@ export function QuizScreen({
           <Text style={styles.quizPracticeButtonText}>
             PRACTICE ANOTHER QUIZ
           </Text>
-        </Pressable>
-        <Pressable
-          onPress={onReviewCards}
-          style={({ pressed }) => [
-            styles.quizFlashcardButton,
-            styles.quizFlashcardButtonPaired,
-            pressed && styles.pressed,
-          ]}
-        >
-          <Ionicons name="albums-outline" size={19} color={COLORS.greenDark} />
-          <Text style={styles.quizFlashcardButtonText}>REVIEW FLASHCARDS</Text>
-          <Ionicons name="arrow-forward" size={17} color={COLORS.greenDark} />
         </Pressable>
       </ScrollView>
     );
@@ -963,7 +1243,7 @@ export function QuizScreen({
           <Text style={styles.quizIntroText}>
             {!quizPreferences.enabled
               ? 'Quizzes are paused. Turn Quiz learning back on whenever you want a focused retrieval session.'
-              : sessionMode === 'omega-test' && !omegaTestStatus.available
+              : sessionMode === 'omega-test' && !omegaTestAvailable
                 ? 'Omega Tests unlock every seven days so each score can reflect real retention over time.'
               : sessionMode === 'mastery-test' && activeQuizWords.length === 0
                 ? 'Build a few strong words first. Mastery Tests are for words that are ready for direct recall.'
@@ -980,10 +1260,9 @@ export function QuizScreen({
               text={`${categoryQuizQuestionCount} questions`}
             />
           </View>
-          {categorySelector}
-          {studySetSelector}
-          {omegaTestCard}
           {quizSetupControls}
+          {omegaTestCard}
+          {quizScopeControls}
           <View
             style={[
               styles.practiceCategoryBanner,
@@ -1010,19 +1289,23 @@ export function QuizScreen({
             </Text>
           </View>
           <Pressable
-            disabled={!quizPreferences.enabled || activeQuizWords.length === 0 || (sessionMode === 'omega-test' && !omegaTestStatus.available)}
-            onPress={startQuiz}
+            disabled={!quizPreferences.enabled || activeQuizWords.length === 0 || (sessionMode === 'omega-test' && !omegaTestAvailable)}
+            onPress={() => startQuiz()}
             style={({ pressed }) => [
               styles.primaryButton,
-              (!quizPreferences.enabled || activeQuizWords.length === 0 || (sessionMode === 'omega-test' && !omegaTestStatus.available)) && styles.primaryButtonDisabled,
+              (!quizPreferences.enabled || activeQuizWords.length === 0 || (sessionMode === 'omega-test' && !omegaTestAvailable)) && styles.primaryButtonDisabled,
               pressed && styles.primaryButtonPressed,
             ]}
           >
             <Text style={styles.primaryButtonText}>
               {quizPreferences.enabled
-                ? sessionMode === 'omega-test'
+                ? dailyRefreshActive
+                  ? 'RETRY DAILY SCORE'
+                  : sessionMode === 'omega-test'
                   ? 'START OMEGA TEST'
-                  : 'START QUIZ'
+                  : sessionMode === 'standard'
+                    ? 'START QUIZ'
+                    : `START ${getQuizSessionLabel(sessionMode).toUpperCase()} QUIZ`
                 : 'QUIZZES PAUSED'}
             </Text>
             <Ionicons name="arrow-forward" size={21} color={COLORS.white} />
@@ -1063,6 +1346,20 @@ export function QuizScreen({
         eyebrow={sessionMode === 'omega-test' ? 'OMEGA TEST' : 'DAILY QUIZ'}
         title="Answer the prompt"
         subtitle={`Question ${questionIndex + 1} of ${quiz.length}`}
+        action={
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Exit quiz"
+            accessibilityHint="Save your place or end this quiz"
+            onPress={confirmExitQuiz}
+            style={({ pressed }) => [
+              styles.quizExitButton,
+              pressed && styles.pressed,
+            ]}
+          >
+            <Ionicons name="close" size={21} color={COLORS.purpleDark} />
+          </Pressable>
+        }
       />
       <View style={styles.quizProgressTrack}>
         <ProgressFill
@@ -1082,7 +1379,9 @@ export function QuizScreen({
         >
           <View style={styles.timedQuestionTimerCopy}>
             <Ionicons name="timer-outline" size={17} color={COLORS.purpleDark} />
-            <Text style={styles.timedQuestionTimerLabel}>FLUENCY TIMER</Text>
+            <Text style={styles.timedQuestionTimerLabel}>
+              {sessionMode === 'quick' ? 'QUICK TIMER' : 'FLUENCY TIMER'}
+            </Text>
             <Text style={styles.timedQuestionTimerXp}>UP TO +5 XP</Text>
           </View>
           <Text style={styles.timedQuestionTimerValue}>{secondsRemaining}s</Text>

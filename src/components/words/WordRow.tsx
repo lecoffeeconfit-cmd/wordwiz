@@ -79,19 +79,17 @@ export function WordRow({
         <View style={styles.wordRowCopy}>
           <View style={styles.wordTitleRow}>
             <View style={styles.wordTermMeta}>
-            <Text
-              ellipsizeMode="tail"
-              maxFontSizeMultiplier={1.18}
-              numberOfLines={1}
-              style={styles.wordTerm}
-            >
-              {word.term}
-            </Text>
-            {word.partOfSpeech && (
-              <Text maxFontSizeMultiplier={1.1} style={styles.partOfSpeechPill}>
-                {word.partOfSpeech}
+              <Text
+                maxFontSizeMultiplier={1.18}
+                style={styles.wordTerm}
+              >
+                {word.term}
               </Text>
-            )}
+              {word.partOfSpeech && (
+                <Text maxFontSizeMultiplier={1.1} style={styles.partOfSpeechPill}>
+                  {word.partOfSpeech}
+                </Text>
+              )}
             </View>
           </View>
           <View style={styles.wordDefinitionRow}>
@@ -143,13 +141,6 @@ export function WordRow({
         </View>
       </Pressable>
       <View style={styles.wordRowActions}>
-        <View style={styles.wordRowAudioActions}>
-          <SpeakButton term={word.term} />
-          <SpeakDefinitionButton
-            definition={word.simpleDefinition || word.definition}
-            term={word.term}
-          />
-        </View>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={
@@ -169,6 +160,13 @@ export function WordRow({
             color={word.isFlagged ? COLORS.purpleDark : COLORS.muted}
           />
         </Pressable>
+        <View style={styles.wordRowAudioActions}>
+          <SpeakButton term={word.term} />
+          <SpeakDefinitionButton
+            definition={word.simpleDefinition || word.definition}
+            term={word.term}
+          />
+        </View>
       </View>
     </View>
   );

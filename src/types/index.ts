@@ -54,6 +54,8 @@ export type StudySetMembership = {
   id: string;
   name: string;
   createdAt: string;
+  /** Starter collections and personal sets share one deck picker, but keep a helpful visual distinction. */
+  kind?: 'collection' | 'custom';
 };
 
 export type WordMasteryProgress = {
@@ -289,4 +291,12 @@ export type Achievement = {
   unlocked: boolean;
   progress: number;
   target: number;
+  points: number;
+  refreshTokens: number;
+};
+
+export type AchievementWallet = {
+  claimedAchievementIds: string[];
+  points: number;
+  refreshTokens: number;
 };

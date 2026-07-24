@@ -24,7 +24,6 @@ export function WordWizPlusModal({
 }) {
   const subscription = useSubscription();
   const [selectedPackage, setSelectedPackage] = useState<'annual' | 'monthly'>('annual');
-  const [trialEligible, setTrialEligible] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
   const selected = selectedPackage === 'annual' && subscription.annualPackage
@@ -38,12 +37,6 @@ export function WordWizPlusModal({
     subscription.monthlyPackage,
     subscription.annualPackage,
   ), [subscription.annualPackage, subscription.monthlyPackage]);
-
-  useEffect(() => {
-    if (!visible) return;
-    setMessage(null);
-    void subscription.isEligibleForTrial().then(setTrialEligible);
-  }, [subscription, visible]);
 
   async function purchase() {
     if (!selected) {
@@ -82,7 +75,7 @@ export function WordWizPlusModal({
   }
 
   const reasonCopy = reason === 'word-limit'
-    ? 'You’ve used this month’s 10 free word additions. Your allowance resets next calendar month, or Plus keeps your vocabulary growing without a monthly cap.'
+    ? 'You’ve added your 10 free words for this month. WordWiz Plus gives you unlimited word additions.'
     : reason === 'quiz'
       ? 'Quizzes, adaptive learning modes, and detailed progress insights are part of WordWiz Plus.'
       : 'Unlock WordWiz’s complete adaptive learning experience.';
@@ -125,7 +118,7 @@ export function WordWizPlusModal({
             <>
               {hasPurchasablePlan ? <>
                 <PlanOption
-                  title="Annual"
+                  title="WordWiz Plus Annual"
                   caption={subscription.annualPackage?.product.pricePerMonthString
                     ? `${subscription.annualPackage.product.pricePerMonthString} per month, billed yearly`
                     : 'Billed yearly'}
@@ -136,7 +129,7 @@ export function WordWizPlusModal({
                   onPress={() => setSelectedPackage('annual')}
                 />
                 <PlanOption
-                  title="Monthly"
+                  title="WordWiz Plus Monthly"
                   caption="Billed monthly"
                   price={subscription.monthlyPackage?.product.priceString ?? 'Unavailable'}
                   selected={monthlySelected}
@@ -162,7 +155,9 @@ export function WordWizPlusModal({
                 style={({ pressed }) => [styles.plusSubscribeButton, (!selected || subscription.isPurchasing) && styles.plusButtonDisabled, pressed && styles.pressed]}
               >
                 {subscription.isPurchasing ? <ActivityIndicator color={COLORS.white} /> : <>
-                  <Text style={styles.plusSubscribeButtonText}>{trialEligible ? 'START FREE TRIAL' : 'CONTINUE'}</Text>
+                  <Text style={styles.plusSubscribeButtonText}>
+                    {annualSelected ? 'SUBSCRIBE ANNUALLY' : 'SUBSCRIBE MONTHLY'}
+                  </Text>
                   <Ionicons name="arrow-forward" size={20} color={COLORS.white} />
                 </>}
               </Pressable>
@@ -173,7 +168,7 @@ export function WordWizPlusModal({
           ) : (
             <>
               <PlanOption
-                title="Annual"
+                title="WordWiz Plus Annual"
                 caption="Best value · billed yearly"
                 price="Live price in build"
                 selected={selectedPackage === 'annual'}
@@ -182,7 +177,7 @@ export function WordWizPlusModal({
                 preview={isPlanPreview}
               />
               <PlanOption
-                title="Monthly"
+                title="WordWiz Plus Monthly"
                 caption="Flexible monthly access"
                 price="Live price in build"
                 selected={selectedPackage === 'monthly'}
@@ -200,10 +195,30 @@ export function WordWizPlusModal({
           )}
 
           <View style={styles.plusSecondaryActions}>
-            <Pressable accessibilityRole="button" disabled={subscription.isRestoring || !subscription.isSupported} onPress={() => void restore()} style={styles.plusSecondaryButton}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Restore WordWiz Plus purchases"
+              disabled={subscription.isRestoring}
+              onPress={() => void restore()}
+              style={({ pressed }) => [
+                styles.plusSecondaryButton,
+                subscription.isRestoring && styles.plusButtonDisabled,
+                pressed && styles.pressed,
+              ]}
+            >
               {subscription.isRestoring ? <ActivityIndicator color={COLORS.purpleDark} /> : <Text style={styles.plusSecondaryButtonText}>Restore Purchases</Text>}
             </Pressable>
-            {subscription.hasPlusAccess ? (
+            {reason === 'word-limit' ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Not now"
+                onPress={onClose}
+                style={styles.plusSecondaryButton}
+              >
+                <Text style={styles.plusSecondaryButtonText}>Not Now</Text>
+              </Pressable>
+            ) : null}
+            {subscription.hasActiveRevenueCatEntitlement ? (
               <Pressable accessibilityRole="button" onPress={() => void manage()} style={styles.plusSecondaryButton}>
                 <Text style={styles.plusSecondaryButtonText}>Manage Subscription</Text>
               </Pressable>

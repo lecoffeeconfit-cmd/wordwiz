@@ -293,6 +293,19 @@ export function buildQuiz(
     priorityWordIds,
     questionLimit,
   );
+  const usesAutomaticStandardSession =
+    !options.questionLimit &&
+    (!options.difficulty || options.difficulty === 'automatic') &&
+    (!options.sessionMode || options.sessionMode === 'standard');
+
+  if (usesAutomaticStandardSession && quizWords.length > 0 && quizWords.length < 4) {
+    return buildSmallCollectionQuiz(
+      quizWords,
+      masteryByWordId,
+      options.questionTypePreferences,
+    );
+  }
+
   const planWords = options.questionLimit
     ? expandQuizWords(quizWords, questionLimit)
     : quizWords;
@@ -392,8 +405,8 @@ export function getOmegaTestStatus(
 
 /**
  * Category practice intentionally gives a very small category enough varied
- * retrieval opportunities to feel like a useful round. Normal and due-review
- * quizzes continue to use buildQuiz, with one question per selected word.
+ * retrieval opportunities to feel like a useful round. Standard quizzes use
+ * the same variety when a learner has fewer than four practice words.
  */
 export function buildCategoryPracticeQuiz(
   words: Word[],
@@ -413,12 +426,24 @@ export function buildCategoryPracticeQuiz(
   }
 
   const quizWords = pickQuizWords(words, recentAttempts, priorityWordIds);
+  return buildSmallCollectionQuiz(
+    quizWords,
+    masteryByWordId,
+    options.questionTypePreferences,
+  );
+}
+
+function buildSmallCollectionQuiz(
+  quizWords: Word[],
+  masteryByWordId: Record<string, number>,
+  questionTypePreferences: QuizQuestionTypePreferences | undefined,
+) {
   const target = getCategoryPracticeQuizTarget(quizWords.length);
   const plan = getCategoryPracticeQuestionPlan(
     quizWords,
     masteryByWordId,
     target,
-    normalizeQuestionTypePreferences(options.questionTypePreferences),
+    normalizeQuestionTypePreferences(questionTypePreferences),
   );
   const questionKeys = new Set<string>();
 

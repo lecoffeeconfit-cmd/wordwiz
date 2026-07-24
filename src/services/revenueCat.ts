@@ -3,7 +3,7 @@ import Purchases, {
   type PurchasesOffering,
   type PurchasesPackage,
 } from 'react-native-purchases';
-import { AppState, NativeModules, Platform } from 'react-native';
+import { AppState, Linking, NativeModules, Platform } from 'react-native';
 import { env } from '../config/env';
 import { reportError } from './errorReporting';
 
@@ -227,20 +227,15 @@ class RevenueCatService {
     if (!this.isConfigured || !this.isNativeAvailable()) {
       throw new Error(getUnsupportedMessage());
     }
-    await Purchases.showManageSubscriptions();
-  }
-
-  async isEligibleForTrial() {
-    const productId = this.snapshot.monthlyPackage?.product.identifier;
-    if (!this.isConfigured || Platform.OS !== 'ios' || !productId) return false;
-
-    try {
-      const eligibility = await Purchases.checkTrialOrIntroductoryPriceEligibility([productId]);
-      return eligibility[productId]?.status === Purchases.INTRO_ELIGIBILITY_STATUS.INTRO_ELIGIBILITY_STATUS_ELIGIBLE;
-    } catch (error) {
-      reportError(error, { area: 'revenuecat_trial_eligibility' });
-      return false;
+    const managementUrl = this.snapshot.customerInfo?.managementURL;
+    if (managementUrl) {
+      const canOpen = await Linking.canOpenURL(managementUrl);
+      if (canOpen) {
+        await Linking.openURL(managementUrl);
+        return;
+      }
     }
+    await Purchases.showManageSubscriptions();
   }
 
   attachAppStateListener() {
@@ -291,17 +286,6 @@ class RevenueCatService {
 
 export function hasPlusAccess(customerInfo: CustomerInfo | null | undefined) {
   return Boolean(customerInfo?.entitlements.active[PLUS_ENTITLEMENT_ID]);
-}
-
-export function canUseQuizzes(customerInfo: CustomerInfo | null | undefined) {
-  return hasPlusAccess(customerInfo);
-}
-
-export function canAddWord(
-  customerInfo: CustomerInfo | null | undefined,
-  wordsAddedThisMonth: number | null,
-) {
-  return hasPlusAccess(customerInfo) || wordsAddedThisMonth === null || wordsAddedThisMonth < 10;
 }
 
 function getUnsupportedMessage() {

@@ -13,7 +13,34 @@ import {
   formatWordHistoryNarrative,
   inferOriginPeriod,
   makeSimpleDefinition,
+  getSavedWordTermKey,
 } from '../utils';
+
+type SpeechRecognitionModule = {
+  isRecognitionAvailable: () => boolean;
+  requestPermissionsAsync: () => Promise<{ granted: boolean }>;
+  start: (options: {
+    lang: string;
+    interimResults: boolean;
+    maxAlternatives: number;
+    iosTaskHint: 'confirmation';
+    androidIntentOptions: { EXTRA_LANGUAGE_MODEL: 'web_search' };
+  }) => void;
+  stop: () => void;
+  addListener: (
+    eventName: string,
+    listener: (event?: unknown) => void,
+  ) => { remove: () => void };
+};
+
+async function loadSpeechRecognitionModule(): Promise<SpeechRecognitionModule | null> {
+  try {
+    const module = await import('expo-speech-recognition');
+    return module.ExpoSpeechRecognitionModule as SpeechRecognitionModule;
+  } catch {
+    return null;
+  }
+}
 
 export function AddWordModal({
   visible,
@@ -31,7 +58,7 @@ export function AddWordModal({
     example: string,
     details?: Partial<WordDetails>,
     options?: { closeAfterSave?: boolean },
-  ) => boolean | Promise<boolean>;
+  ) => boolean | 'duplicate' | 'save_failed' | Promise<boolean | 'duplicate' | 'save_failed'>;
   wordToEdit?: Word | null;
   words?: Word[];
   onEditExisting?: (word: Word) => void;
@@ -53,6 +80,8 @@ export function AddWordModal({
   const [definitionOptions, setDefinitionOptions] = useState<DefinitionOption[]>([]);
   const [definitionOptionIndex, setDefinitionOptionIndex] = useState(0);
   const [isLookingUp, setIsLookingUp] = useState(false);
+  const [saveWasBlockedAsDuplicate, setSaveWasBlockedAsDuplicate] = useState(false);
+  const [saveFailed, setSaveFailed] = useState(false);
   const [lookupStatus, setLookupStatus] = useState('');
   const [spellingSuggestions, setSpellingSuggestions] = useState<string[]>([]);
   const [isEditingBasicInfo, setIsEditingBasicInfo] = useState(false);
@@ -69,15 +98,17 @@ export function AddWordModal({
   const [timePeriodDraft, setTimePeriodDraft] = useState('');
   const [historyDraft, setHistoryDraft] = useState('');
   const synonymsInputRef = useRef<TextInput>(null);
-  const termInputRef = useRef<TextInput>(null);
   const basicInfoInputRef = useRef<TextInput>(null);
   const timePeriodInputRef = useRef<TextInput>(null);
   const historyInputRef = useRef<TextInput>(null);
+  const speechRecognitionModuleRef = useRef<SpeechRecognitionModule | null>(null);
+  const speechRecognitionListenersRef = useRef<Array<{ remove: () => void }>>([]);
   const duplicateWord = words.find(
     (word) =>
       word.id !== wordToEdit?.id &&
-      word.term.trim().toLowerCase() === term.trim().toLowerCase(),
+      getSavedWordTermKey(word.term) === getSavedWordTermKey(term),
   );
+  const duplicateBlocked = Boolean(duplicateWord || saveWasBlockedAsDuplicate);
 
   useEffect(() => {
     if (!visible) {
@@ -133,12 +164,102 @@ export function AddWordModal({
     setDefinitionOptions([]);
     setDefinitionOptionIndex(0);
     setLookupStatus('');
+    setSaveWasBlockedAsDuplicate(false);
+    setSaveFailed(false);
     setSpellingSuggestions([]);
     closeSectionEditors();
   }
 
-  function openAppleDictation() {
-    termInputRef.current?.focus();
+  function updateTermFromDictation(nextTerm: string) {
+    setTerm(nextTerm);
+    setSaveWasBlockedAsDuplicate(false);
+    setSaveFailed(false);
+    setLookupStatus('');
+    setSpellingSuggestions([]);
+    setWordnikDetails({});
+    setDefinitionOptions([]);
+    setDefinitionOptionIndex(0);
+  }
+
+  const [isDictating, setIsDictating] = useState(false);
+
+  function clearSpeechRecognitionListeners() {
+    speechRecognitionListenersRef.current.forEach((listener) => listener.remove());
+    speechRecognitionListenersRef.current = [];
+  }
+
+  function listenForDictation(speechRecognition: SpeechRecognitionModule) {
+    clearSpeechRecognitionListeners();
+    speechRecognitionListenersRef.current = [
+      speechRecognition.addListener('start', () => setIsDictating(true)),
+      speechRecognition.addListener('end', () => setIsDictating(false)),
+      speechRecognition.addListener('result', (event) => {
+        const result = event as { results?: Array<{ transcript?: string }> } | undefined;
+        const transcript = result?.results?.[0]?.transcript?.trim();
+        if (transcript) {
+          updateTermFromDictation(transcript);
+        }
+      }),
+      speechRecognition.addListener('error', (event) => {
+        const error = event as { error?: string; message?: string } | undefined;
+        setIsDictating(false);
+        if (!['aborted', 'no-speech', 'speech-timeout'].includes(error?.error ?? '')) {
+          Alert.alert('Dictation unavailable', error?.message || 'Please try again.');
+        }
+      }),
+    ];
+  }
+
+  useEffect(() => {
+    return () => {
+      clearSpeechRecognitionListeners();
+    };
+  }, []);
+
+  async function toggleDictation() {
+    if (isDictating) {
+      speechRecognitionModuleRef.current?.stop();
+      return;
+    }
+
+    const speechRecognition = await loadSpeechRecognitionModule();
+    if (!speechRecognition) {
+      Alert.alert(
+        'Dictation needs a new build',
+        'This preview does not include microphone dictation yet. Use a WordWiz development or production build to try it.',
+      );
+      return;
+    }
+
+    speechRecognitionModuleRef.current = speechRecognition;
+    if (!speechRecognition.isRecognitionAvailable()) {
+      Alert.alert(
+        'Dictation unavailable',
+        'Turn on speech recognition in your device settings, then try again.',
+      );
+      return;
+    }
+
+    const permission = await speechRecognition.requestPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert(
+        'Microphone permission needed',
+        'Allow microphone and speech recognition access to dictate a word.',
+      );
+      return;
+    }
+
+    Keyboard.dismiss();
+    listenForDictation(speechRecognition);
+    speechRecognition.start({
+      lang: 'en-US',
+      interimResults: true,
+      maxAlternatives: 1,
+      iosTaskHint: 'confirmation',
+      androidIntentOptions: {
+        EXTRA_LANGUAGE_MODEL: 'web_search',
+      },
+    });
   }
 
   async function autoDefine(nextTerm = term) {
@@ -150,6 +271,8 @@ export function AddWordModal({
 
     if (cleanTerm !== term) {
       setTerm(cleanTerm);
+      setSaveWasBlockedAsDuplicate(false);
+      setSaveFailed(false);
     }
 
     setIsLookingUp(true);
@@ -365,6 +488,16 @@ export function AddWordModal({
       example,
       getSubmissionDetails(getPendingSectionDetails()),
     );
+    if (saved === 'duplicate') {
+      setSaveWasBlockedAsDuplicate(true);
+      Keyboard.dismiss();
+      return;
+    }
+    if (saved === 'save_failed') {
+      setSaveFailed(true);
+      Keyboard.dismiss();
+      return;
+    }
     if (saved) resetForm();
   }
 
@@ -418,48 +551,41 @@ export function AddWordModal({
               icon="text-outline"
               value={term}
               onChangeText={(value) => {
-                setTerm(value);
-                setLookupStatus('');
-                setSpellingSuggestions([]);
-                setWordnikDetails({});
-                setDefinitionOptions([]);
-                setDefinitionOptionIndex(0);
+                updateTermFromDictation(value);
               }}
               placeholder="e.g. Serendipity"
               autoCapitalize="words"
               returnKeyType="search"
               onSubmitEditing={() => autoDefine()}
-              inputRef={termInputRef}
               rightAccessory={
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel="Use keyboard dictation to add a word"
-                  accessibilityHint="Opens the word field so you can tap the microphone on your keyboard."
-                  onPress={openAppleDictation}
+                  accessibilityLabel={isDictating ? 'Stop dictation' : 'Start dictation'}
+                  accessibilityHint={
+                    isDictating
+                      ? 'Stops listening and keeps the recognized word.'
+                      : 'Starts listening so you can say a word.'
+                  }
+                  onPress={() => void toggleDictation()}
                   style={({ pressed }) => [
                     styles.voiceEntryButton,
+                    isDictating && styles.voiceEntryButtonActive,
                     pressed && styles.pressed,
                   ]}
                 >
-                  <Ionicons name="mic" size={20} color={COLORS.purpleDark} />
-                  <Text style={styles.voiceEntryButtonText}>DICTATE</Text>
+                  <Ionicons
+                    name={isDictating ? 'stop-circle' : 'mic'}
+                    size={20}
+                    color={COLORS.purpleDark}
+                  />
+                  <Text style={styles.voiceEntryButtonText}>
+                    {isDictating ? 'STOP' : 'DICTATE'}
+                  </Text>
                 </Pressable>
               }
             />
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Open keyboard dictation"
-              accessibilityHint="Focuses the word field. Then tap the microphone on your keyboard to speak the word."
-              onPress={openAppleDictation}
-              style={({ pressed }) => [styles.voiceStatus, pressed && styles.pressed]}
-            >
-              <Ionicons name="mic-outline" size={16} color={COLORS.purpleDark} />
-              <Text style={styles.voiceStatusText}>
-                Want to say it instead? Tap Dictate, then use the microphone on your keyboard.
-              </Text>
-            </Pressable>
 
-            {duplicateWord ? (
+            {duplicateBlocked ? (
               <View style={styles.duplicateWordNotice}>
                 <View style={styles.duplicateWordIcon}>
                   <Ionicons name="bookmark" size={19} color={COLORS.orange} />
@@ -467,20 +593,52 @@ export function AddWordModal({
                 <View style={styles.duplicateWordCopy}>
                   <Text style={styles.duplicateWordTitle}>Already in your words</Text>
                   <Text style={styles.duplicateWordText}>
-                    {duplicateWord.term} is saved already. Open it to review or update it.
+                    {duplicateWord
+                      ? `${duplicateWord.term} is saved already. Open it to review or update it.`
+                      : `${term.trim()} is already saved in your account. Try another word or update it from My Words.`}
+                  </Text>
+                </View>
+                {duplicateWord ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`Edit saved word ${duplicateWord.term}`}
+                    onPress={() => onEditExisting?.(duplicateWord)}
+                    style={({ pressed }) => [
+                      styles.duplicateWordAction,
+                      pressed && styles.pressed,
+                    ]}
+                  >
+                    <Text style={styles.duplicateWordActionText}>Edit</Text>
+                    <Ionicons name="arrow-forward" size={13} color={COLORS.orange} />
+                  </Pressable>
+                ) : null}
+              </View>
+            ) : null}
+
+            {saveFailed ? (
+              <View style={styles.saveWordErrorNotice}>
+                <View style={styles.saveWordErrorIcon}>
+                  <Ionicons name="cloud-offline-outline" size={19} color={COLORS.red} />
+                </View>
+                <View style={styles.saveWordErrorCopy}>
+                  <Text style={styles.saveWordErrorTitle}>Not saved yet</Text>
+                  <Text style={styles.saveWordErrorText}>
+                    Your word is still here. Check your connection, then try again.
                   </Text>
                 </View>
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel={`Edit saved word ${duplicateWord.term}`}
-                  onPress={() => onEditExisting?.(duplicateWord)}
+                  accessibilityLabel="Retry saving word"
+                  onPress={() => {
+                    setSaveFailed(false);
+                    void submit();
+                  }}
                   style={({ pressed }) => [
-                    styles.duplicateWordAction,
+                    styles.saveWordErrorRetry,
                     pressed && styles.pressed,
                   ]}
                 >
-                  <Text style={styles.duplicateWordActionText}>Edit</Text>
-                  <Ionicons name="arrow-forward" size={13} color={COLORS.orange} />
+                  <Text style={styles.saveWordErrorRetryText}>Retry</Text>
                 </Pressable>
               </View>
             ) : null}
@@ -503,10 +661,10 @@ export function AddWordModal({
               </View>
               <View style={styles.lookupButtonCopy}>
                 <Text style={styles.lookupButtonTitle}>
-                  {isLookingUp ? 'Looking it up...' : 'Auto define this word'}
+                  {isLookingUp ? 'Looking it up...' : 'Auto define'}
                 </Text>
                 <Text style={styles.lookupButtonSubtitle}>
-                  Fill meaning, sentence, word history, and basic info.
+                  Adds the meaning and example.
                 </Text>
               </View>
             </Pressable>
@@ -533,19 +691,21 @@ export function AddWordModal({
                   <>
                     <View style={styles.lookupStatusCopy}>
                       <Text style={styles.lookupStatusTitle}>
-                        Definition found
+                        Ready to save
                       </Text>
                       <Text style={styles.lookupStatusHelper}>
-                        Review the details or add it now.
+                        Add it now, then meet it again in practice.
                       </Text>
                     </View>
                     <Pressable
                       accessibilityRole="button"
                       accessibilityLabel="Quick save word"
+                      disabled={duplicateBlocked}
                       onPress={() => void submit()}
                       style={({ pressed }) => [
                         styles.lookupQuickAddButton,
-                        pressed && styles.pressed,
+                        duplicateBlocked && styles.lookupQuickAddButtonDisabled,
+                        pressed && !duplicateBlocked && styles.pressed,
                       ]}
                     >
                       <Ionicons name="checkmark" size={16} color={COLORS.white} />
@@ -1058,14 +1218,20 @@ export function AddWordModal({
             <Pressable
               accessibilityRole="button"
               accessibilityLabel={wordToEdit ? 'Save changes' : 'Save word'}
+              disabled={duplicateBlocked}
               onPress={() => void submit()}
               style={({ pressed }) => [
                 styles.primaryButton,
-                pressed && styles.primaryButtonPressed,
+                duplicateBlocked && styles.primaryButtonDisabled,
+                pressed && !duplicateBlocked && styles.primaryButtonPressed,
               ]}
             >
               <Text style={styles.primaryButtonText}>
-                {wordToEdit ? 'SAVE CHANGES' : 'SAVE TO MY WORDS'}
+                {duplicateBlocked
+                  ? 'ALREADY SAVED'
+                  : wordToEdit
+                    ? 'SAVE CHANGES'
+                    : 'SAVE TO MY WORDS'}
               </Text>
               <Ionicons name="checkmark" size={22} color={COLORS.white} />
             </Pressable>

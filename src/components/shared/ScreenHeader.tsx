@@ -9,10 +9,12 @@ export function ScreenHeader({
   eyebrow,
   title,
   subtitle,
+  action,
 }: {
   eyebrow: string;
   title: string;
   subtitle: string;
+  action?: ReactNode;
 }) {
   const theme = getHeaderTheme(eyebrow);
 
@@ -51,6 +53,7 @@ export function ScreenHeader({
           </View>
           <Text style={[styles.brandName, { color: theme.accent }]}>WORDWIZ</Text>
         </View>
+        {action ? <View style={styles.screenHeaderAction}>{action}</View> : null}
         <View style={styles.headerTextCard}>
           <Text style={[styles.eyebrow, { color: theme.accent }]}>
             {eyebrow}
