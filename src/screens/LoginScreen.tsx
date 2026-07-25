@@ -23,6 +23,8 @@ export function LoginScreen({
   onLogin,
   onCreateAccount,
   onForgotPassword,
+  isPasswordRecovery,
+  onUpdatePassword,
   onOAuthLogin,
   onResendVerification,
 }: {
@@ -33,6 +35,8 @@ export function LoginScreen({
     password: string,
   ) => Promise<boolean>;
   onForgotPassword: (email: string) => Promise<void>;
+  isPasswordRecovery: boolean;
+  onUpdatePassword: (password: string) => Promise<boolean>;
   onOAuthLogin: (provider: Provider, label: string) => Promise<boolean>;
   onResendVerification: (email: string) => Promise<boolean>;
 }) {
@@ -40,6 +44,7 @@ export function LoginScreen({
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [passwordConfirmation, setPasswordConfirmation] = useState('');
   const [verificationEmail, setVerificationEmail] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isResendingVerification, setIsResendingVerification] = useState(false);
@@ -47,12 +52,14 @@ export function LoginScreen({
   const nameInputRef = useRef<TextInput>(null);
   const emailInputRef = useRef<TextInput>(null);
   const passwordInputRef = useRef<TextInput>(null);
+  const passwordConfirmationInputRef = useRef<TextInput>(null);
   const scrollOffsetRef = useRef(0);
   const keyboardHeightRef = useRef(0);
   const focusScrollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const isCreateMode = mode === 'create';
   const isForgotMode = mode === 'forgot';
+  const isRecoveryMode = isPasswordRecovery;
 
   useEffect(() => {
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
@@ -98,6 +105,27 @@ export function LoginScreen({
   }
 
   async function submit() {
+    if (isRecoveryMode) {
+      const passwordError = validatePassword(password);
+      if (passwordError) {
+        Alert.alert('Check your password', passwordError);
+        return;
+      }
+      if (password !== passwordConfirmation) {
+        Alert.alert('Passwords do not match', 'Enter the same new password in both fields.');
+        return;
+      }
+
+      setIsSubmitting(true);
+      const success = await onUpdatePassword(password);
+      setIsSubmitting(false);
+      if (success) {
+        setPassword('');
+        setPasswordConfirmation('');
+      }
+      return;
+    }
+
     const emailError = validateEmail(email);
     const nameError = isCreateMode ? validateName(name) : null;
     const passwordError = !isForgotMode ? validatePassword(password) : null;
@@ -204,15 +232,19 @@ export function LoginScreen({
           <Text style={styles.authTitle}>
             {isCreateMode
               ? 'Start your word journey'
-              : isForgotMode
+              : isRecoveryMode
+                ? 'Choose a new password'
+                : isForgotMode
                 ? 'Reset your password'
                 : 'Welcome back'}
           </Text>
           <Text style={styles.authSubtitle}>
             {isCreateMode
               ? 'Create a profile to save your words, quizzes, and streaks.'
-              : isForgotMode
-                ? 'Enter your email and WordWiz will show safe recovery guidance.'
+              : isRecoveryMode
+                ? 'This secure link is temporary. Set a new password to continue learning.'
+                : isForgotMode
+                  ? 'Enter your email and we’ll send a secure reset link if an account exists.'
                 : 'Sign in to keep building your vocabulary one friendly review at a time.'}
           </Text>
         </View>
@@ -253,7 +285,7 @@ export function LoginScreen({
             </View>
           ) : null}
 
-          {!isForgotMode && (
+          {!isForgotMode && !isRecoveryMode && (
             <>
               <View style={styles.oauthGrid}>
                 {providers.map((item) => (
@@ -287,7 +319,7 @@ export function LoginScreen({
             </>
           )}
 
-          {isCreateMode && (
+          {isCreateMode && !isRecoveryMode && (
             <AuthField
               icon="person-outline"
               label="Name"
@@ -302,7 +334,7 @@ export function LoginScreen({
               onSubmitEditing={() => emailInputRef.current?.focus()}
             />
           )}
-          <AuthField
+          {!isRecoveryMode ? <AuthField
             icon="mail-outline"
             label="Email"
             value={email}
@@ -317,8 +349,8 @@ export function LoginScreen({
             onSubmitEditing={isForgotMode
               ? () => { void submit(); }
               : () => passwordInputRef.current?.focus()}
-          />
-          {!isForgotMode && (
+          /> : null}
+          {!isForgotMode && !isRecoveryMode && (
             <AuthField
               icon="lock-closed-outline"
               label="Password"
@@ -332,13 +364,42 @@ export function LoginScreen({
               onSubmitEditing={() => { void submit(); }}
             />
           )}
-          {isCreateMode && (
+          {isRecoveryMode && (
+            <>
+              <AuthField
+                icon="lock-closed-outline"
+                label="New password"
+                value={password}
+                onChangeText={setPassword}
+                placeholder="Create a new password"
+                secureTextEntry
+                inputRef={passwordInputRef}
+                onFocus={() => keepFocusedInputVisible(passwordInputRef.current)}
+                returnKeyType="next"
+                blurOnSubmit={false}
+                onSubmitEditing={() => passwordConfirmationInputRef.current?.focus()}
+              />
+              <AuthField
+                icon="shield-checkmark-outline"
+                label="Confirm new password"
+                value={passwordConfirmation}
+                onChangeText={setPasswordConfirmation}
+                placeholder="Repeat your new password"
+                secureTextEntry
+                inputRef={passwordConfirmationInputRef}
+                onFocus={() => keepFocusedInputVisible(passwordConfirmationInputRef.current)}
+                returnKeyType="done"
+                onSubmitEditing={() => { void submit(); }}
+              />
+            </>
+          )}
+          {(isCreateMode || isRecoveryMode) && (
             <Text style={styles.authPasswordHint}>
               Use 8+ characters with at least one letter and one number.
             </Text>
           )}
 
-          {!isForgotMode && (
+          {!isForgotMode && !isRecoveryMode && (
             <Pressable
               onPress={() => setMode('forgot')}
               style={styles.forgotLink}
@@ -361,14 +422,16 @@ export function LoginScreen({
                 ? 'One moment...'
                 : isCreateMode
                   ? 'Create account'
+                  : isRecoveryMode
+                    ? 'Save new password'
                   : isForgotMode
-                    ? 'Get reset help'
+                    ? 'Send reset link'
                     : 'Log in'}
             </Text>
             <Ionicons name="arrow-forward" size={20} color={COLORS.white} />
           </Pressable>
 
-          <View style={styles.authSwitchRow}>
+          {!isRecoveryMode && <View style={styles.authSwitchRow}>
             <Text style={styles.authSwitchText}>
               {isCreateMode
                 ? 'Already have an account?'
@@ -386,7 +449,7 @@ export function LoginScreen({
                 {isCreateMode || isForgotMode ? 'Log in' : 'Create one'}
               </Text>
             </Pressable>
-          </View>
+          </View>}
         </View>
 
         <View style={styles.authNoteCard}>

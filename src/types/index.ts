@@ -190,6 +190,9 @@ export type QuizProgress = {
 
 export type QuizAnswer = {
   wordId: string;
+  /** Snapshot identifiers keep historical feedback readable after a word changes. */
+  wordTerm?: string;
+  collectionName?: string;
   correct: boolean;
   sessionMode?: QuizSessionMode;
   difficulty?: QuizQuestionDifficulty;

@@ -58,6 +58,8 @@ export type QuizFeedbackSummary = {
 
 export type QuizFeedbackByWord = QuizFeedbackSummary & {
   wordId: string;
+  wordTerm?: string;
+  collectionName?: string;
 };
 
 export type QuizRecallPace = {
@@ -65,11 +67,14 @@ export type QuizRecallPace = {
   answerCount: number;
   totalSeconds: number;
   averageSeconds: number;
+  wordTerm?: string;
+  collectionName?: string;
 };
 
 function getQuizRecallPace(
   analytics: AnalyticsData,
   getKey: (answer: QuizAnswer) => string | undefined,
+  includeWordContext = false,
 ): QuizRecallPace[] {
   const paceByKey = new Map<string, Omit<QuizRecallPace, 'averageSeconds'>>();
 
@@ -89,6 +94,12 @@ function getQuizRecallPace(
         answerCount: 0,
         totalSeconds: 0,
       };
+      if (includeWordContext && !current.wordTerm && answer.wordTerm) {
+        current.wordTerm = answer.wordTerm;
+      }
+      if (includeWordContext && !current.collectionName && answer.collectionName) {
+        current.collectionName = answer.collectionName;
+      }
       current.answerCount += 1;
       current.totalSeconds += seconds;
       paceByKey.set(key, current);
@@ -120,7 +131,7 @@ export function getQuizRecallPaceByQuestionType(
 export function getQuizRecallPaceByWord(
   analytics: AnalyticsData,
 ): QuizRecallPace[] {
-  return getQuizRecallPace(analytics, (answer) => answer.wordId);
+  return getQuizRecallPace(analytics, (answer) => answer.wordId, true);
 }
 
 export function getQuizFeedbackSummary(
@@ -154,6 +165,12 @@ export function getQuizFeedbackByWord(
         easy: 0,
         total: 0,
       };
+      if (!current.wordTerm && answer.wordTerm) {
+        current.wordTerm = answer.wordTerm;
+      }
+      if (!current.collectionName && answer.collectionName) {
+        current.collectionName = answer.collectionName;
+      }
       current[answer.reviewRating] += 1;
       current.total += 1;
       feedbackByWordId.set(answer.wordId, current);
@@ -1143,6 +1160,9 @@ function getDifficultyRank(difficulty: QuizQuestionDifficulty | undefined) {
 }
 
 function clampMasteryPercent(value: number) {
+  // Older or partially saved mastery records can contain an invalid numeric
+  // value. Keep every progress surface readable instead of rendering NaN%.
+  if (!Number.isFinite(value)) return 0;
   return Math.max(0, Math.min(100, Math.round(value)));
 }
 

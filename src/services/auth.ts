@@ -211,6 +211,9 @@ export async function sendSupabasePasswordReset(
 ) {
   const { error } = await supabase.auth.resetPasswordForEmail(
     normalizeEmail(email),
+    {
+      redirectTo: getAuthRedirectUrl(),
+    },
   );
 
   if (error) {
@@ -218,6 +221,21 @@ export async function sendSupabasePasswordReset(
   }
 
   logAuthRequest('auth:password_reset', { email: normalizeEmail(email) }, context);
+}
+
+/** Updates the password for the authenticated user, including a recovery session. */
+export async function updateSupabasePassword(
+  password: string,
+  context?: AuthRequestContext,
+) {
+  const { data, error } = await supabase.auth.updateUser({ password });
+
+  if (error) {
+    throw error;
+  }
+
+  logAuthRequest('auth:password_updated', data.user, context);
+  return data.user ? toAuthUser(data.user) : null;
 }
 
 export async function signInWithOAuthProvider(

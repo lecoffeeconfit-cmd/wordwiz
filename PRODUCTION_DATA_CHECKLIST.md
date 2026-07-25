@@ -5,24 +5,33 @@ production-ready in Supabase.
 
 ## Supabase setup
 
-1. Run `supabase/wordwiz_schema.sql` in the Supabase SQL editor.
+1. Run these SQL files in order in the Supabase SQL editor:
+   1. `supabase/wordwiz_schema.sql`
+   2. `supabase/revenuecat_subscription_migration.sql`
+   3. `supabase/final_access_model_migration.sql`
+   4. `supabase/starter_collections_migration.sql`
 2. Run `supabase/production_verification.sql` and confirm:
    - all WordWiz tables have RLS enabled
    - policies use `auth.uid() = user_id`
    - no broad public table policies exist
-3. Deploy the delete-account Edge Function:
+   - the `words` INSERT policy is `Words are created through the allowance RPC`
+     with `with_check` set to `false`
+3. Test a starter collection with a production-like account. Confirm the full
+   deck appears once, its study set is created, and the check above returns all
+   five RPCs before releasing a TestFlight build.
+4. Deploy the delete-account Edge Function:
 
 ```bash
 supabase functions deploy delete-account
 ```
 
-4. Deploy the Wordnik enrichment Edge Function:
+5. Deploy the Wordnik enrichment Edge Function:
 
 ```bash
 supabase functions deploy wordnik-enrich
 ```
 
-5. In Supabase Auth settings:
+6. In Supabase Auth settings:
    - keep email confirmation enabled
    - configure the production site URL
    - add local and production redirect URLs

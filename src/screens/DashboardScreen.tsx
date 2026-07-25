@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Canvas as SkiaCanvas, Circle as SkiaCircle, Group as SkiaGroup, Path as SkiaPath, Skia, vec } from '@shopify/react-native-skia';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { LayoutChangeEvent } from 'react-native';
-import { ActivityIndicator, Alert, Animated, Easing, FlatList, Image, Pressable, ScrollView, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Animated, Easing, FlatList, Image, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { COLORS } from '../constants/theme';
 import type { AnalyticsData, LegalPage, QuizAnswer, QuizDifficultyPreference, QuizPreferences, QuizProgress, QuizQuestion, QuizQuestionMode, ReminderSettings, SortMode, TimeBasedLearningSettings, Word } from '../types';
 import type { QuizFeedbackSummary } from '../utils';
@@ -12,6 +12,7 @@ import { DEFAULT_TIME_BASED_LEARNING_SETTINGS, MASTERY_LEVELS, buildAchievements
 import { CompactPagination, DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, ProgressFill, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 import { LessonProgressRing } from '../components/dashboard/LessonProgressRing';
 import { useSubscription } from '../subscription/SubscriptionProvider';
+import { validatePassword } from '../services';
 
 const EXPANDED_LIST_PAGE_SIZE = 8;
 const FEEDBACK_BY_WORD_PAGE_SIZE = 6;
@@ -114,7 +115,6 @@ export function DashboardScreen({
   currentUser,
   reminderSettings,
   dailyQuizGoal,
-  achievementPoints,
   refreshTokens,
   onReviewDue,
   onStudyFlaggedCards,
@@ -129,6 +129,7 @@ export function DashboardScreen({
   onQuizPreferencesChange,
   onOpenLegal,
   onLogout,
+  onChangePassword,
   onDeleteAccount,
   onOpenOnboardingGuide,
   onOpenPlus,
@@ -141,7 +142,6 @@ export function DashboardScreen({
   currentUser: AuthUser | null;
   reminderSettings: ReminderSettings;
   dailyQuizGoal: number;
-  achievementPoints: number;
   refreshTokens: number;
   onReviewDue: (priorityWordIds?: string[]) => void;
   onStudyFlaggedCards: () => void;
@@ -156,11 +156,16 @@ export function DashboardScreen({
   onQuizPreferencesChange: (preferences: QuizPreferences) => void;
   onOpenLegal: (page: LegalPage) => void;
   onLogout: () => void;
+  onChangePassword: (password: string) => Promise<boolean>;
   onDeleteAccount: () => void;
   onOpenOnboardingGuide: () => void;
   onOpenPlus: () => void;
 }) {
   const subscription = useSubscription();
+  const [isPasswordEditorOpen, setIsPasswordEditorOpen] = useState(false);
+  const [newPassword, setNewPassword] = useState('');
+  const [passwordConfirmation, setPasswordConfirmation] = useState('');
+  const [isChangingPassword, setIsChangingPassword] = useState(false);
   const plusEntitlement = subscription.customerInfo?.entitlements.active.Plus;
   const isComplimentary = subscription.accessSource === 'complimentary';
   const isSubscribed = subscription.accessSource === 'subscription';
@@ -383,13 +388,43 @@ export function DashboardScreen({
     onSetWordFlagState(flaggedWordIds, false);
     setRecentlyUnflaggedWordIds(flaggedWordIds);
   }
+
+  async function submitPasswordChange() {
+    const passwordError = validatePassword(newPassword);
+    if (passwordError) {
+      Alert.alert('Check your password', passwordError);
+      return;
+    }
+    if (newPassword !== passwordConfirmation) {
+      Alert.alert('Passwords do not match', 'Enter the same new password in both fields.');
+      return;
+    }
+
+    setIsChangingPassword(true);
+    const success = await onChangePassword(newPassword);
+    setIsChangingPassword(false);
+    if (success) {
+      setNewPassword('');
+      setPasswordConfirmation('');
+      setIsPasswordEditorOpen(false);
+    }
+  }
   const feedbackSummary = getQuizFeedbackSummary(analytics);
   const wordsById = new Map(words.map((word) => [word.id, word]));
+  const getCollectionName = (word: Word | undefined) =>
+    word?.mastery?.studySets?.find(
+      (set) =>
+        set.kind === 'collection' || set.id.startsWith('wordwiz-collection:'),
+    )?.name;
   const feedbackByWord = getQuizFeedbackByWord(analytics)
-    .map((feedback) => ({
-      ...feedback,
-      term: wordsById.get(feedback.wordId)?.term ?? 'Saved word',
-    }));
+    .map((feedback) => {
+      const word = wordsById.get(feedback.wordId);
+      return {
+        ...feedback,
+        term: word?.term ?? feedback.wordTerm ?? 'Saved word',
+        collectionName: getCollectionName(word) ?? feedback.collectionName,
+      };
+    });
   const feedbackWordPageCount = Math.max(
     1,
     Math.ceil(feedbackByWord.length / FEEDBACK_BY_WORD_PAGE_SIZE),
@@ -405,10 +440,18 @@ export function DashboardScreen({
   );
   const recallPaceByType = getQuizRecallPaceByQuestionType(analytics);
   const recallPaceByWord = getQuizRecallPaceByWord(analytics)
-    .map((pace) => ({
-      ...pace,
-      term: wordsById.get(pace.key)?.term ?? 'Saved word',
-    }));
+    .flatMap((pace) => {
+      const word = wordsById.get(pace.key);
+      const term = word?.term ?? pace.wordTerm;
+      // Older attempts that only stored an ID cannot be honestly named after
+      // the word has left the active library. Do not show a generic placeholder.
+      if (!term) return [];
+      return {
+        ...pace,
+        term,
+        collectionName: getCollectionName(word) ?? pace.collectionName,
+      };
+    });
   const recallPaceWordPageCount = Math.max(
     1,
     Math.ceil(recallPaceByWord.length / RECALL_PACE_BY_WORD_PAGE_SIZE),
@@ -1440,9 +1483,19 @@ export function DashboardScreen({
             {feedbackWordsForPage.map((feedback) => (
               <View key={feedback.wordId} style={styles.feedbackWordRow}>
                 <View style={styles.feedbackWordHeader}>
-                  <Text numberOfLines={1} style={styles.feedbackWordName}>
-                    {feedback.term}
-                  </Text>
+                  <View style={styles.feedbackWordTitleGroup}>
+                    <Text numberOfLines={1} style={styles.feedbackWordName}>
+                      {feedback.term}
+                    </Text>
+                    {feedback.collectionName ? (
+                      <View style={styles.feedbackWordCollectionBadge}>
+                        <Ionicons name="library-outline" size={11} color={COLORS.purpleDark} />
+                        <Text numberOfLines={1} style={styles.feedbackWordCollectionText}>
+                          WordWiz collection · {feedback.collectionName}
+                        </Text>
+                      </View>
+                    ) : null}
+                  </View>
                   <Text style={styles.feedbackWordTotal}>
                     {feedback.total} {feedback.total === 1 ? 'check-in' : 'check-ins'}
                   </Text>
@@ -1520,7 +1573,9 @@ export function DashboardScreen({
           <View style={styles.feedbackEmpty}>
             <Ionicons name="speedometer-outline" size={21} color={COLORS.blue} />
             <Text style={styles.feedbackEmptyText}>
-              Complete a few quiz questions to see how quickly you recall each kind of prompt.
+              {recallPaceView === 'words'
+                ? 'Complete another quiz to see pace for each named word.'
+                : 'Complete a few quiz questions to see how quickly you recall each kind of prompt.'}
             </Text>
           </View>
         ) : (
@@ -1788,11 +1843,13 @@ export function DashboardScreen({
         <View style={styles.achievementRewardBar}>
           <View style={styles.achievementRewardItem}>
             <View style={[styles.achievementRewardIcon, styles.achievementRewardIconPoints]}>
-              <Ionicons name="sparkles" size={15} color={COLORS.purpleDark} />
+              <Ionicons name="trophy" size={19} color={COLORS.purpleDark} />
             </View>
-            <View>
-              <Text style={styles.achievementRewardValue}>{achievementPoints}</Text>
-              <Text style={styles.achievementRewardLabel}>POINTS EARNED</Text>
+            <View style={styles.achievementRewardCopy}>
+              <Text style={styles.achievementRewardValue}>{unlockedAchievements}</Text>
+              <Text numberOfLines={2} style={styles.achievementRewardLabel}>
+                {'ACHIEVEMENTS\nCOMPLETED'}
+              </Text>
             </View>
           </View>
           <View style={styles.achievementRewardDivider} />
@@ -1842,11 +1899,11 @@ export function DashboardScreen({
             <View style={styles.achievementTokenCopy}>
               <View style={styles.achievementTokenValueRow}>
                 <Text style={styles.achievementTokenValue}>{refreshTokens}</Text>
-                <Text style={styles.achievementTokenName}>
+                <Text numberOfLines={1} style={styles.achievementTokenName}>
                   {refreshTokens === 1 ? 'MAGIC PASS' : 'MAGIC PASSES'}
                 </Text>
               </View>
-              <Text style={styles.achievementTokenLabel}>
+              <Text numberOfLines={2} style={styles.achievementTokenLabel}>
                 {refreshTokens > 0 ? 'UNLOCK DAILY + OMEGA' : 'EARN FROM ACHIEVEMENTS'}
               </Text>
             </View>
@@ -2406,6 +2463,7 @@ export function DashboardScreen({
           onPress={() => onTimedLearningChange(!timedLearningEnabled)}
           style={({ pressed }) => [
             styles.quizPreferenceToggle,
+            styles.timeBasedLearningToggle,
             timedLearningEnabled && styles.quizPreferenceToggleActive,
             pressed && styles.pressed,
           ]}
@@ -2415,7 +2473,7 @@ export function DashboardScreen({
             <Text style={styles.quizPreferenceToggleText}>
               {timedLearningEnabled
                 ? 'Fluency timer · no mastery penalty when time runs out'
-                : 'Optional pace timer for strong and proficient words'}
+                : 'Optional pace timer for strong words'}
             </Text>
           </View>
           <View style={[
@@ -2813,7 +2871,9 @@ export function DashboardScreen({
               style={({ pressed }) => [styles.subscriptionManageAction, pressed && styles.pressed]}
             >
               <Ionicons name="settings-outline" size={16} color={COLORS.purpleDark} />
-              <Text style={styles.subscriptionManageActionText}>MANAGE SUBSCRIPTION</Text>
+              <Text numberOfLines={1} style={styles.subscriptionManageActionText}>
+                MANAGE SUBSCRIPTION
+              </Text>
             </Pressable>
           ) : (
             <Pressable
@@ -2858,13 +2918,7 @@ export function DashboardScreen({
           <Text style={styles.accountName}>
             {currentUser?.name || 'WordWiz learner'}
           </Text>
-          <Text
-            style={styles.accountEmail}
-            numberOfLines={1}
-            ellipsizeMode="middle"
-            adjustsFontSizeToFit
-            minimumFontScale={0.78}
-          >
+          <Text style={styles.accountEmail}>
             {currentUser?.email || 'Local prototype account'}
           </Text>
         </View>
@@ -2877,6 +2931,95 @@ export function DashboardScreen({
           <Ionicons name="log-out-outline" size={18} color={COLORS.red} />
           <Text style={styles.logoutButtonText}>Log out</Text>
         </Pressable>
+      </View>
+
+      <View
+        style={[
+          styles.passwordSecurityCard,
+          isPasswordEditorOpen && styles.passwordSecurityCardExpanded,
+        ]}
+      >
+        <View style={styles.passwordSecurityHeader}>
+          <View style={styles.passwordSecurityIcon}>
+            <Ionicons name="lock-closed-outline" size={21} color={COLORS.purpleDark} />
+          </View>
+          <View style={styles.passwordSecurityCopy}>
+            <Text style={styles.passwordSecurityLabel}>PASSWORD & SECURITY</Text>
+            <Text style={styles.passwordSecurityTitle}>Keep your account secure</Text>
+            <Text style={styles.passwordSecurityText}>
+              Update your password whenever you need to.
+            </Text>
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={isPasswordEditorOpen ? 'Close password editor' : 'Change password'}
+            onPress={() => {
+              setIsPasswordEditorOpen((isOpen) => !isOpen);
+              setNewPassword('');
+              setPasswordConfirmation('');
+            }}
+            style={({ pressed }) => [
+              styles.passwordSecurityAction,
+              pressed && styles.pressed,
+            ]}
+          >
+            <Text style={styles.passwordSecurityActionText}>
+              {isPasswordEditorOpen ? 'Cancel' : 'Change'}
+            </Text>
+          </Pressable>
+        </View>
+
+        {isPasswordEditorOpen ? (
+          <View style={styles.passwordEditor}>
+            <Text style={styles.passwordEditorHint}>
+              Use 8+ characters with at least one letter and one number.
+            </Text>
+            <View style={styles.passwordEditorInputWrap}>
+              <Ionicons name="key-outline" size={19} color={COLORS.purpleDark} />
+              <TextInput
+                value={newPassword}
+                onChangeText={setNewPassword}
+                placeholder="New password"
+                placeholderTextColor={COLORS.muted}
+                secureTextEntry
+                autoCapitalize="none"
+                autoCorrect={false}
+                returnKeyType="next"
+                style={styles.passwordEditorInput}
+              />
+            </View>
+            <View style={styles.passwordEditorInputWrap}>
+              <Ionicons name="shield-checkmark-outline" size={19} color={COLORS.purpleDark} />
+              <TextInput
+                value={passwordConfirmation}
+                onChangeText={setPasswordConfirmation}
+                placeholder="Confirm new password"
+                placeholderTextColor={COLORS.muted}
+                secureTextEntry
+                autoCapitalize="none"
+                autoCorrect={false}
+                returnKeyType="done"
+                onSubmitEditing={() => { void submitPasswordChange(); }}
+                style={styles.passwordEditorInput}
+              />
+            </View>
+            <Pressable
+              accessibilityRole="button"
+              disabled={isChangingPassword}
+              onPress={() => { void submitPasswordChange(); }}
+              style={({ pressed }) => [
+                styles.passwordEditorSaveButton,
+                isChangingPassword && styles.passwordEditorSaveButtonDisabled,
+                pressed && !isChangingPassword && styles.pressed,
+              ]}
+            >
+              <Text style={styles.passwordEditorSaveButtonText}>
+                {isChangingPassword ? 'Saving...' : 'Update password'}
+              </Text>
+              <Ionicons name="checkmark" size={18} color={COLORS.white} />
+            </Pressable>
+          </View>
+        ) : null}
       </View>
 
       <View style={styles.deleteAccountCard}>
@@ -2997,14 +3140,30 @@ function FeedbackDistribution({
             ? Math.round((item.value / summary.total) * 100)
             : 0;
           return (
-            <View key={item.id} style={styles.feedbackLegendItem}>
-              <View
-                style={[styles.feedbackLegendDot, { backgroundColor: item.color }]}
-              />
-              <Text style={styles.feedbackLegendText}>
-                {item.label} {compact ? item.value : `${item.value} · ${percent}%`}
-              </Text>
-            </View>
+            compact ? (
+              <View key={item.id} style={styles.feedbackLegendItem}>
+                <View
+                  style={[styles.feedbackLegendDot, { backgroundColor: item.color }]}
+                />
+                <Text style={styles.feedbackLegendText}>
+                  {item.label} {item.value}
+                </Text>
+              </View>
+            ) : (
+              <View key={item.id} style={styles.feedbackLegendTile}>
+                <View style={styles.feedbackLegendTileHeading}>
+                  <View
+                    style={[styles.feedbackLegendDot, { backgroundColor: item.color }]}
+                  />
+                  <Text numberOfLines={1} style={styles.feedbackLegendTileLabel}>
+                    {item.label}
+                  </Text>
+                </View>
+                <Text style={styles.feedbackLegendTileValue}>
+                  {item.value} · {percent}%
+                </Text>
+              </View>
+            )
           );
         })}
       </View>
@@ -3021,6 +3180,7 @@ function RecallPaceList({
     answerCount: number;
     averageSeconds: number;
     term?: string;
+    collectionName?: string;
   }>;
   view: 'types' | 'words';
 }) {
@@ -3031,12 +3191,22 @@ function RecallPaceList({
       {items.map((item) => {
         const label = view === 'types'
           ? formatQuestionType(item.key)
-          : item.term ?? 'Saved word';
+          : item.term ?? '';
         const width = Math.max(10, Math.round((item.averageSeconds / slowestAverage) * 100));
         return (
           <View key={item.key} style={styles.recallPaceRow}>
             <View style={styles.recallPaceHeader}>
-              <Text numberOfLines={1} style={styles.recallPaceName}>{label}</Text>
+              <View style={styles.recallPaceNameGroup}>
+                <Text numberOfLines={1} style={styles.recallPaceName}>{label}</Text>
+                {view === 'words' && item.collectionName ? (
+                  <View style={styles.recallPaceCollectionBadge}>
+                    <Ionicons name="library-outline" size={10} color={COLORS.purpleDark} />
+                    <Text numberOfLines={1} style={styles.recallPaceCollectionText}>
+                      WordWiz collection · {item.collectionName}
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
               <View style={styles.recallPaceValuePill}>
                 <Ionicons name="time-outline" size={12} color={COLORS.blue} />
                 <Text style={styles.recallPaceValue}>{formatPace(item.averageSeconds)}</Text>
@@ -3123,12 +3293,14 @@ function RetrievalEvidenceCard({
 }) {
   return (
     <View style={[styles.retrievalEvidenceCard, { backgroundColor: pale }]}>
-      {isGoal ? (
-        <View style={styles.retrievalEvidenceGoalPill}>
-          <Ionicons name="ribbon" size={10} color="#B77A08" />
-          <Text style={styles.retrievalEvidenceGoalText}>THE GOAL</Text>
-        </View>
-      ) : null}
+      <View style={styles.retrievalEvidenceHeader}>
+        {isGoal ? (
+          <View style={styles.retrievalEvidenceGoalPill}>
+            <Ionicons name="ribbon" size={10} color="#B77A08" />
+            <Text style={styles.retrievalEvidenceGoalText}>THE GOAL</Text>
+          </View>
+        ) : null}
+      </View>
       <Text style={[styles.retrievalEvidenceValue, { color }]}>{value}%</Text>
       <Text style={styles.retrievalEvidenceLabel}>{label}</Text>
       <Text style={styles.retrievalEvidenceDetail}>{detail}</Text>
@@ -3297,19 +3469,20 @@ function AnimatedOmegaStatsIcon({ compact = false }: { compact?: boolean }) {
 
 function createGoldSparklePath(centerX: number, centerY: number, radius: number) {
   const innerRadius = radius * 0.32;
-  const path = Skia.Path.Make();
+  const builder = Skia.PathBuilder.Make();
 
-  path.moveTo(centerX, centerY - radius);
-  path.lineTo(centerX + innerRadius, centerY - innerRadius);
-  path.lineTo(centerX + radius, centerY);
-  path.lineTo(centerX + innerRadius, centerY + innerRadius);
-  path.lineTo(centerX, centerY + radius);
-  path.lineTo(centerX - innerRadius, centerY + innerRadius);
-  path.lineTo(centerX - radius, centerY);
-  path.lineTo(centerX - innerRadius, centerY - innerRadius);
-  path.close();
+  builder
+    .moveTo(centerX, centerY - radius)
+    .lineTo(centerX + innerRadius, centerY - innerRadius)
+    .lineTo(centerX + radius, centerY)
+    .lineTo(centerX + innerRadius, centerY + innerRadius)
+    .lineTo(centerX, centerY + radius)
+    .lineTo(centerX - innerRadius, centerY + innerRadius)
+    .lineTo(centerX - radius, centerY)
+    .lineTo(centerX - innerRadius, centerY - innerRadius)
+    .close();
 
-  return path;
+  return builder.detach();
 }
 
 function WordLevelDistributionBar({
@@ -3382,15 +3555,14 @@ function QuizAccuracyRing({
   state: 'empty' | 'zero' | 'scored';
 }) {
   const safeProgress = Math.max(0, Math.min(100, accuracy)) / 100;
-  const ringPath = useMemo(() => {
-    const path = Skia.Path.Make();
-    path.addCircle(
+  const ringPath = useMemo(
+    () => Skia.Path.Circle(
       QUIZ_ACCURACY_RING_SIZE / 2,
       QUIZ_ACCURACY_RING_SIZE / 2,
       QUIZ_ACCURACY_RING_RADIUS,
-    );
-    return path;
-  }, []);
+    ),
+    [],
+  );
   const glowOpacity = safeProgress >= 75 ? 0.2 : safeProgress >= 50 ? 0.11 : 0;
   const trackColor = state === 'empty'
     ? '#DED8F3'

@@ -773,12 +773,42 @@ function parseQuizAnswers(value: unknown): QuizAnswer[] {
             answer.reviewRating === 'easy')
             ? answer.reviewRating
             : undefined;
+        const wordTerm =
+          'wordTerm' in answer && typeof answer.wordTerm === 'string'
+            ? answer.wordTerm.trim() || undefined
+            : undefined;
+        const collectionName =
+          'collectionName' in answer && typeof answer.collectionName === 'string'
+            ? answer.collectionName.trim() || undefined
+            : undefined;
+        const questionMode =
+          'questionMode' in answer &&
+          (answer.questionMode === 'word-to-definition' ||
+            answer.questionMode === 'definition-to-word' ||
+            answer.questionMode === 'true-false' ||
+            answer.questionMode === 'typed-word' ||
+            answer.questionMode === 'sentence-usage' ||
+            answer.questionMode === 'sentence-completion' ||
+            answer.questionMode === 'closest-synonym')
+            ? answer.questionMode
+            : undefined;
+        const responseTimeSeconds =
+          'responseTimeSeconds' in answer &&
+          typeof answer.responseTimeSeconds === 'number' &&
+          Number.isFinite(answer.responseTimeSeconds) &&
+          answer.responseTimeSeconds >= 0
+            ? answer.responseTimeSeconds
+            : undefined;
 
         return {
           wordId: answer.wordId,
+          wordTerm,
+          collectionName,
           correct: answer.correct,
           difficulty,
+          questionMode,
           answeredAt,
+          responseTimeSeconds,
           reviewRating,
         };
       }

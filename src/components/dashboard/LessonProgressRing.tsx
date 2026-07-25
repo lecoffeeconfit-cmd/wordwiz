@@ -371,11 +371,7 @@ function SegmentArc({
   segment: MasteryRingSegment;
   animatedScore: SharedValue<number>;
 }) {
-  const circlePath = useMemo(() => {
-    const path = Skia.Path.Make();
-    path.addCircle(CENTER, CENTER, RADIUS);
-    return path;
-  }, []);
+  const circlePath = useMemo(() => Skia.Path.Circle(CENTER, CENTER, RADIUS), []);
   const fillEnd = useDerivedValue(() => {
     const segmentProgress = getSegmentProgress(
       animatedScore.value,
@@ -434,12 +430,13 @@ function LevelBoundaryLine({
 }: {
   line: (typeof MASTERY_BOUNDARY_LINES)[number];
 }) {
-  const boundaryPath = useMemo(() => {
-    const path = Skia.Path.Make();
-    path.moveTo(line.innerX, line.innerY);
-    path.lineTo(line.outerX, line.outerY);
-    return path;
-  }, [line.innerX, line.innerY, line.outerX, line.outerY]);
+  const boundaryPath = useMemo(
+    () => Skia.Path.Line(
+      vec(line.innerX, line.innerY),
+      vec(line.outerX, line.outerY),
+    ),
+    [line.innerX, line.innerY, line.outerX, line.outerY],
+  );
 
   return (
     <Path

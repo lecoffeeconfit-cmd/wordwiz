@@ -449,47 +449,103 @@ export function buildOmegaTest(
 ): QuizQuestion[] {
   const omegaWords = words.filter((word) => !word.mastery?.excludedFromPractice);
 
-  return shuffle(omegaWords).flatMap((word, wordIndex) => {
-    const contextOffset = getContextOffset(word, recentAttempts, wordIndex);
-    const recognitionMode = getOmegaRecognitionMode(word, omegaWords, wordIndex);
-    const modes: QuizQuestionMode[] = [recognitionMode, 'typed-word'];
-
-    return modes.map((mode, modeIndex) => ({
-      ...buildQuestionForMode(
-        word,
-        omegaWords,
-        wordIndex * modes.length + modeIndex,
-        mode,
-        contextOffset + modeIndex,
-        'ultra',
-      ),
-      strictSpelling: mode === 'typed-word',
-    }));
-  });
+  return shuffle(omegaWords).flatMap((word, wordIndex) =>
+    buildOmegaQuestionsForWord(word, omegaWords, recentAttempts, wordIndex),
+  );
 }
 
 /**
- * Omega is an assessment, so its companion prompt should test transfer or
- * recall—not the easiest recognition checks. A plain word-to-definition
- * question remains only as a dependable fallback for a very small library.
+ * Builds the same Omega assessment without monopolizing the JavaScript thread.
+ * Giving React Native a turn after each word keeps the loading state responsive
+ * even for large libraries.
  */
-function getOmegaRecognitionMode(
+export async function buildOmegaTestAsync(
+  words: Word[],
+  recentAttempts: QuizAttempt[] = [],
+): Promise<QuizQuestion[]> {
+  const omegaWords = words.filter((word) => !word.mastery?.excludedFromPractice);
+  const shuffledWords = shuffle(omegaWords);
+  const questions: QuizQuestion[] = [];
+
+  for (const [wordIndex, word] of shuffledWords.entries()) {
+    questions.push(
+      ...buildOmegaQuestionsForWord(word, omegaWords, recentAttempts, wordIndex),
+    );
+
+    // Keep long libraries responsive without adding a timer delay per word.
+    if (
+      wordIndex < shuffledWords.length - 1 &&
+      (wordIndex + 1) % 8 === 0
+    ) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    }
+  }
+
+  return questions;
+}
+
+function buildOmegaQuestionsForWord(
+  word: Word,
+  omegaWords: Word[],
+  recentAttempts: QuizAttempt[],
+  wordIndex: number,
+): QuizQuestion[] {
+  const contextOffset = getContextOffset(word, recentAttempts, wordIndex);
+  return [
+    buildFastOmegaRecognitionQuestion(word, omegaWords, wordIndex, contextOffset),
+    {
+      ...buildTypedWordQuestion(word, contextOffset + 1, true),
+      strictSpelling: true,
+    },
+  ];
+}
+
+function buildFastOmegaRecognitionQuestion(
   word: Word,
   words: Word[],
   index: number,
-): QuizQuestionMode {
-  const strongestAvailable = [
-    'sentence-completion',
-    'closest-synonym',
-    'definition-to-word',
-    'sentence-usage',
-  ].filter((mode) =>
-    getSupportedQuestionModesForWord(word, words).includes(mode as QuizQuestionMode),
-  ) as QuizQuestionMode[];
+  contextOffset: number,
+): QuizQuestion {
+  if (words.length < 2) {
+    const answer = getQuestionMeaning(word, true);
+    const distractors = FALLBACK_DEFINITIONS.filter(
+      (definition) => definition !== answer,
+    ).slice(0, 3);
+    return {
+      word,
+      prompt: 'WHAT DOES THIS WORD MEAN?',
+      displayText: word.term,
+      answer,
+      options: shuffle([answer, ...distractors]),
+      mode: 'word-to-definition',
+      difficulty: getQuestionDifficulty('word-to-definition'),
+      helperText: 'Choose the meaning that matches this word.',
+      feedback: `“${word.term}” means ${answer.toLowerCase()}`,
+    };
+  }
 
-  return strongestAvailable.length
-    ? strongestAvailable[index % strongestAvailable.length]
-    : 'word-to-definition';
+  const recallPrompt = getSafeRecallPrompt(word, contextOffset, index % 2 === 1, true);
+  const otherWords = words.filter((item) => item.id !== word.id);
+  const rotationStart = otherWords.length ? index % otherWords.length : 0;
+  const distractors = pickTopUnique(
+    [...otherWords.slice(rotationStart), ...otherWords.slice(0, rotationStart)].map(
+      (item) => item.term,
+    ),
+    word.term,
+    3,
+  );
+
+  return {
+    word,
+    prompt: recallPrompt.prompt,
+    displayText: recallPrompt.displayText,
+    answer: word.term,
+    options: shuffle([word.term, ...distractors]),
+    mode: 'definition-to-word',
+    difficulty: getQuestionDifficulty('definition-to-word'),
+    helperText: recallPrompt.chooseHelperText,
+    feedback: `The word is “${word.term}”.`,
+  };
 }
 
 export function getOmegaTestAttempts(analytics: AnalyticsData) {

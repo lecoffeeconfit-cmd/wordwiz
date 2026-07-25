@@ -949,7 +949,7 @@ export function AddWordModal({
               icon="people-outline"
               value={commonWordsText}
               onChangeText={setCommonWordsText}
-              placeholder="quick, start, move"
+              placeholder="Words with a similar meaning"
               inputRef={synonymsInputRef}
             />
             <InputGroup
@@ -957,7 +957,7 @@ export function AddWordModal({
               icon="swap-horizontal-outline"
               value={antonymsText}
               onChangeText={setAntonymsText}
-              placeholder="slow, stop, stay"
+              placeholder="Words with the opposite meaning"
             />
             <InputGroup
               label="USE IT IN A SENTENCE"
@@ -1058,7 +1058,7 @@ export function AddWordModal({
                           commonWordsText: value,
                         }))
                       }
-                      placeholder="quick, start, move"
+                      placeholder="Words with a similar meaning"
                     />
                     <SectionEditField
                       label="Antonyms"
@@ -1069,7 +1069,7 @@ export function AddWordModal({
                           antonymsText: value,
                         }))
                       }
-                      placeholder="opposite, contrary"
+                      placeholder="Words with the opposite meaning"
                     />
                   </View>
                 ) : (

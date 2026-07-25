@@ -36,6 +36,22 @@ export class WordSaveSetupError extends Error {
   }
 }
 
+/** The optional bulk collection RPC is unavailable on an older database. */
+export class CollectionBatchUnavailableError extends Error {
+  constructor() {
+    super('Collection batch saving is not available on this database yet.');
+    this.name = 'CollectionBatchUnavailableError';
+  }
+}
+
+/** The account no longer has access to add a curated WordWiz collection. */
+export class PremiumCollectionAccessError extends Error {
+  constructor() {
+    super('WordWiz collections require active Plus access.');
+    this.name = 'PremiumCollectionAccessError';
+  }
+}
+
 export async function getFreeWordUsage(): Promise<FreeWordUsage> {
   const { data, error } = await supabase.rpc('get_free_word_usage');
   if (error) throw new Error(`free_word_usage: ${error.message}`);
@@ -113,6 +129,20 @@ function isWordSaveSetupError(error: {
   );
 }
 
+function isCollectionBatchUnavailable(error: {
+  message?: string | null;
+  details?: string | null;
+  hint?: string | null;
+  code?: string | null;
+}) {
+  return (
+    (error.code === 'PGRST202' || error.code === '42883') &&
+    /create_words_with_monthly_limit|could not find the function/i.test(
+      errorText(error),
+    )
+  );
+}
+
 /**
  * Creates an optional WordWiz collection in one server transaction. This keeps
  * large starter decks responsive while preserving the server-enforced allowance.
@@ -139,12 +169,64 @@ export async function createCloudWordsWithFreeLimit(words: Word[]): Promise<Word
     if (/free_word_limit_reached|free word additions/i.test(error.message)) {
       throw new FreeWordLimitError();
     }
+    if (isCollectionBatchUnavailable(error)) {
+      throw new CollectionBatchUnavailableError();
+    }
     if (isWordSaveSetupError(error)) throw new WordSaveSetupError();
     throw new Error(`words: ${error.message}`);
   }
 
   if (!Array.isArray(data) || data.length !== words.length) {
     throw new Error('words: the collection could not be saved completely');
+  }
+
+  return (data as WordRow[]).map(mapWordRow);
+}
+
+/**
+ * Saves an entire WordWiz collection in one transaction, including the study
+ * set membership for words the learner had already saved. This is deliberately
+ * separate from the legacy per-word path: a collection must never appear only
+ * partially added after a network error or a second device changes the library.
+ */
+export async function createCloudStarterCollection(
+  words: Word[],
+  existingWordIds: string[],
+  membership: StudySetMembership,
+): Promise<Word[]> {
+  let result = await supabase.rpc('add_starter_collection', {
+    p_words: words.map(toWordPayload),
+    p_existing_word_ids: existingWordIds,
+    p_membership: membership,
+  });
+
+  if (result.error && isSessionError(result.error)) {
+    const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
+    if (!refreshError && refreshData.session) {
+      result = await supabase.rpc('add_starter_collection', {
+        p_words: words.map(toWordPayload),
+        p_existing_word_ids: existingWordIds,
+        p_membership: membership,
+      });
+    }
+  }
+
+  const { data, error } = result;
+
+  if (error) {
+    const message = errorText(error);
+    if (/premium_access_required|plus access/i.test(message)) {
+      throw new PremiumCollectionAccessError();
+    }
+    if (/free_word_limit_reached|free word additions/i.test(message)) {
+      throw new FreeWordLimitError();
+    }
+    if (isWordSaveSetupError(error)) throw new WordSaveSetupError();
+    throw new Error(`starter_collection: ${error.message}`);
+  }
+
+  if (!Array.isArray(data) || data.length !== words.length + existingWordIds.length) {
+    throw new Error('starter_collection: the collection could not be saved completely');
   }
 
   return (data as WordRow[]).map(mapWordRow);

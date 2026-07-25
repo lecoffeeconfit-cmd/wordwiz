@@ -1,15 +1,27 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Animated, FlatList, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, Animated, FlatList, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { COLORS } from '../constants/theme';
 import type { AnalyticsData, LegalPage, QuizAnswer, QuizDifficultyPreference, QuizPreferences, QuizProgress, QuizQuestion, QuizSessionMode, ReminderSettings, ReviewRating, SortMode, TimeBasedLearningSettings, Word } from '../types';
 import { styles } from '../styles';
-import { buildCategoryPracticeQuiz, buildOmegaTest, buildQuiz, calculateStreakStats, evaluateQuizAnswer, formatReminderTime, formatStudyTime, formatWordFlaggedDate, getDayKey, getEffectiveQuizDifficulty, getMistakeReviewWordIds, getNewStudyWords, getOmegaTestStatus, getQuizQuestionPace, getQuizRecallPaceSignal, getRecentDays, getStreakMessage, getStreakWeek, getStudySets, getTimedLearningBonusXp, getTypedRecallHint, getWordMastery, getWordMasteryCategoryForWord, NEW_STUDY_GROUP, normalizeTimeBasedLearningSettings, shuffle, TIMED_LEARNING_SECONDS, WORD_MASTERY_CATEGORIES, type WordMasteryCategoryId } from '../utils';
+import { buildCategoryPracticeQuiz, buildOmegaTestAsync, buildQuiz, calculateStreakStats, evaluateQuizAnswer, formatReminderTime, formatStudyTime, formatWordFlaggedDate, getDayKey, getEffectiveQuizDifficulty, getMistakeReviewWordIds, getNewStudyWords, getOmegaTestStatus, getQuizQuestionPace, getQuizRecallPaceSignal, getRecentDays, getStreakMessage, getStreakWeek, getStudySets, getTimedLearningBonusXp, getTypedRecallHint, getWordMastery, getWordMasteryCategoryForWord, NEW_STUDY_GROUP, normalizeTimeBasedLearningSettings, shuffle, TIMED_LEARNING_SECONDS, WORD_MASTERY_CATEGORIES, type WordMasteryCategoryId } from '../utils';
 import { DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, ProgressFill, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 import { reportError, trackEvent } from '../services';
 
 const REVEALED_TYPED_ANSWER = '__wordwiz-revealed-answer__';
 const TIMED_OUT_ANSWER = '__wordwiz-timed-out__';
+
+function getAnswerWordSnapshot(word: Word) {
+  const collection = word.mastery?.studySets?.find(
+    (set) =>
+      set.kind === 'collection' || set.id.startsWith('wordwiz-collection:'),
+  );
+
+  return {
+    wordTerm: word.term,
+    collectionName: collection?.name,
+  };
+}
 export type QuizStudyGroupId = WordMasteryCategoryId | 'new' | 'flagged' | `set:${string}`;
 
 export type PausedQuizSession = {
@@ -80,16 +92,33 @@ const QUIZ_SESSION_OPTIONS: {
   icon: keyof typeof Ionicons.glyphMap;
   description: string;
 }[] = [
-  { id: 'standard', label: 'Standard', icon: 'sparkles-outline', description: 'Adaptive mix' },
-  { id: 'quick', label: 'Quick', icon: 'flash-outline', description: '5–20 timed questions' },
-  { id: 'challenge', label: 'Challenge', icon: 'flame-outline', description: 'No hints · 3 misses ends it' },
-  { id: 'mistake-review', label: 'Mistake review', icon: 'refresh-outline', description: 'Missed and slow words' },
-  { id: 'mastery-test', label: 'Mastery test', icon: 'ribbon-outline', description: 'Recall, no hints' },
+  { id: 'standard', label: 'Standard', icon: 'sparkles', description: 'Adaptive mix' },
+  { id: 'quick', label: 'Quick', icon: 'flash', description: '5–20 timed questions' },
+  { id: 'challenge', label: 'Challenge', icon: 'flame', description: 'No hints · 3 misses ends it' },
+  { id: 'mistake-review', label: 'Mistake review', icon: 'refresh', description: 'Missed and slow words' },
+  { id: 'mastery-test', label: 'Mastery test', icon: 'ribbon', description: 'Recall, no hints' },
 ];
 
 function getQuizSessionLabel(sessionMode: QuizSessionMode) {
   if (sessionMode === 'omega-test') return 'Omega Test';
   return QUIZ_SESSION_OPTIONS.find((option) => option.id === sessionMode)?.label ?? 'Standard';
+}
+
+function getQuizStartLabel(sessionMode: QuizSessionMode) {
+  switch (sessionMode) {
+    case 'omega-test':
+      return 'START OMEGA TEST';
+    case 'mistake-review':
+      return 'START MISTAKE REVIEW QUIZ';
+    case 'mastery-test':
+      return 'START MASTERY TEST QUIZ';
+    case 'challenge':
+      return 'START CHALLENGE QUIZ';
+    case 'quick':
+      return 'START QUICK QUIZ';
+    default:
+      return 'START QUIZ';
+  }
 }
 
 function supportsQuestionCount(sessionMode: QuizSessionMode) {
@@ -159,15 +188,80 @@ export function QuizScreen({
   const [isPracticeRound, setIsPracticeRound] = useState(false);
   const [dailyRefreshActive, setDailyRefreshActive] = useState(false);
   const [omegaRefreshActive, setOmegaRefreshActive] = useState(false);
+  const [isPreparingOmegaTest, setIsPreparingOmegaTest] = useState(false);
+  const [omegaPreparationElapsedSeconds, setOmegaPreparationElapsedSeconds] = useState(0);
   const [sessionMode, setSessionMode] = useState<QuizSessionMode>('standard');
   const [questionCount, setQuestionCount] = useState<5 | 10 | 20>(5);
   const [challengeMistakes, setChallengeMistakes] = useState(0);
   const [challengeCorrectStreak, setChallengeCorrectStreak] = useState(0);
   const ultraBadgePulse = useRef(new Animated.Value(0)).current;
+  const omegaMagicFloat = useRef(new Animated.Value(0)).current;
+  const omegaMagicTwinkle = useRef(new Animated.Value(0.35)).current;
+  const omegaPreparationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const omegaPreparationRequest = useRef(0);
   const [finishedTotal, setFinishedTotal] = useState<number | null>(null);
   const [finishedWasDailyRetry, setFinishedWasDailyRetry] = useState(false);
   const [selectedCategory, setSelectedCategory] =
     useState<QuizStudyGroupId>(initialStudyGroup ?? 'all');
+
+  useEffect(() => {
+    const magic = Animated.loop(
+      Animated.parallel([
+        Animated.sequence([
+          Animated.timing(omegaMagicFloat, {
+            toValue: -5,
+            duration: 2500,
+            useNativeDriver: true,
+          }),
+          Animated.timing(omegaMagicFloat, {
+            toValue: 0,
+            duration: 2500,
+            useNativeDriver: true,
+          }),
+        ]),
+        Animated.sequence([
+          Animated.timing(omegaMagicTwinkle, {
+            toValue: 1,
+            duration: 1800,
+            useNativeDriver: true,
+          }),
+          Animated.timing(omegaMagicTwinkle, {
+            toValue: 0.35,
+            duration: 1800,
+            useNativeDriver: true,
+          }),
+        ]),
+      ]),
+    );
+    magic.start();
+    return () => magic.stop();
+  }, [omegaMagicFloat, omegaMagicTwinkle]);
+
+  useEffect(() => {
+    return () => {
+      if (omegaPreparationTimer.current) {
+        clearTimeout(omegaPreparationTimer.current);
+      }
+      omegaPreparationRequest.current += 1;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isPreparingOmegaTest) {
+      setOmegaPreparationElapsedSeconds(0);
+      return;
+    }
+
+    const startedAt = Date.now();
+    const updateElapsedTime = () => {
+      setOmegaPreparationElapsedSeconds(
+        Math.floor((Date.now() - startedAt) / 1_000),
+      );
+    };
+    updateElapsedTime();
+    const interval = setInterval(updateElapsedTime, 1_000);
+    return () => clearInterval(interval);
+  }, [isPreparingOmegaTest]);
   const wordMastery = useMemo(
     () =>
       words.map((word) => ({
@@ -280,13 +374,21 @@ export function QuizScreen({
         : questionCount;
   const canChangeCategory = quiz.length === 0 || finishedScore !== null;
   const activeQuestion = quiz[questionIndex];
+  const wordsById = useMemo(
+    () => new Map(words.map((word) => [word.id, word])),
+    [words],
+  );
+  const getLiveQuestionWord = (question: QuizQuestion) =>
+    wordsById.get(question.word.id) ?? question.word;
   const normalizedTimeSettings = normalizeTimeBasedLearningSettings(
     timeBasedLearningSettings,
   );
   const activePace = getQuizQuestionPace({
     sessionMode,
     questionDifficulty: activeQuestion?.difficulty,
-    wordMastery: activeQuestion ? getWordMastery(activeQuestion.word, analytics) : 0,
+    wordMastery: activeQuestion
+      ? getWordMastery(getLiveQuestionWord(activeQuestion), analytics)
+      : 0,
     timedLearningEnabled,
     settings: normalizedTimeSettings,
   });
@@ -657,8 +759,30 @@ export function QuizScreen({
       return;
     }
 
-    onDiscardPausedSession();
+    if (modeOverride === 'omega-test') {
+      if (isPreparingOmegaTest) return;
 
+      // Yield once so React Native can paint the button's loading indicator
+      // before the full-library assessment builds its two questions per word.
+      setIsPreparingOmegaTest(true);
+      const requestId = omegaPreparationRequest.current + 1;
+      omegaPreparationRequest.current = requestId;
+      omegaPreparationTimer.current = setTimeout(() => {
+        omegaPreparationTimer.current = null;
+        void buildAndStartQuiz(modeOverride, hasOmegaAccess, quizWords, requestId);
+      }, 60);
+      return;
+    }
+
+    void buildAndStartQuiz(modeOverride, hasOmegaAccess, quizWords);
+  }
+
+  async function buildAndStartQuiz(
+    modeOverride: QuizSessionMode,
+    hasOmegaAccess: boolean,
+    quizWords: Word[],
+    omegaRequestId?: number,
+  ) {
     const masteryByWordId = Object.fromEntries(
       quizWords.map((word) => [
         word.id,
@@ -680,33 +804,50 @@ export function QuizScreen({
           ...priorityWordIds,
         ]
       : priorityWordIds;
-    const nextQuiz =
-      modeOverride === 'omega-test'
-        ? buildOmegaTest(quizWords, analytics.quizHistory)
-        : selectedCategory === 'all'
-        ? buildQuiz(
-            quizWords,
-            analytics.quizHistory,
-            masteryByWordId,
-            sessionPriorityWordIds,
-            sessionOptions,
-          )
-        : buildCategoryPracticeQuiz(
-            quizWords,
-            analytics.quizHistory,
-            masteryByWordId,
-            sessionPriorityWordIds,
-          sessionOptions,
-        );
+    let nextQuiz: QuizQuestion[];
+    try {
+      nextQuiz =
+        modeOverride === 'omega-test'
+          ? await buildOmegaTestAsync(quizWords, analytics.quizHistory)
+          : selectedCategory === 'all'
+          ? buildQuiz(
+              quizWords,
+              analytics.quizHistory,
+              masteryByWordId,
+              sessionPriorityWordIds,
+              sessionOptions,
+            )
+          : buildCategoryPracticeQuiz(
+              quizWords,
+              analytics.quizHistory,
+              masteryByWordId,
+              sessionPriorityWordIds,
+              sessionOptions,
+            );
+    } catch (error) {
+      if (modeOverride === 'omega-test' && omegaRequestId !== omegaPreparationRequest.current) {
+        return;
+      }
+      setIsPreparingOmegaTest(false);
+      reportError(error, { area: 'prepare_quiz', mode: modeOverride });
+      Alert.alert('Could not prepare your quiz', 'Please try starting it again.');
+      return;
+    }
+
+    if (modeOverride === 'omega-test' && omegaRequestId !== omegaPreparationRequest.current) {
+      return;
+    }
 
     // The controls already prevent this state, but keep the assessment safe if
     // a library changes while the screen is mounted (for example after a word
     // is paused on another device).
     if (nextQuiz.length === 0) {
+      setIsPreparingOmegaTest(false);
       Alert.alert('No words ready yet', 'Add or resume a word before starting this quiz.');
       return;
     }
 
+    onDiscardPausedSession();
     setQuiz(nextQuiz);
     setQuestionIndex(0);
     setSelected(null);
@@ -737,6 +878,7 @@ export function QuizScreen({
     setIsPracticeRound(
       modeOverride === 'omega-test' || (Boolean(progress) && !dailyRefreshActive),
     );
+    setIsPreparingOmegaTest(false);
     trackEvent('quiz_started', {
       category: selectedCategory,
       mode: modeOverride,
@@ -774,6 +916,7 @@ export function QuizScreen({
       ...current,
       {
         wordId: question.word.id,
+        ...getAnswerWordSnapshot(question.word),
         correct,
         sessionMode,
         difficulty: question.difficulty,
@@ -801,6 +944,7 @@ export function QuizScreen({
       ...current,
       {
         wordId: activeQuestion.word.id,
+        ...getAnswerWordSnapshot(activeQuestion.word),
         correct: false,
         sessionMode,
         timedOut: true,
@@ -840,6 +984,7 @@ export function QuizScreen({
     const responseTimeSeconds = getResponseTimeSeconds(questionStartedAt);
     const currentAnswer: QuizAnswer = {
       wordId: question.word.id,
+      ...getAnswerWordSnapshot(question.word),
       correct: evaluation.correct,
       sessionMode,
       difficulty: question.difficulty,
@@ -983,7 +1128,7 @@ export function QuizScreen({
                     pressed && styles.pressed,
                   ]}
                 >
-                  <Ionicons name={option.icon} size={16} color={active ? COLORS.purpleDark : COLORS.muted} />
+                  <Ionicons name={option.icon} size={16} color={active ? COLORS.purpleDark : '#978ABB'} />
                   <Text style={[styles.quizSessionOptionLabel, active && styles.quizSessionOptionLabelActive]}>{option.label}</Text>
                   <Text style={styles.quizSessionOptionDetail}>{option.description}</Text>
                 </Pressable>
@@ -1025,24 +1170,73 @@ export function QuizScreen({
   );
 
   const omegaTestCard = (
-    <View style={styles.omegaTestCard}>
-      <View style={styles.omegaTestIcon}>
-        <Ionicons name="planet" size={25} color={COLORS.white} />
-        <Ionicons
-          name="sparkles"
-          size={12}
-          color="#FFE58A"
-          style={styles.omegaTestSparkle}
-        />
-      </View>
-      <View style={styles.omegaTestCopy}>
-        <Text style={styles.omegaTestEyebrow}>WEEKLY OMEGA TEST</Text>
-        <Text style={styles.omegaTestTitle}>Test every saved word</Text>
-        <Text style={styles.omegaTestText}>
-          {sessionMode === 'omega-test'
-            ? 'Full-library assessment selected. Two varied prompts per word, with no hints.'
-            : 'A full-library assessment with two varied prompts per word and no hints.'}
-        </Text>
+    <View
+      style={[
+        styles.omegaTestCard,
+        sessionMode === 'omega-test' && styles.omegaTestCardSelected,
+      ]}
+    >
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          styles.omegaTestMagicStarOne,
+          {
+            opacity: omegaMagicTwinkle,
+            transform: [{ translateY: omegaMagicFloat }],
+          },
+      ]}
+    >
+        <Ionicons name="sparkles" size={18} color="#F2C94C" />
+      </Animated.View>
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          styles.omegaTestMagicStarTwo,
+          {
+            opacity: omegaMagicTwinkle,
+            transform: [{ translateY: Animated.multiply(omegaMagicFloat, -0.6) }],
+          },
+      ]}
+    >
+        <Ionicons name="star" size={11} color="#FFD76A" />
+    </Animated.View>
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          styles.omegaTestGoldCornerSparkle,
+          {
+            opacity: omegaMagicTwinkle,
+            transform: [{ translateY: Animated.multiply(omegaMagicFloat, -0.45) }],
+          },
+        ]}
+      >
+        <Ionicons name="sparkles" size={14} color="#F2C94C" />
+      </Animated.View>
+      <View style={styles.omegaTestMain}>
+        <View style={styles.omegaTestIcon}>
+          <Ionicons name="planet" size={25} color={COLORS.white} />
+          <Ionicons
+            name="sparkles"
+            size={12}
+            color="#FFF0A6"
+            style={styles.omegaTestSparkle}
+          />
+          <Ionicons
+            name="star"
+            size={7}
+            color="#FFD76A"
+            style={styles.omegaTestIconGoldStar}
+          />
+        </View>
+        <View style={styles.omegaTestCopy}>
+          <Text style={styles.omegaTestEyebrow}>WEEKLY OMEGA TEST · FINAL CHALLENGE</Text>
+          <Text style={styles.omegaTestTitle}>Every word. No shortcuts.</Text>
+          <Text style={styles.omegaTestText}>
+            {sessionMode === 'omega-test'
+              ? 'Full-library assessment selected. Two varied prompts per word, with no hints.'
+              : 'A full-library assessment with two varied prompts per word and no hints.'}
+          </Text>
+        </View>
       </View>
       <Pressable
         accessibilityRole="button"
@@ -1063,7 +1257,8 @@ export function QuizScreen({
         disabled={
           !quizPreferences.enabled ||
           (!omegaTestAvailable && refreshTokens === 0) ||
-          omegaTestWords.length === 0
+          omegaTestWords.length === 0 ||
+          isPreparingOmegaTest
         }
         onPress={() => {
           let hasOmegaAccess = omegaTestAvailable;
@@ -1081,22 +1276,35 @@ export function QuizScreen({
           styles.omegaTestButton,
           (!quizPreferences.enabled ||
             (!omegaTestAvailable && refreshTokens === 0) ||
-            omegaTestWords.length === 0) && styles.omegaTestButtonDisabled,
+            omegaTestWords.length === 0 ||
+            isPreparingOmegaTest) && styles.omegaTestButtonDisabled,
+          isPreparingOmegaTest && styles.omegaStartButtonLoading,
           pressed && styles.pressed,
         ]}
       >
-        <Text style={styles.omegaTestButtonText}>
+        <Text
+          style={[
+            styles.omegaTestButtonText,
+            isPreparingOmegaTest && styles.omegaStartButtonLoadingText,
+          ]}
+        >
           {omegaTestAvailable
-            ? 'FACE FINAL BOSS'
+            ? isPreparingOmegaTest
+              ? 'SUMMONING OMEGA TEST'
+              : 'BEGIN FINAL BOSS'
             : refreshTokens > 0
               ? 'USE 1 TOKEN'
               : formatOmegaCountdown(omegaTestStatus.remainingMs)}
         </Text>
-        <Ionicons
-          name={omegaTestAvailable ? 'arrow-forward' : refreshTokens > 0 ? 'ticket-outline' : 'time-outline'}
-          size={14}
-          color={COLORS.white}
-        />
+        {isPreparingOmegaTest ? (
+          <ActivityIndicator size="small" color="#766793" />
+        ) : (
+          <Ionicons
+            name={omegaTestAvailable ? 'arrow-forward' : refreshTokens > 0 ? 'ticket-outline' : 'time-outline'}
+            size={14}
+            color={COLORS.white}
+          />
+        )}
       </Pressable>
     </View>
   );
@@ -1381,26 +1589,36 @@ export function QuizScreen({
             </Text>
           </View>
           <Pressable
-            disabled={!quizPreferences.enabled || activeQuizWords.length === 0 || (sessionMode === 'omega-test' && !omegaTestAvailable)}
+            disabled={!quizPreferences.enabled || activeQuizWords.length === 0 || (sessionMode === 'omega-test' && (!omegaTestAvailable || isPreparingOmegaTest))}
             onPress={() => startQuiz()}
             style={({ pressed }) => [
               styles.primaryButton,
-              (!quizPreferences.enabled || activeQuizWords.length === 0 || (sessionMode === 'omega-test' && !omegaTestAvailable)) && styles.primaryButtonDisabled,
+              (!quizPreferences.enabled || activeQuizWords.length === 0 || (sessionMode === 'omega-test' && (!omegaTestAvailable || isPreparingOmegaTest))) && styles.primaryButtonDisabled,
+              sessionMode === 'omega-test' && isPreparingOmegaTest && styles.omegaStartButtonLoading,
               pressed && styles.primaryButtonPressed,
             ]}
           >
-            <Text style={styles.primaryButtonText}>
+            <Text
+              style={[
+                styles.primaryButtonText,
+                sessionMode === 'omega-test' &&
+                  isPreparingOmegaTest &&
+                  styles.omegaStartButtonLoadingText,
+              ]}
+            >
               {quizPreferences.enabled
                 ? dailyRefreshActive
                   ? 'RETRY DAILY SCORE'
-                  : sessionMode === 'omega-test'
-                  ? 'START OMEGA TEST'
-                  : sessionMode === 'standard'
-                    ? 'START QUIZ'
-                    : `START ${getQuizSessionLabel(sessionMode).toUpperCase()} QUIZ`
+                  : sessionMode === 'omega-test' && isPreparingOmegaTest
+                    ? `BUILDING ${omegaTestWords.length * 2} QUESTIONS · ${omegaPreparationElapsedSeconds}S`
+                    : getQuizStartLabel(sessionMode)
                 : 'QUIZZES PAUSED'}
             </Text>
-            <Ionicons name="arrow-forward" size={21} color={COLORS.white} />
+            {sessionMode === 'omega-test' && isPreparingOmegaTest ? (
+              <ActivityIndicator size="small" color="#766793" />
+            ) : (
+              <Ionicons name="arrow-forward" size={21} color={COLORS.white} />
+            )}
           </Pressable>
         </View>
       </ScrollView>
@@ -1421,8 +1639,9 @@ export function QuizScreen({
   const selectedTimedOut = selected === TIMED_OUT_ANSWER;
   const typedHint =
     question.mode === 'typed-word'
-      ? getTypedRecallHint(question.word, hintStep)
+      ? getTypedRecallHint(getLiveQuestionWord(question), hintStep)
       : null;
+  const questionWord = getLiveQuestionWord(question);
   const allowsHints =
     sessionMode !== 'challenge' &&
     sessionMode !== 'mastery-test' &&
@@ -1518,31 +1737,31 @@ export function QuizScreen({
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={
-            question.word.isFlagged
+            questionWord.isFlagged
               ? 'Remove word from flagged words'
               : 'Flag word'
           }
-          accessibilityState={{ selected: question.word.isFlagged }}
-          onPress={() => onToggleFlag(question.word.id)}
+          accessibilityState={{ selected: questionWord.isFlagged }}
+          onPress={() => onToggleFlag(questionWord.id)}
           style={({ pressed }) => [
             styles.quizFlagButton,
-            question.word.isFlagged && styles.quizFlagButtonActive,
+            questionWord.isFlagged && styles.quizFlagButtonActive,
             pressed && styles.pressed,
           ]}
         >
           <Ionicons
-            name={question.word.isFlagged ? 'bookmark' : 'bookmark-outline'}
+            name={questionWord.isFlagged ? 'bookmark' : 'bookmark-outline'}
             size={16}
-            color={question.word.isFlagged ? COLORS.purpleDark : COLORS.muted}
+            color={questionWord.isFlagged ? COLORS.purpleDark : COLORS.muted}
           />
           <Text
             style={[
               styles.quizFlagButtonText,
-              question.word.isFlagged && styles.quizFlagButtonTextActive,
+              questionWord.isFlagged && styles.quizFlagButtonTextActive,
             ]}
           >
-            {question.word.isFlagged
-              ? formatWordFlaggedDate(question.word.flaggedAt).toUpperCase()
+            {questionWord.isFlagged
+              ? formatWordFlaggedDate(questionWord.flaggedAt).toUpperCase()
               : 'FLAG WORD'}
           </Text>
         </Pressable>

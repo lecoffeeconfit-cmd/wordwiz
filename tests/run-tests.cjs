@@ -227,6 +227,24 @@ test('private keys cannot be read by the app or included through public Expo var
   assert.match(buildCheck, /process\.exit\(1\)/);
 });
 
+test('password recovery returns to WordWiz and requires a new password before continuing', () => {
+  const authSource = fs.readFileSync(path.join(projectRoot, 'src/services/auth.ts'), 'utf8');
+  const appSource = fs.readFileSync(
+    path.join(projectRoot, 'src/application/AppContent.tsx'),
+    'utf8',
+  );
+  const loginSource = fs.readFileSync(
+    path.join(projectRoot, 'src/screens/LoginScreen.tsx'),
+    'utf8',
+  );
+
+  assert.match(authSource, /resetPasswordForEmail\([\s\S]*redirectTo:\s*getAuthRedirectUrl\(\)/);
+  assert.match(authSource, /supabase\.auth\.updateUser\(\{ password \}\)/);
+  assert.match(appSource, /event === 'PASSWORD_RECOVERY'/);
+  assert.match(appSource, /!currentUser \|\| isPasswordRecovery/);
+  assert.match(loginSource, /label="Confirm new password"/);
+});
+
 test('free word limit is enforced atomically in Supabase and cannot be bypassed by direct insert', () => {
   const migration = fs.readFileSync(
     path.join(projectRoot, 'supabase/revenuecat_subscription_migration.sql'),
@@ -237,6 +255,33 @@ test('free word limit is enforced atomically in Supabase and cannot be bypassed 
   assert.match(migration, /on conflict \(user_id, month_key\) do update/i);
   assert.match(migration, /free_word_limit_reached/);
   assert.match(migration, /Words are created through the allowance RPC/);
+});
+
+test('starter collections save words and existing memberships in one production transaction', () => {
+  const migration = fs.readFileSync(
+    path.join(projectRoot, 'supabase/starter_collections_migration.sql'),
+    'utf8',
+  );
+  const appContent = fs.readFileSync(
+    path.join(projectRoot, 'src/application/AppContent.tsx'),
+    'utf8',
+  );
+  const wordUsage = fs.readFileSync(
+    path.join(projectRoot, 'src/services/freeWordUsage.ts'),
+    'utf8',
+  );
+
+  assert.match(migration, /create_words_with_monthly_limit\(p_words jsonb\)/);
+  assert.match(migration, /free_word_limit_reached/);
+  assert.match(migration, /grant execute on function public\.create_words_with_monthly_limit/);
+  assert.match(migration, /add_starter_collection\(/);
+  assert.match(migration, /premium_access_required/);
+  assert.match(migration, /collection_words_changed/);
+  assert.match(migration, /grant execute on function public\.add_starter_collection/);
+  assert.match(migration, /notify pgrst, 'reload schema'/);
+  assert.match(appContent, /createCloudStarterCollection\(/);
+  assert.doesNotMatch(appContent, /batch\.map\(createCloudWordWithFreeLimit\)/);
+  assert.match(wordUsage, /add_starter_collection/);
 });
 
 test('complimentary Plus access starts server-side once and lasts thirty days', () => {
@@ -1606,7 +1651,13 @@ test('quiz feedback summaries group confidence choices overall and by word', () 
         durationSeconds: 20,
         completedAt: '2026-01-01T10:00:00.000Z',
         answers: [
-          { wordId: 'one', correct: true, reviewRating: 'easy' },
+          {
+            wordId: 'one',
+            wordTerm: 'Nuance',
+            collectionName: 'Polished Vocabulary',
+            correct: true,
+            reviewRating: 'easy',
+          },
           { wordId: 'one', correct: true, reviewRating: 'hard' },
           { wordId: 'two', correct: false },
         ],
@@ -1633,7 +1684,15 @@ test('quiz feedback summaries group confidence choices overall and by word', () 
     total: 4,
   });
   assert.deepEqual(learning.getQuizFeedbackByWord(analytics), [
-    { wordId: 'one', hard: 2, correct: 0, easy: 1, total: 3 },
+    {
+      wordId: 'one',
+      wordTerm: 'Nuance',
+      collectionName: 'Polished Vocabulary',
+      hard: 2,
+      correct: 0,
+      easy: 1,
+      total: 3,
+    },
     { wordId: 'two', hard: 0, correct: 1, easy: 0, total: 1 },
   ]);
 });
@@ -1650,7 +1709,14 @@ test('quiz recall pace keeps timing for every question type and word', () => {
         durationSeconds: 18,
         completedAt: '2026-07-16T12:00:00.000Z',
         answers: [
-          { wordId: 'love', correct: true, questionMode: 'typed-word', responseTimeSeconds: 8 },
+          {
+            wordId: 'love',
+            wordTerm: 'Amity',
+            collectionName: 'Essential Vocabulary',
+            correct: true,
+            questionMode: 'typed-word',
+            responseTimeSeconds: 8,
+          },
           { wordId: 'love', correct: true, questionMode: 'typed-word', responseTimeSeconds: 4 },
           { wordId: 'curious', correct: false, questionMode: 'true-false', responseTimeSeconds: 2 },
           { wordId: 'legacy', correct: true },
@@ -1664,7 +1730,14 @@ test('quiz recall pace keeps timing for every question type and word', () => {
     { key: 'true-false', answerCount: 1, totalSeconds: 2, averageSeconds: 2 },
   ]);
   assert.deepEqual(learning.getQuizRecallPaceByWord(analytics), [
-    { key: 'love', answerCount: 2, totalSeconds: 12, averageSeconds: 6 },
+    {
+      key: 'love',
+      wordTerm: 'Amity',
+      collectionName: 'Essential Vocabulary',
+      answerCount: 2,
+      totalSeconds: 12,
+      averageSeconds: 6,
+    },
     { key: 'curious', answerCount: 1, totalSeconds: 2, averageSeconds: 2 },
   ]);
 });
@@ -1798,6 +1871,20 @@ test('mastery stays bounded and percentage alone cannot mark a word mastered', (
     analytics,
   )[0];
   assert.equal(zeroed.mastery.masteryPercent, 0);
+});
+
+test('invalid saved mastery percentages safely display as zero progress', () => {
+  const word = {
+    ...makeWord('invalid-mastery', 'Reliable', 'Consistently dependable.', 0),
+    mastery: {
+      ...learning.createWordMasteryProgress(),
+      masteryPercent: Number.NaN,
+    },
+  };
+  const analytics = { cardHistory: [], quizHistory: [] };
+
+  assert.equal(learning.getWordMastery(word, analytics), 0);
+  assert.equal(learning.getWordMasteryCategoryForWord(word, analytics).id, 'learning');
 });
 
 test('mastery requires correct reviews on three separate days and flashcards do not raise it', () => {
