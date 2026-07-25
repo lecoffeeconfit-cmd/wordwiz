@@ -59,6 +59,11 @@ export type QuizRetrievalProfile = {
   recognitionEvidence: number;
   recallEvidence: number;
   totalAnswers: number;
+  recognitionAccuracy: number;
+  recallAccuracy: number;
+  recognitionAttemptCount: number;
+  recallAttemptCount: number;
+  confidencePercent: number;
   directRecallCorrect: number;
   delayedDirectRecallCorrect: number;
 };
@@ -69,6 +74,65 @@ export type QuizBuildOptions = {
   questionLimit?: number;
   questionTypePreferences?: QuizQuestionTypePreferences;
 };
+
+/**
+ * Keeps the difficulty picker honest across every session. Assessment modes
+ * deliberately set a minimum challenge, while normal practice respects the
+ * learner's selected level exactly.
+ */
+export function getEffectiveQuizDifficulty(
+  sessionMode: QuizSessionMode,
+  selectedDifficulty: QuizDifficultyPreference = 'automatic',
+): QuizDifficultyPreference {
+  if (sessionMode === 'mastery-test' || sessionMode === 'omega-test') {
+    return 'ultra';
+  }
+  if (sessionMode === 'challenge') {
+    return selectedDifficulty === 'ultra' ? 'ultra' : 'hard';
+  }
+  return selectedDifficulty;
+}
+
+/**
+ * Uses one timing policy for every quiz. Standard and review sessions wait
+ * until a word is reasonably strong before adding time pressure; deliberate
+ * assessment modes honor the learner's timing setting on every prompt.
+ */
+export function getQuizQuestionPace({
+  sessionMode,
+  questionDifficulty,
+  wordMastery,
+  timedLearningEnabled,
+  settings = DEFAULT_TIME_BASED_LEARNING_SETTINGS,
+}: {
+  sessionMode: QuizSessionMode;
+  questionDifficulty: QuizQuestionDifficulty | undefined;
+  wordMastery: number;
+  timedLearningEnabled: boolean;
+  settings?: TimeBasedLearningSettings;
+}) {
+  const normalizedSettings = normalizeTimeBasedLearningSettings(settings);
+  const standardWindow = getTimeBasedLearningLimitSeconds(
+    questionDifficulty,
+    normalizedSettings,
+  );
+  const isAssessment =
+    sessionMode === 'challenge' ||
+    sessionMode === 'mastery-test' ||
+    sessionMode === 'omega-test';
+  const isTimed =
+    sessionMode === 'quick' ||
+    (timedLearningEnabled && (isAssessment || wordMastery >= 80));
+
+  return {
+    isTimed,
+    // Quick is intentionally brisk, but a learner's shorter accessibility or
+    // pace setting still takes priority over the default 15-second ceiling.
+    seconds: sessionMode === 'quick'
+      ? Math.min(TIMED_LEARNING_SECONDS, standardWindow)
+      : standardWindow,
+  };
+}
 
 export function isDirectRecallQuestion(
   mode: QuizQuestionMode | undefined,
@@ -81,6 +145,8 @@ export function getQuizRetrievalProfile(
   analytics: AnalyticsData,
   settings: TimeBasedLearningSettings = DEFAULT_TIME_BASED_LEARNING_SETTINGS,
 ): QuizRetrievalProfile {
+  // A profile should describe the learner's current retrieval, not let a long
+  // run of old, easier prompts overwhelm the feedback from recent practice.
   const answers = analytics.quizHistory
     .flatMap((attempt) =>
       attempt.answers.map((answer) => ({
@@ -88,15 +154,21 @@ export function getQuizRetrievalProfile(
         answeredAt: answer.answeredAt ?? attempt.completedAt,
       })),
     )
-    .sort((first, second) => first.answeredAt.localeCompare(second.answeredAt));
-  const lastDirectRecallAtByWord = new Map<string, Date>();
+    .sort((first, second) => first.answeredAt.localeCompare(second.answeredAt))
+    .slice(-120);
+  const lastDirectRecallAttemptAtByWord = new Map<string, Date>();
   let recognitionEvidence = 0;
   let recallEvidence = 0;
+  let recognitionAttemptEvidence = 0;
+  let recallAttemptEvidence = 0;
   let directRecallCorrect = 0;
   let delayedDirectRecallCorrect = 0;
 
-  answers.forEach(({ answer, answeredAt }) => {
+  answers.forEach(({ answer, answeredAt }, index) => {
     const recallWeight = getRecallWeight(answer.questionMode, answer.difficulty);
+    const recencyWeight = answers.length < 2
+      ? 1
+      : 0.6 + (index / (answers.length - 1)) * 0.4;
     const signal = answer.recallPace ??
       (typeof answer.responseTimeSeconds === 'number'
         ? getQuizRecallPaceSignal({
@@ -108,36 +180,55 @@ export function getQuizRetrievalProfile(
         : answer.correct
           ? 'successful'
           : 'incorrect');
-    const evidenceMultiplier = answer.correct
+    const performanceWeight = answer.correct
       ? signal === 'fluent'
         ? 1
         : signal === 'successful'
           ? 0.9
           : 0.65
-      : 0.2;
-    recognitionEvidence += (1 - recallWeight) * evidenceMultiplier;
-    recallEvidence += recallWeight * evidenceMultiplier;
+      : 0;
+    const recognitionWeight = (1 - recallWeight) * recencyWeight;
+    const directRecallWeight = recallWeight * recencyWeight;
 
-    if (!answer.correct || !isDirectRecallQuestion(answer.questionMode, answer.difficulty)) {
+    recognitionAttemptEvidence += recognitionWeight;
+    recallAttemptEvidence += directRecallWeight;
+    recognitionEvidence += recognitionWeight * performanceWeight;
+    recallEvidence += directRecallWeight * performanceWeight;
+
+    if (!isDirectRecallQuestion(answer.questionMode, answer.difficulty)) {
       return;
     }
 
-    directRecallCorrect += 1;
     const answeredAtDate = new Date(answeredAt);
-    const previousDirectRecallAt = lastDirectRecallAtByWord.get(answer.wordId);
-    if (
-      previousDirectRecallAt &&
-      !Number.isNaN(answeredAtDate.getTime()) &&
-      answeredAtDate.getTime() - previousDirectRecallAt.getTime() >= 86_400_000
-    ) {
-      delayedDirectRecallCorrect += 1;
-    }
     if (!Number.isNaN(answeredAtDate.getTime())) {
-      lastDirectRecallAtByWord.set(answer.wordId, answeredAtDate);
+      const previousDirectRecallAt = lastDirectRecallAttemptAtByWord.get(answer.wordId);
+      if (
+        answer.correct &&
+        previousDirectRecallAt &&
+        answeredAtDate.getTime() - previousDirectRecallAt.getTime() >= 86_400_000
+      ) {
+        delayedDirectRecallCorrect += 1;
+      }
+      lastDirectRecallAttemptAtByWord.set(answer.wordId, answeredAtDate);
+    }
+    if (answer.correct) {
+      directRecallCorrect += 1;
     }
   });
 
   const totalEvidence = recognitionEvidence + recallEvidence;
+  const recognitionAccuracy = recognitionAttemptEvidence
+    ? Math.round((recognitionEvidence / recognitionAttemptEvidence) * 100)
+    : 0;
+  const recallAccuracy = recallAttemptEvidence
+    ? Math.round((recallEvidence / recallAttemptEvidence) * 100)
+    : 0;
+  const confidencePercent = Math.round(
+    Math.min(1, answers.length / 18) * 70 +
+      Math.min(1, directRecallCorrect / 6) * 20 +
+      Math.min(1, delayedDirectRecallCorrect / 2) * 10,
+  );
+
   return {
     recognitionPercent: totalEvidence
       ? Math.round((recognitionEvidence / totalEvidence) * 100)
@@ -148,6 +239,11 @@ export function getQuizRetrievalProfile(
     recognitionEvidence,
     recallEvidence,
     totalAnswers: answers.length,
+    recognitionAccuracy,
+    recallAccuracy,
+    recognitionAttemptCount: Math.round(recognitionAttemptEvidence),
+    recallAttemptCount: Math.round(recallAttemptEvidence),
+    confidencePercent,
     directRecallCorrect,
     delayedDirectRecallCorrect,
   };
@@ -487,11 +583,10 @@ function getQuestionModesForSession(
   const questionTypePreferences = normalizeQuestionTypePreferences(
     options.questionTypePreferences,
   );
-  const difficulty = options.sessionMode === 'mastery-test'
-    ? 'ultra'
-    : options.sessionMode === 'challenge'
-      ? options.difficulty === 'ultra' ? 'ultra' : 'hard'
-      : options.difficulty ?? 'automatic';
+  const difficulty = getEffectiveQuizDifficulty(
+    options.sessionMode ?? 'standard',
+    options.difficulty ?? 'automatic',
+  );
 
   if (difficulty === 'automatic' && planWords.length === quizWords.length) {
     return getBalancedQuestionModes(

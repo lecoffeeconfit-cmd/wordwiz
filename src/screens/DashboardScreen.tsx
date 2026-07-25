@@ -14,6 +14,8 @@ import { LessonProgressRing } from '../components/dashboard/LessonProgressRing';
 import { useSubscription } from '../subscription/SubscriptionProvider';
 
 const EXPANDED_LIST_PAGE_SIZE = 8;
+const FEEDBACK_BY_WORD_PAGE_SIZE = 6;
+const RECALL_PACE_BY_WORD_PAGE_SIZE = 5;
 const RETRIEVAL_PROGRESSION_STEPS = [
   'See the word and meaning',
   'Choose the definition',
@@ -205,7 +207,9 @@ export function DashboardScreen({
   const [masteryPage, setMasteryPage] = useState(0);
   const [quizTrendPage, setQuizTrendPage] = useState(0);
   const [feedbackView, setFeedbackView] = useState<'overall' | 'words'>('overall');
+  const [feedbackWordPage, setFeedbackWordPage] = useState(0);
   const [recallPaceView, setRecallPaceView] = useState<'types' | 'words'>('types');
+  const [recallPaceWordPage, setRecallPaceWordPage] = useState(0);
   const [activityWindow, setActivityWindow] = useState<7 | 30>(7);
   const [isTimeSettingsExpanded, setIsTimeSettingsExpanded] = useState(false);
   const [isQuestionMixExpanded, setIsQuestionMixExpanded] = useState(false);
@@ -385,18 +389,43 @@ export function DashboardScreen({
     .map((feedback) => ({
       ...feedback,
       term: wordsById.get(feedback.wordId)?.term ?? 'Saved word',
-    }))
-    .slice(0, 6);
+    }));
+  const feedbackWordPageCount = Math.max(
+    1,
+    Math.ceil(feedbackByWord.length / FEEDBACK_BY_WORD_PAGE_SIZE),
+  );
+  const currentFeedbackWordPage = Math.min(
+    feedbackWordPage,
+    feedbackWordPageCount - 1,
+  );
+  const feedbackWordStartIndex = currentFeedbackWordPage * FEEDBACK_BY_WORD_PAGE_SIZE;
+  const feedbackWordsForPage = feedbackByWord.slice(
+    feedbackWordStartIndex,
+    feedbackWordStartIndex + FEEDBACK_BY_WORD_PAGE_SIZE,
+  );
   const recallPaceByType = getQuizRecallPaceByQuestionType(analytics);
   const recallPaceByWord = getQuizRecallPaceByWord(analytics)
     .map((pace) => ({
       ...pace,
       term: wordsById.get(pace.key)?.term ?? 'Saved word',
-    }))
-    .slice(0, 6);
+    }));
+  const recallPaceWordPageCount = Math.max(
+    1,
+    Math.ceil(recallPaceByWord.length / RECALL_PACE_BY_WORD_PAGE_SIZE),
+  );
+  const currentRecallPaceWordPage = Math.min(
+    recallPaceWordPage,
+    recallPaceWordPageCount - 1,
+  );
+  const recallPaceWordStartIndex =
+    currentRecallPaceWordPage * RECALL_PACE_BY_WORD_PAGE_SIZE;
+  const recallPaceWordsForPage = recallPaceByWord.slice(
+    recallPaceWordStartIndex,
+    recallPaceWordStartIndex + RECALL_PACE_BY_WORD_PAGE_SIZE,
+  );
   const recallPace = recallPaceView === 'types'
     ? recallPaceByType
-    : recallPaceByWord;
+    : recallPaceWordsForPage;
   const recallPaceAnswerCount = recallPaceByType.reduce(
     (total, pace) => total + pace.answerCount,
     0,
@@ -1268,7 +1297,7 @@ export function DashboardScreen({
         badge={retrievalProfile.totalAnswers ? `${retrievalProfile.recallPercent}% recall` : 'New'}
       >
         <Text style={styles.retrievalProfileIntro}>
-          Recognition builds familiarity, but recall is the stronger sign that a word is becoming part of your memory.
+          This compares successful recognition with successful recall. Recent answers, pace, and spaced direct recall make the estimate more trustworthy.
         </Text>
         {retrievalProfile.totalAnswers === 0 ? (
           <View style={styles.feedbackEmpty}>
@@ -1283,7 +1312,7 @@ export function DashboardScreen({
               <RetrievalEvidenceCard
                 label="Recall"
                 value={retrievalProfile.recallPercent}
-                detail="Retrieval · bring the meaning back from memory"
+                detail={`${retrievalProfile.recallAccuracy}% accurate · bring the meaning back from memory`}
                 color={COLORS.greenDark}
                 pale="#E8FBF4"
                 isGoal
@@ -1291,7 +1320,7 @@ export function DashboardScreen({
               <RetrievalEvidenceCard
                 label="Recognition"
                 value={retrievalProfile.recognitionPercent}
-                detail="Familiarity · may use cues or quiz patterns"
+                detail={`${retrievalProfile.recognitionAccuracy}% accurate · may use cues or quiz patterns`}
                 color={COLORS.blue}
                 pale="#EAF3FF"
               />
@@ -1299,7 +1328,7 @@ export function DashboardScreen({
             <View style={styles.retrievalEvidenceRow}>
               <Ionicons name="key-outline" size={17} color={COLORS.purpleDark} />
               <Text style={styles.retrievalEvidenceText}>
-                {retrievalProfile.directRecallCorrect} answers recalled without choices · {retrievalProfile.delayedDirectRecallCorrect} still recalled a day later
+                {retrievalProfile.directRecallCorrect} answers recalled without choices · {retrievalProfile.delayedDirectRecallCorrect} still recalled a day later · {retrievalProfile.confidencePercent}% confidence
               </Text>
             </View>
           </>
@@ -1373,7 +1402,12 @@ export function DashboardScreen({
               key={view}
               accessibilityRole="button"
               accessibilityState={{ selected: feedbackView === view }}
-              onPress={() => setFeedbackView(view)}
+              onPress={() => {
+                setFeedbackView(view);
+                if (view === 'words') {
+                  setFeedbackWordPage(0);
+                }
+              }}
               style={[
                 styles.feedbackViewToggleButton,
                 feedbackView === view && styles.feedbackViewToggleButtonActive,
@@ -1403,7 +1437,7 @@ export function DashboardScreen({
           </View>
         ) : (
           <View style={styles.feedbackWordList}>
-            {feedbackByWord.map((feedback) => (
+            {feedbackWordsForPage.map((feedback) => (
               <View key={feedback.wordId} style={styles.feedbackWordRow}>
                 <View style={styles.feedbackWordHeader}>
                   <Text numberOfLines={1} style={styles.feedbackWordName}>
@@ -1416,6 +1450,23 @@ export function DashboardScreen({
                 <FeedbackDistribution summary={feedback} compact />
               </View>
             ))}
+            {feedbackWordPageCount > 1 ? (
+              <CompactPagination
+                page={currentFeedbackWordPage}
+                pageCount={feedbackWordPageCount}
+                pageSize={FEEDBACK_BY_WORD_PAGE_SIZE}
+                total={feedbackByWord.length}
+                itemLabel="recall feedback words"
+                onPrevious={() =>
+                  setFeedbackWordPage(Math.max(0, currentFeedbackWordPage - 1))
+                }
+                onNext={() =>
+                  setFeedbackWordPage(
+                    Math.min(feedbackWordPageCount - 1, currentFeedbackWordPage + 1),
+                  )
+                }
+              />
+            ) : null}
           </View>
         )}
       </DashboardSection>
@@ -1442,7 +1493,12 @@ export function DashboardScreen({
               key={view}
               accessibilityRole="button"
               accessibilityState={{ selected: recallPaceView === view }}
-              onPress={() => setRecallPaceView(view)}
+              onPress={() => {
+                setRecallPaceView(view);
+                if (view === 'words') {
+                  setRecallPaceWordPage(0);
+                }
+              }}
               style={[
                 styles.feedbackViewToggleButton,
                 styles.recallPaceToggleButton,
@@ -1468,10 +1524,32 @@ export function DashboardScreen({
             </Text>
           </View>
         ) : (
-          <RecallPaceList
-            items={recallPace}
-            view={recallPaceView}
-          />
+          <>
+            <RecallPaceList
+              items={recallPace}
+              view={recallPaceView}
+            />
+            {recallPaceView === 'words' && recallPaceWordPageCount > 1 ? (
+              <CompactPagination
+                page={currentRecallPaceWordPage}
+                pageCount={recallPaceWordPageCount}
+                pageSize={RECALL_PACE_BY_WORD_PAGE_SIZE}
+                total={recallPaceByWord.length}
+                itemLabel="recall pace words"
+                onPrevious={() =>
+                  setRecallPaceWordPage(Math.max(0, currentRecallPaceWordPage - 1))
+                }
+                onNext={() =>
+                  setRecallPaceWordPage(
+                    Math.min(
+                      recallPaceWordPageCount - 1,
+                      currentRecallPaceWordPage + 1,
+                    ),
+                  )
+                }
+              />
+            ) : null}
+          </>
         )}
       </DashboardSection>
 

@@ -23,6 +23,19 @@ export class DuplicateWordError extends Error {
   }
 }
 
+/**
+ * Indicates that the app's word-saving RPC has not been deployed (or no longer
+ * matches the production schema). This is deliberately separate from a normal
+ * network failure so the UI does not ask a learner to repeatedly retry a save
+ * that can only be fixed by a server migration.
+ */
+export class WordSaveSetupError extends Error {
+  constructor() {
+    super('Word saving needs a cloud database update before it can continue.');
+    this.name = 'WordSaveSetupError';
+  }
+}
+
 export async function getFreeWordUsage(): Promise<FreeWordUsage> {
   const { data, error } = await supabase.rpc('get_free_word_usage');
   if (error) throw new Error(`free_word_usage: ${error.message}`);
@@ -41,24 +54,63 @@ export async function getFreeWordUsage(): Promise<FreeWordUsage> {
 
 export async function createCloudWordWithFreeLimit(word: Word): Promise<Word> {
   const payload = toWordPayload(word);
-  const { data, error } = await supabase.rpc('create_word_with_monthly_limit', {
-    p_word: payload,
-  });
+  let result = await createWordWithMonthlyLimit(payload);
+
+  // A user can leave WordWiz open long enough for their access token to expire.
+  // Refresh once and replay the idempotent RPC, rather than incorrectly showing
+  // the "not saved" state for a session that can be recovered immediately.
+  if (result.error && isSessionError(result.error)) {
+    const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
+    if (!refreshError && refreshData.session) {
+      result = await createWordWithMonthlyLimit(payload);
+    }
+  }
+
+  const { data, error } = result;
 
   if (error) {
-    if (/free_word_limit_reached|free word additions/i.test(error.message)) {
+    if (/free_word_limit_reached|free word additions/i.test(errorText(error))) {
       throw new FreeWordLimitError();
     }
     if (
       error.code === '23505' ||
-      /duplicate key|unique constraint|words_user_id_lower_term_idx/i.test(error.message)
+      /duplicate key|unique constraint|words_user_id_lower_term_idx/i.test(errorText(error))
     ) {
       throw new DuplicateWordError();
     }
+    if (isWordSaveSetupError(error)) throw new WordSaveSetupError();
     throw new Error(`words: ${error.message}`);
   }
 
   return mapWordRow(data as WordRow);
+}
+
+function createWordWithMonthlyLimit(payload: ReturnType<typeof toWordPayload>) {
+  return supabase.rpc('create_word_with_monthly_limit', { p_word: payload });
+}
+
+function errorText(error: { message?: string | null; details?: string | null; hint?: string | null }) {
+  return [error.message, error.details, error.hint].filter(Boolean).join(' ');
+}
+
+function isSessionError(error: { message?: string | null; code?: string | null }) {
+  return /jwt expired|invalid jwt|token.*expired|authentication_required/i.test(
+    `${error.code ?? ''} ${error.message ?? ''}`,
+  );
+}
+
+function isWordSaveSetupError(error: {
+  message?: string | null;
+  details?: string | null;
+  hint?: string | null;
+  code?: string | null;
+}) {
+  return (
+    ['PGRST202', '42P01', '42703', '42883'].includes(error.code ?? '') ||
+    /could not find the function|schema cache|relation .* does not exist|column .* does not exist|function .* does not exist/i.test(
+      errorText(error),
+    )
+  );
 }
 
 /**
@@ -68,14 +120,26 @@ export async function createCloudWordWithFreeLimit(word: Word): Promise<Word> {
 export async function createCloudWordsWithFreeLimit(words: Word[]): Promise<Word[]> {
   if (words.length === 0) return [];
 
-  const { data, error } = await supabase.rpc('create_words_with_monthly_limit', {
+  let result = await supabase.rpc('create_words_with_monthly_limit', {
     p_words: words.map(toWordPayload),
   });
+
+  if (result.error && isSessionError(result.error)) {
+    const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
+    if (!refreshError && refreshData.session) {
+      result = await supabase.rpc('create_words_with_monthly_limit', {
+        p_words: words.map(toWordPayload),
+      });
+    }
+  }
+
+  const { data, error } = result;
 
   if (error) {
     if (/free_word_limit_reached|free word additions/i.test(error.message)) {
       throw new FreeWordLimitError();
     }
+    if (isWordSaveSetupError(error)) throw new WordSaveSetupError();
     throw new Error(`words: ${error.message}`);
   }
 
@@ -94,13 +158,29 @@ export async function saveCloudStudySetMembership(
 ) {
   if (wordIds.length === 0) return;
 
-  const { error } = await supabase.rpc('set_study_set_membership', {
+  let result = await supabase.rpc('set_study_set_membership', {
     p_word_ids: wordIds,
     p_membership: membership,
     p_enabled: enabled,
   });
 
-  if (error) throw new Error(`words: ${error.message}`);
+  if (result.error && isSessionError(result.error)) {
+    const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
+    if (!refreshError && refreshData.session) {
+      result = await supabase.rpc('set_study_set_membership', {
+        p_word_ids: wordIds,
+        p_membership: membership,
+        p_enabled: enabled,
+      });
+    }
+  }
+
+  const { error } = result;
+
+  if (error) {
+    if (isWordSaveSetupError(error)) throw new WordSaveSetupError();
+    throw new Error(`words: ${error.message}`);
+  }
 }
 
 export async function syncRevenueCatEntitlement() {

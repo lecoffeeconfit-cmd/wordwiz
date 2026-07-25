@@ -58,7 +58,12 @@ export function AddWordModal({
     example: string,
     details?: Partial<WordDetails>,
     options?: { closeAfterSave?: boolean },
-  ) => boolean | 'duplicate' | 'save_failed' | Promise<boolean | 'duplicate' | 'save_failed'>;
+  ) =>
+    | boolean
+    | 'duplicate'
+    | 'save_failed'
+    | 'save_setup_required'
+    | Promise<boolean | 'duplicate' | 'save_failed' | 'save_setup_required'>;
   wordToEdit?: Word | null;
   words?: Word[];
   onEditExisting?: (word: Word) => void;
@@ -81,7 +86,7 @@ export function AddWordModal({
   const [definitionOptionIndex, setDefinitionOptionIndex] = useState(0);
   const [isLookingUp, setIsLookingUp] = useState(false);
   const [saveWasBlockedAsDuplicate, setSaveWasBlockedAsDuplicate] = useState(false);
-  const [saveFailed, setSaveFailed] = useState(false);
+  const [saveFailureKind, setSaveFailureKind] = useState<'connection' | 'setup' | null>(null);
   const [lookupStatus, setLookupStatus] = useState('');
   const [spellingSuggestions, setSpellingSuggestions] = useState<string[]>([]);
   const [isEditingBasicInfo, setIsEditingBasicInfo] = useState(false);
@@ -165,7 +170,7 @@ export function AddWordModal({
     setDefinitionOptionIndex(0);
     setLookupStatus('');
     setSaveWasBlockedAsDuplicate(false);
-    setSaveFailed(false);
+    setSaveFailureKind(null);
     setSpellingSuggestions([]);
     closeSectionEditors();
   }
@@ -173,7 +178,7 @@ export function AddWordModal({
   function updateTermFromDictation(nextTerm: string) {
     setTerm(nextTerm);
     setSaveWasBlockedAsDuplicate(false);
-    setSaveFailed(false);
+    setSaveFailureKind(null);
     setLookupStatus('');
     setSpellingSuggestions([]);
     setWordnikDetails({});
@@ -272,7 +277,7 @@ export function AddWordModal({
     if (cleanTerm !== term) {
       setTerm(cleanTerm);
       setSaveWasBlockedAsDuplicate(false);
-      setSaveFailed(false);
+      setSaveFailureKind(null);
     }
 
     setIsLookingUp(true);
@@ -493,8 +498,8 @@ export function AddWordModal({
       Keyboard.dismiss();
       return;
     }
-    if (saved === 'save_failed') {
-      setSaveFailed(true);
+    if (saved === 'save_failed' || saved === 'save_setup_required') {
+      setSaveFailureKind(saved === 'save_setup_required' ? 'setup' : 'connection');
       Keyboard.dismiss();
       return;
     }
@@ -615,22 +620,30 @@ export function AddWordModal({
               </View>
             ) : null}
 
-            {saveFailed ? (
+            {saveFailureKind ? (
               <View style={styles.saveWordErrorNotice}>
                 <View style={styles.saveWordErrorIcon}>
-                  <Ionicons name="cloud-offline-outline" size={19} color={COLORS.red} />
+                  <Ionicons
+                    name={saveFailureKind === 'setup' ? 'cloud-upload-outline' : 'cloud-offline-outline'}
+                    size={19}
+                    color={COLORS.red}
+                  />
                 </View>
                 <View style={styles.saveWordErrorCopy}>
-                  <Text style={styles.saveWordErrorTitle}>Not saved yet</Text>
+                  <Text style={styles.saveWordErrorTitle}>
+                    {saveFailureKind === 'setup' ? 'Word saving needs an update' : 'Not saved yet'}
+                  </Text>
                   <Text style={styles.saveWordErrorText}>
-                    Your word is still here. Check your connection, then try again.
+                    {saveFailureKind === 'setup'
+                      ? 'Your word is safe here. We need to finish a quick cloud update, then you can save it.'
+                      : 'Your word is still here. Check your connection, then try again.'}
                   </Text>
                 </View>
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel="Retry saving word"
                   onPress={() => {
-                    setSaveFailed(false);
+                    setSaveFailureKind(null);
                     void submit();
                   }}
                   style={({ pressed }) => [

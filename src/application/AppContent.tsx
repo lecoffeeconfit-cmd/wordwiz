@@ -53,6 +53,7 @@ import {
   createCloudWordWithFreeLimit,
   DuplicateWordError,
   FreeWordLimitError,
+  WordSaveSetupError,
   lookupWordDetails,
   syncRevenueCatEntitlement,
   fetchUserLearningData,
@@ -1485,7 +1486,7 @@ export default function AppContent() {
     example: string,
     details: Partial<WordDetails> = {},
     options: { closeAfterSave?: boolean } = {},
-  ): Promise<boolean | 'duplicate' | 'save_failed'> {
+  ): Promise<boolean | 'duplicate' | 'save_failed' | 'save_setup_required'> {
     if (isSavingWord.current) {
       return false;
     }
@@ -1555,6 +1556,9 @@ export default function AppContent() {
       }
       if (error instanceof DuplicateWordError) {
         return 'duplicate';
+      }
+      if (error instanceof WordSaveSetupError) {
+        return 'save_setup_required';
       }
       reportError(error, { area: 'save_word' });
       trackEvent('cloud_sync_failed', { operation: 'save_word' });
@@ -1768,7 +1772,9 @@ export default function AppContent() {
           );
         } catch (error) {
           const message = error instanceof Error ? error.message : '';
-          const membershipEndpointIsUnavailable = /set_study_set_membership|schema cache/i.test(message);
+          const membershipEndpointIsUnavailable =
+            error instanceof WordSaveSetupError ||
+            /set_study_set_membership|schema cache/i.test(message);
           if (!membershipEndpointIsUnavailable) throw error;
           await saveCloudWords(
             currentUser.id,
@@ -1792,6 +1798,15 @@ export default function AppContent() {
       if (error instanceof FreeWordLimitError) {
         await subscription.refreshAccess();
         presentPlusPaywall('word-limit');
+        return { added: savedWords.length, alreadySaved, blocked: true };
+      }
+      if (error instanceof WordSaveSetupError) {
+        Alert.alert(
+          'Collection saving needs an update',
+          savedWords.length
+            ? `${savedWords.length} words were saved. Your cloud database needs a quick update before the rest can be added.`
+            : 'Your cloud database needs a quick update before collections can be added. Your existing words are safe.',
+        );
         return { added: savedWords.length, alreadySaved, blocked: true };
       }
       reportError(error, { area: 'add_wordwiz_collection' });
@@ -1826,18 +1841,6 @@ export default function AppContent() {
       enrichmentScheduled: wordsToCreate.length > 0,
     };
   }
-
-  useEffect(() => {
-    if (
-      activeTab === 'quiz' &&
-      currentUser &&
-      !subscription.isLoading &&
-      !canUseFullLearningAccess()
-    ) {
-      setActiveTab('home');
-      presentPlusPaywall('quiz', () => openQuiz());
-    }
-  }, [activeTab, currentUser, hasFullLearningAccess, subscription.isLoading]);
 
   function removeWord(wordToRemove: Word) {
     setWords((currentWords) =>

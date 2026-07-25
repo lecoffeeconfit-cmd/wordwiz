@@ -834,6 +834,19 @@ test('Omega Test covers every eligible word with varied prompts and strict recal
     .forEach((question) => assert.equal(question.strictSpelling, true));
 });
 
+test('Omega Test stays playable with a one-word library', () => {
+  const [word] = [makeWord('omega-solo', 'Lucid', 'Clear and easy to understand.')];
+  const questions = quiz.buildOmegaTest([word], []);
+
+  assert.equal(questions.length, 2);
+  assert.equal(questions.filter((question) => question.word.id === word.id).length, 2);
+  assert.ok(questions.some((question) => question.mode === 'typed-word'));
+  const recognitionQuestion = questions.find((question) => question.mode !== 'typed-word');
+  assert.ok(recognitionQuestion);
+  assert.ok(recognitionQuestion.options.includes(recognitionQuestion.answer));
+  assert.ok(recognitionQuestion.options.length >= 2);
+});
+
 test('Omega Test unlocks again seven days after the most recent assessment', () => {
   const completedAt = '2026-07-01T12:00:00.000Z';
   const analytics = {
@@ -891,6 +904,58 @@ test('quick, hard, and ultra quiz profiles build the requested retrieval challen
     quiz.evaluateQuizAnswer('Avid', 'Avdi', 'typed-word', true).correct,
     false,
   );
+});
+
+test('quiz difficulty and pace use one consistent policy across every session type', () => {
+  assert.equal(quiz.getEffectiveQuizDifficulty('standard', 'easy'), 'easy');
+  assert.equal(quiz.getEffectiveQuizDifficulty('quick', 'hard'), 'hard');
+  assert.equal(quiz.getEffectiveQuizDifficulty('mistake-review', 'standard'), 'standard');
+  assert.equal(quiz.getEffectiveQuizDifficulty('challenge', 'easy'), 'hard');
+  assert.equal(quiz.getEffectiveQuizDifficulty('challenge', 'ultra'), 'ultra');
+  assert.equal(quiz.getEffectiveQuizDifficulty('mastery-test', 'easy'), 'ultra');
+  assert.equal(quiz.getEffectiveQuizDifficulty('omega-test', 'easy'), 'ultra');
+
+  const settings = {
+    multipleChoiceSeconds: 12,
+    fillInSeconds: 22,
+    typedRecallSeconds: 28,
+  };
+  const standardNew = quiz.getQuizQuestionPace({
+    sessionMode: 'standard',
+    questionDifficulty: 'multiple-choice',
+    wordMastery: 30,
+    timedLearningEnabled: true,
+    settings,
+  });
+  const standardStrong = quiz.getQuizQuestionPace({
+    ...{ sessionMode: 'standard', questionDifficulty: 'multiple-choice', settings },
+    wordMastery: 80,
+    timedLearningEnabled: true,
+  });
+  const quick = quiz.getQuizQuestionPace({
+    sessionMode: 'quick',
+    questionDifficulty: 'typed-recall',
+    wordMastery: 0,
+    timedLearningEnabled: false,
+    settings,
+  });
+
+  assert.equal(standardNew.isTimed, false);
+  assert.equal(standardStrong.isTimed, true);
+  assert.equal(standardStrong.seconds, 12);
+  assert.equal(quick.isTimed, true);
+  assert.equal(quick.seconds, 15);
+  ['challenge', 'mastery-test', 'omega-test'].forEach((sessionMode) => {
+    const pace = quiz.getQuizQuestionPace({
+      sessionMode,
+      questionDifficulty: 'typed-recall',
+      wordMastery: 20,
+      timedLearningEnabled: true,
+      settings,
+    });
+    assert.equal(pace.isTimed, true);
+    assert.equal(pace.seconds, 28);
+  });
 });
 
 test('mistake review prioritizes missed and unusually slow words', () => {
@@ -1255,6 +1320,43 @@ test('retrieval profile separates recognition evidence from delayed direct recal
   assert.ok(profile.recallPercent > profile.recognitionPercent);
   assert.equal(profile.directRecallCorrect, 2);
   assert.equal(profile.delayedDirectRecallCorrect, 1);
+  assert.equal(profile.recallAccuracy, 90);
+  assert.equal(profile.recognitionAccuracy, 100);
+});
+
+test('retrieval profile does not mistake incorrect typed answers for recall strength', () => {
+  const profile = quiz.getQuizRetrievalProfile({
+    cardHistory: [],
+    quizHistory: [{
+      id: 'missed-recall',
+      completedAt: '2026-01-03T10:00:00.000Z',
+      durationSeconds: 30,
+      score: 0,
+      total: 2,
+      answers: [
+        {
+          wordId: 'word-a',
+          correct: false,
+          difficulty: 'typed-recall',
+          questionMode: 'typed-word',
+          answeredAt: '2026-01-02T10:00:00.000Z',
+          responseTimeSeconds: 12,
+        },
+        {
+          wordId: 'word-b',
+          correct: true,
+          difficulty: 'multiple-choice',
+          questionMode: 'word-to-definition',
+          answeredAt: '2026-01-03T10:00:00.000Z',
+          responseTimeSeconds: 4,
+        },
+      ],
+    }],
+  });
+
+  assert.ok(profile.recallAccuracy < 10);
+  assert.equal(profile.directRecallCorrect, 0);
+  assert.ok(profile.recognitionPercent > profile.recallPercent);
 });
 
 test('quiz feedback summaries group confidence choices overall and by word', () => {

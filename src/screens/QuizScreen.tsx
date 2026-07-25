@@ -2,9 +2,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useMemo, useState } from 'react';
 import { Alert, FlatList, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { COLORS } from '../constants/theme';
-import type { AnalyticsData, LegalPage, QuizAnswer, QuizPreferences, QuizProgress, QuizQuestion, QuizSessionMode, ReminderSettings, ReviewRating, SortMode, TimeBasedLearningSettings, Word } from '../types';
+import type { AnalyticsData, LegalPage, QuizAnswer, QuizDifficultyPreference, QuizPreferences, QuizProgress, QuizQuestion, QuizSessionMode, ReminderSettings, ReviewRating, SortMode, TimeBasedLearningSettings, Word } from '../types';
 import { styles } from '../styles';
-import { buildCategoryPracticeQuiz, buildOmegaTest, buildQuiz, calculateStreakStats, evaluateQuizAnswer, formatReminderTime, formatStudyTime, formatWordFlaggedDate, getDayKey, getMistakeReviewWordIds, getNewStudyWords, getOmegaTestStatus, getQuizRecallPaceSignal, getRecentDays, getStreakMessage, getStreakWeek, getStudySets, getTimeBasedLearningLimitSeconds, getTimedLearningBonusXp, getTypedRecallHint, getWordMastery, getWordMasteryCategoryForWord, NEW_STUDY_GROUP, normalizeTimeBasedLearningSettings, shuffle, TIMED_LEARNING_SECONDS, WORD_MASTERY_CATEGORIES, type WordMasteryCategoryId } from '../utils';
+import { buildCategoryPracticeQuiz, buildOmegaTest, buildQuiz, calculateStreakStats, evaluateQuizAnswer, formatReminderTime, formatStudyTime, formatWordFlaggedDate, getDayKey, getEffectiveQuizDifficulty, getMistakeReviewWordIds, getNewStudyWords, getOmegaTestStatus, getQuizQuestionPace, getQuizRecallPaceSignal, getRecentDays, getStreakMessage, getStreakWeek, getStudySets, getTimedLearningBonusXp, getTypedRecallHint, getWordMastery, getWordMasteryCategoryForWord, NEW_STUDY_GROUP, normalizeTimeBasedLearningSettings, shuffle, TIMED_LEARNING_SECONDS, WORD_MASTERY_CATEGORIES, type WordMasteryCategoryId } from '../utils';
 import { DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, ProgressFill, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 import { reportError, trackEvent } from '../services';
 
@@ -52,6 +52,17 @@ function formatOmegaCountdown(remainingMs: number) {
   const days = Math.floor(totalHours / 24);
   const hours = totalHours % 24;
   return days > 0 ? `${days}d ${hours}h` : `${hours}h`;
+}
+
+function getQuizDifficultyLabel(effectiveDifficulty: QuizDifficultyPreference) {
+  const labels: Record<QuizDifficultyPreference, string> = {
+    automatic: 'Adaptive',
+    easy: 'Easy',
+    standard: 'Standard',
+    hard: 'Hard',
+    ultra: 'Ultra',
+  };
+  return labels[effectiveDifficulty];
 }
 
 const FLAGGED_STUDY_GROUP = {
@@ -271,20 +282,24 @@ export function QuizScreen({
   const normalizedTimeSettings = normalizeTimeBasedLearningSettings(
     timeBasedLearningSettings,
   );
-  const activeTimeLimitSeconds = sessionMode === 'quick'
-    ? TIMED_LEARNING_SECONDS
-    : activeQuestion
-      ? getTimeBasedLearningLimitSeconds(
-          activeQuestion.difficulty,
-          normalizedTimeSettings,
-        )
-      : TIMED_LEARNING_SECONDS;
-  const timedQuestionActive = Boolean(
-    activeQuestion &&
-      (sessionMode === 'quick' || (
-        timedLearningEnabled &&
-        getWordMastery(activeQuestion.word, analytics) >= 80
-      )),
+  const activePace = getQuizQuestionPace({
+    sessionMode,
+    questionDifficulty: activeQuestion?.difficulty,
+    wordMastery: activeQuestion ? getWordMastery(activeQuestion.word, analytics) : 0,
+    timedLearningEnabled,
+    settings: normalizedTimeSettings,
+  });
+  const activeTimeLimitSeconds = activePace.seconds;
+  const timedQuestionActive = Boolean(activeQuestion && activePace.isTimed);
+  const effectiveQuizDifficulty = getEffectiveQuizDifficulty(
+    sessionMode,
+    quizPreferences.difficulty,
+  );
+  const difficultyLabel = getQuizDifficultyLabel(effectiveQuizDifficulty);
+  const quizDifficultyBadge = (
+    <View accessibilityLabel={`Quiz difficulty: ${difficultyLabel}`} style={styles.quizDifficultyBadge}>
+      <Text style={styles.quizDifficultyBadgeText}>QUIZZES: {difficultyLabel.toUpperCase()}</Text>
+    </View>
   );
 
   function saveQuizForLater() {
@@ -620,8 +635,16 @@ export function QuizScreen({
             analytics.quizHistory,
             masteryByWordId,
             sessionPriorityWordIds,
-            sessionOptions,
-          );
+          sessionOptions,
+        );
+
+    // The controls already prevent this state, but keep the assessment safe if
+    // a library changes while the screen is mounted (for example after a word
+    // is paused on another device).
+    if (nextQuiz.length === 0) {
+      Alert.alert('No words ready yet', 'Add or resume a word before starting this quiz.');
+      return;
+    }
 
     setQuiz(nextQuiz);
     setQuestionIndex(0);
@@ -641,12 +664,13 @@ export function QuizScreen({
     setQuizStartedAt(Date.now());
     setQuestionStartedAt(Date.now());
     setSecondsRemaining(
-      modeOverride === 'quick'
-        ? TIMED_LEARNING_SECONDS
-        : getTimeBasedLearningLimitSeconds(
-            nextQuiz[0]?.difficulty,
-            normalizedTimeSettings,
-          ),
+      getQuizQuestionPace({
+        sessionMode: modeOverride,
+        questionDifficulty: nextQuiz[0]?.difficulty,
+        wordMastery: nextQuiz[0] ? getWordMastery(nextQuiz[0].word, analytics) : 0,
+        timedLearningEnabled,
+        settings: normalizedTimeSettings,
+      }).seconds,
     );
     setFinishedBonusXp(0);
     setIsPracticeRound(
@@ -815,13 +839,15 @@ export function QuizScreen({
     setHintStep(0);
     setReviewRating('correct');
     setQuestionStartedAt(Date.now());
+    const nextQuestion = quiz[questionIndex + 1];
     setSecondsRemaining(
-      sessionMode === 'quick'
-        ? TIMED_LEARNING_SECONDS
-        : getTimeBasedLearningLimitSeconds(
-            quiz[questionIndex + 1]?.difficulty,
-            normalizedTimeSettings,
-          ),
+      getQuizQuestionPace({
+        sessionMode,
+        questionDifficulty: nextQuestion?.difficulty,
+        wordMastery: nextQuestion ? getWordMastery(nextQuestion.word, analytics) : 0,
+        timedLearningEnabled,
+        settings: normalizedTimeSettings,
+      }).seconds,
     );
   }
 
@@ -1041,6 +1067,7 @@ export function QuizScreen({
           eyebrow={pausedSession.sessionMode === 'omega-test' ? 'OMEGA TEST' : 'DAILY QUIZ'}
           title="Your quiz is waiting"
           subtitle="Your place is saved. Pick up exactly where you left off."
+          meta={quizDifficultyBadge}
         />
         <View style={styles.quizPausedCard}>
           <View pointerEvents="none" style={styles.quizPausedGlow} />
@@ -1097,6 +1124,7 @@ export function QuizScreen({
               ? 'A fresh Daily Quiz is ready. Daily and regular quizzes add to your streak.'
               : 'A little review each day makes words stick.'
           }
+          meta={quizDifficultyBadge}
         />
         <QuizComplete score={progress.score} total={progress.total} />
         <View style={styles.quizRefreshTokenCard}>
@@ -1170,6 +1198,7 @@ export function QuizScreen({
           eyebrow="DAILY QUIZ"
           title="Today’s practice"
           subtitle="A little review each day makes words stick."
+          meta={quizDifficultyBadge}
         />
         <EmptyPractice
           icon="help-circle-outline"
@@ -1186,6 +1215,7 @@ export function QuizScreen({
           eyebrow="DAILY QUIZ"
           title={finishedWasDailyRetry ? 'Daily score refreshed!' : 'Practice complete!'}
           subtitle="You gave your brain a useful workout."
+          meta={quizDifficultyBadge}
         />
         <QuizComplete
           score={finishedScore}
@@ -1228,6 +1258,7 @@ export function QuizScreen({
           eyebrow="DAILY QUIZ"
           title="Today’s practice"
           subtitle="A little review each day makes words stick."
+          meta={quizDifficultyBadge}
         />
         <View style={styles.quizIntroCard}>
           <View style={styles.quizIllustration}>

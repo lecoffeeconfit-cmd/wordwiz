@@ -159,3 +159,7 @@ $$;
 
 grant execute on function public.get_or_start_my_access() to authenticated;
 grant execute on function public.create_word_with_monthly_limit(jsonb) to authenticated;
+
+-- Ask PostgREST to pick up the replaced RPC immediately, avoiding a temporary
+-- "function not found" response caused by a stale schema cache after deploy.
+notify pgrst, 'reload schema';

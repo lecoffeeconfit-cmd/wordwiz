@@ -154,3 +154,6 @@ $$;
 
 grant execute on function public.create_words_with_monthly_limit(jsonb) to authenticated;
 grant execute on function public.set_study_set_membership(uuid[], jsonb, boolean) to authenticated;
+
+-- Make the new collection RPCs available immediately after this migration.
+notify pgrst, 'reload schema';

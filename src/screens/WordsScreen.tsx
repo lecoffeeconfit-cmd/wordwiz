@@ -411,8 +411,8 @@ export function WordsScreen({
                     {addingCollectionId
                       ? 'Adding collection…'
                       : studySets.length
-                        ? `${studySets.length} ready for Quiz`
-                        : 'Create sets from your words'}
+                        ? 'Personally created study sets'
+                        : 'Create a set from your words'}
                   </Text>
                 </View>
               </Pressable>
