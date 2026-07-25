@@ -1340,7 +1340,7 @@ export function DashboardScreen({
         badge={retrievalProfile.totalAnswers ? `${retrievalProfile.recallPercent}% recall` : 'New'}
       >
         <Text style={styles.retrievalProfileIntro}>
-          This compares successful recognition with successful recall. Recent answers, pace, and spaced direct recall make the estimate more trustworthy.
+          Based on your current learning data, this compares successful recognition with successful recall. Recent answers, pace, and spaced direct recall make the estimate more trustworthy.
         </Text>
         {retrievalProfile.totalAnswers === 0 ? (
           <View style={styles.feedbackEmpty}>
@@ -1434,7 +1434,7 @@ export function DashboardScreen({
         badge={feedbackSummary.total ? `${feedbackSummary.total} check-ins` : 'New'}
       >
         <Text style={styles.feedbackIntro}>
-          Your check-ins after correct answers help tailor the next review.
+          Based on your current learning data, check-ins after correct answers help tailor the next review.
         </Text>
         <View style={styles.feedbackViewToggle}>
           {([
@@ -1529,7 +1529,7 @@ export function DashboardScreen({
         badge={recallPaceAnswerCount ? `${recallPaceAnswerCount} responses` : 'New'}
       >
         <Text style={styles.recallPaceIntro}>
-          Accuracy comes first. Pace is recorded for every answer and helps choose the next review.
+          Based on your current learning data, each bar shows response quality while the time badge shows average pace.
         </Text>
         {recallSignalSummary.total > 0 ? (
           <RecallSignalDistribution
@@ -1625,7 +1625,7 @@ export function DashboardScreen({
         ) : (
           <>
             <Text style={styles.dueReviewIntro}>
-              Research-backed, time-based retention learning schedules proven for stronger word retention.{"\n"}Tap for next up · Double-tap to focus
+              Based on your current learning data and research on spaced practice, these are the words most ready for a helpful review.{"\n"}Tap for next up · Double-tap to focus
             </Text>
             {dueReviewPreview.map((item) => {
               const category = getWordMasteryCategoryForWord(
@@ -3181,18 +3181,25 @@ function RecallPaceList({
     averageSeconds: number;
     term?: string;
     collectionName?: string;
+    fluent?: number;
+    successful?: number;
+    reinforcement?: number;
+    incorrect?: number;
   }>;
   view: 'types' | 'words';
 }) {
-  const slowestAverage = Math.max(...items.map((item) => item.averageSeconds), 1);
-
   return (
     <View style={styles.recallPaceList}>
       {items.map((item) => {
         const label = view === 'types'
           ? formatQuestionType(item.key)
           : item.term ?? '';
-        const width = Math.max(10, Math.round((item.averageSeconds / slowestAverage) * 100));
+        const signals = [
+          { id: 'fluent', label: 'Fluent', value: item.fluent ?? 0, color: COLORS.greenDark },
+          { id: 'successful', label: 'Recalled', value: item.successful ?? 0, color: COLORS.blue },
+          { id: 'reinforcement', label: 'Reinforce', value: item.reinforcement ?? 0, color: COLORS.orange },
+          { id: 'incorrect', label: 'Missed', value: item.incorrect ?? 0, color: COLORS.red },
+        ];
         return (
           <View key={item.key} style={styles.recallPaceRow}>
             <View style={styles.recallPaceHeader}>
@@ -3212,13 +3219,33 @@ function RecallPaceList({
                 <Text style={styles.recallPaceValue}>{formatPace(item.averageSeconds)}</Text>
               </View>
             </View>
-            <View style={styles.recallPaceTrack}>
-              <ProgressFill
-                color={COLORS.blue}
-                progress={width}
-                radius={4}
-                style={{ width: `${width}%` }}
-              />
+            <View style={[styles.recallPaceTrack, styles.recallPaceSignalTrack]}>
+              {signals.map((signal) =>
+                signal.value > 0 ? (
+                  <View
+                    key={signal.id}
+                    style={[
+                      styles.recallPaceSignalSegment,
+                      { flex: signal.value, backgroundColor: signal.color },
+                    ]}
+                  />
+                ) : null,
+              )}
+            </View>
+            <View style={styles.recallPaceSignalLegend}>
+              {signals.map((signal) => (
+                <View key={signal.id} style={styles.recallPaceSignalLegendItem}>
+                  <View
+                    style={[
+                      styles.recallPaceSignalLegendDot,
+                      { backgroundColor: signal.color },
+                    ]}
+                  />
+                  <Text style={styles.recallPaceSignalLegendText}>
+                    {signal.label} {signal.value}
+                  </Text>
+                </View>
+              ))}
             </View>
             <Text style={styles.recallPaceMeta}>
               {item.answerCount} {item.answerCount === 1 ? 'response' : 'responses'}

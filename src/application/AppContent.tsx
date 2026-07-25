@@ -2275,7 +2275,12 @@ export default function AppContent() {
   }
 
   if (!isReady) {
-    return <WordWizLoadingScreen onLayout={hideNativeSplash} />;
+    return (
+      <SafeAreaView style={styles.loadingScreen} onLayout={hideNativeSplash}>
+        <Ionicons name="sparkles" size={34} color={COLORS.purpleDark} />
+        <Text style={styles.loadingTitle}>Getting WordWiz ready...</Text>
+      </SafeAreaView>
+    );
   }
 
   if (!env.isSupabaseConfigured) {
@@ -2708,86 +2713,6 @@ async function clearLegacyLearningData() {
     '@wordwiz/analytics',
     '@wordwiz/reminder-settings',
   ]);
-}
-
-function WordWizLoadingScreen({ onLayout }: { onLayout: () => void }) {
-  const float = useRef(new Animated.Value(0)).current;
-  const shimmer = useRef(new Animated.Value(0.35)).current;
-
-  useEffect(() => {
-    const animation = Animated.loop(
-      Animated.parallel([
-        Animated.sequence([
-          Animated.timing(float, {
-            toValue: -7,
-            duration: 1600,
-            useNativeDriver: true,
-          }),
-          Animated.timing(float, {
-            toValue: 0,
-            duration: 1600,
-            useNativeDriver: true,
-          }),
-        ]),
-        Animated.sequence([
-          Animated.timing(shimmer, {
-            toValue: 1,
-            duration: 1100,
-            useNativeDriver: true,
-          }),
-          Animated.timing(shimmer, {
-            toValue: 0.35,
-            duration: 1100,
-            useNativeDriver: true,
-          }),
-        ]),
-      ]),
-    );
-
-    animation.start();
-    return () => animation.stop();
-  }, [float, shimmer]);
-
-  return (
-    <SafeAreaView style={styles.loadingScreen} onLayout={onLayout}>
-      <View pointerEvents="none" style={styles.loadingAura}>
-        <View style={styles.loadingAuraTop} />
-        <View style={styles.loadingAuraBottom} />
-      </View>
-
-      <View style={styles.loadingContent}>
-        <Animated.View
-          style={[
-            styles.loadingWizardBadge,
-            { transform: [{ translateY: float }] },
-          ]}
-        >
-          <View style={styles.loadingWizardHatCone} />
-          <View style={styles.loadingWizardHatBrim} />
-          <Animated.View style={[styles.loadingWizardSparkle, { opacity: shimmer }]}>
-            <Ionicons name="sparkles" size={20} color="#FFE58A" />
-          </Animated.View>
-        </Animated.View>
-
-        <Text style={styles.loadingEyebrow}>WORDWIZ</Text>
-        <Text style={styles.loadingTitle}>
-          Preparing your next{`\n`}word adventure
-        </Text>
-        <Text style={styles.loadingText}>Loading your words…</Text>
-
-        <View style={styles.loadingProgressTrack} accessibilityLabel="Loading WordWiz">
-          <Animated.View style={[styles.loadingProgressGlow, { opacity: shimmer }]} />
-        </View>
-      </View>
-
-      <View style={styles.loadingMagicFooter}>
-        <View style={styles.loadingFooterRule} />
-        <Text style={styles.loadingMagicText}>
-          “To learn ... is to light a fire; every syllable that is spelling out is a spark.”
-        </Text>
-      </View>
-    </SafeAreaView>
-  );
 }
 
 function createUuid() {

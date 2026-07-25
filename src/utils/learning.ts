@@ -5,6 +5,7 @@ import type {
   QuizAttempt,
   QuizQuestionDifficulty,
   QuizProgress,
+  QuizRecallPaceSignal,
   ReviewRating,
   StreakStats,
   StudySetMembership,
@@ -14,7 +15,11 @@ import type {
 } from '../types';
 import { getDayKey, getDayKeyForDate, getPreviousDayKey, getRecentDays } from './date';
 import { buildWordContextExamples, makeDistinctSimpleDefinition } from './dictionary';
-import { getQuizRecallPaceSignal, isDirectRecallQuestion } from './quiz';
+import {
+  DEFAULT_TIME_BASED_LEARNING_SETTINGS,
+  getQuizRecallPaceSignal,
+  isDirectRecallQuestion,
+} from './quiz';
 
 export const NOVICE_MASTERY_COLOR = '#89CFF0';
 
@@ -71,6 +76,13 @@ export type QuizRecallPace = {
   collectionName?: string;
 };
 
+export type QuizRecallPaceWithSignals = QuizRecallPace & Record<
+  QuizRecallPaceSignal,
+  number
+>;
+
+export type QuizRecallPaceByWord = QuizRecallPaceWithSignals;
+
 function getQuizRecallPace(
   analytics: AnalyticsData,
   getKey: (answer: QuizAnswer) => string | undefined,
@@ -121,8 +133,8 @@ function getQuizRecallPace(
 
 export function getQuizRecallPaceByQuestionType(
   analytics: AnalyticsData,
-): QuizRecallPace[] {
-  return getQuizRecallPace(
+): QuizRecallPaceWithSignals[] {
+  return getQuizRecallPaceWithSignals(
     analytics,
     (answer) => answer.questionMode,
   );
@@ -130,8 +142,63 @@ export function getQuizRecallPaceByQuestionType(
 
 export function getQuizRecallPaceByWord(
   analytics: AnalyticsData,
-): QuizRecallPace[] {
-  return getQuizRecallPace(analytics, (answer) => answer.wordId, true);
+): QuizRecallPaceByWord[] {
+  return getQuizRecallPaceWithSignals(
+    analytics,
+    (answer) => answer.wordId,
+    true,
+  );
+}
+
+function getQuizRecallPaceWithSignals(
+  analytics: AnalyticsData,
+  getKey: (answer: QuizAnswer) => string | undefined,
+  includeWordContext = false,
+): QuizRecallPaceWithSignals[] {
+  const signalsByKey = new Map<
+    string,
+    Record<QuizRecallPaceSignal, number>
+  >();
+
+  analytics.quizHistory.forEach((attempt) => {
+    attempt.answers.forEach((answer) => {
+      if (
+        typeof answer.responseTimeSeconds !== 'number' ||
+        !Number.isFinite(answer.responseTimeSeconds) ||
+        answer.responseTimeSeconds < 0
+      ) return;
+
+      const key = getKey(answer);
+      if (!key) return;
+
+      const signal = answer.recallPace ?? getQuizRecallPaceSignal({
+        correct: answer.correct,
+        responseTimeSeconds: answer.responseTimeSeconds,
+        difficulty: answer.difficulty,
+        settings: DEFAULT_TIME_BASED_LEARNING_SETTINGS,
+      });
+      const counts = signalsByKey.get(key) ?? {
+        fluent: 0,
+        successful: 0,
+        reinforcement: 0,
+        incorrect: 0,
+      };
+      counts[signal] += 1;
+      signalsByKey.set(key, counts);
+    });
+  });
+
+  return getQuizRecallPace(analytics, getKey, includeWordContext).map(
+    (pace) => ({
+      ...pace,
+      ...(signalsByKey.get(pace.key) ?? {
+        fluent: 0,
+        successful: 0,
+        reinforcement: 0,
+        incorrect: 0,
+      }),
+    }),
+  );
 }
 
 export function getQuizFeedbackSummary(

@@ -1726,8 +1726,26 @@ test('quiz recall pace keeps timing for every question type and word', () => {
   };
 
   assert.deepEqual(learning.getQuizRecallPaceByQuestionType(analytics), [
-    { key: 'typed-word', answerCount: 2, totalSeconds: 12, averageSeconds: 6 },
-    { key: 'true-false', answerCount: 1, totalSeconds: 2, averageSeconds: 2 },
+    {
+      key: 'typed-word',
+      answerCount: 2,
+      totalSeconds: 12,
+      averageSeconds: 6,
+      fluent: 1,
+      successful: 1,
+      reinforcement: 0,
+      incorrect: 0,
+    },
+    {
+      key: 'true-false',
+      answerCount: 1,
+      totalSeconds: 2,
+      averageSeconds: 2,
+      fluent: 0,
+      successful: 0,
+      reinforcement: 0,
+      incorrect: 1,
+    },
   ]);
   assert.deepEqual(learning.getQuizRecallPaceByWord(analytics), [
     {
@@ -1737,8 +1755,21 @@ test('quiz recall pace keeps timing for every question type and word', () => {
       answerCount: 2,
       totalSeconds: 12,
       averageSeconds: 6,
+      fluent: 1,
+      successful: 1,
+      reinforcement: 0,
+      incorrect: 0,
     },
-    { key: 'curious', answerCount: 1, totalSeconds: 2, averageSeconds: 2 },
+    {
+      key: 'curious',
+      answerCount: 1,
+      totalSeconds: 2,
+      averageSeconds: 2,
+      fluent: 0,
+      successful: 0,
+      reinforcement: 0,
+      incorrect: 1,
+    },
   ]);
 });
 
