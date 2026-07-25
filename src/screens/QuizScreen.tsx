@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useEffect, useMemo, useState } from 'react';
-import { Alert, FlatList, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Alert, Animated, FlatList, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { COLORS } from '../constants/theme';
 import type { AnalyticsData, LegalPage, QuizAnswer, QuizDifficultyPreference, QuizPreferences, QuizProgress, QuizQuestion, QuizSessionMode, ReminderSettings, ReviewRating, SortMode, TimeBasedLearningSettings, Word } from '../types';
 import { styles } from '../styles';
@@ -163,6 +163,7 @@ export function QuizScreen({
   const [questionCount, setQuestionCount] = useState<5 | 10 | 20>(5);
   const [challengeMistakes, setChallengeMistakes] = useState(0);
   const [challengeCorrectStreak, setChallengeCorrectStreak] = useState(0);
+  const ultraBadgePulse = useRef(new Animated.Value(0)).current;
   const [finishedTotal, setFinishedTotal] = useState<number | null>(null);
   const [finishedWasDailyRetry, setFinishedWasDailyRetry] = useState(false);
   const [selectedCategory, setSelectedCategory] =
@@ -296,10 +297,70 @@ export function QuizScreen({
     quizPreferences.difficulty,
   );
   const difficultyLabel = getQuizDifficultyLabel(effectiveQuizDifficulty);
+  const isUltraDifficulty = effectiveQuizDifficulty === 'ultra';
+  const ultraBadgeScale = ultraBadgePulse.interpolate({
+    inputRange: [0, 1],
+    outputRange: [1, 1.045],
+  });
+
+  useEffect(() => {
+    if (!isUltraDifficulty) {
+      ultraBadgePulse.setValue(0);
+      return;
+    }
+
+    const animation = Animated.loop(
+      Animated.sequence([
+        Animated.timing(ultraBadgePulse, {
+          toValue: 1,
+          duration: 1050,
+          useNativeDriver: true,
+        }),
+        Animated.timing(ultraBadgePulse, {
+          toValue: 0,
+          duration: 1050,
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    animation.start();
+    return () => animation.stop();
+  }, [isUltraDifficulty, ultraBadgePulse]);
+
   const quizDifficultyBadge = (
-    <View accessibilityLabel={`Quiz difficulty: ${difficultyLabel}`} style={styles.quizDifficultyBadge}>
-      <Text style={styles.quizDifficultyBadgeText}>QUIZZES: {difficultyLabel.toUpperCase()}</Text>
-    </View>
+    <Animated.View
+      accessibilityLabel={`Quiz difficulty: ${difficultyLabel}`}
+      style={[
+        styles.quizDifficultyBadge,
+        isUltraDifficulty && styles.quizDifficultyBadgeUltra,
+        isUltraDifficulty && { transform: [{ scale: ultraBadgeScale }] },
+      ]}
+    >
+      {isUltraDifficulty ? (
+        <Animated.View
+          style={[
+            styles.quizDifficultyBadgeSparkle,
+            {
+              opacity: ultraBadgePulse.interpolate({
+                inputRange: [0, 1],
+                outputRange: [0.56, 1],
+              }),
+              transform: [{ rotate: '10deg' }],
+            },
+          ]}
+        >
+          <Ionicons name="sparkles" size={12} color="#C48609" />
+        </Animated.View>
+      ) : null}
+      <Text
+        style={[
+          styles.quizDifficultyBadgeText,
+          isUltraDifficulty && styles.quizDifficultyBadgeTextUltra,
+        ]}
+      >
+        QUIZZES: {difficultyLabel.toUpperCase()}
+      </Text>
+    </Animated.View>
   );
 
   function saveQuizForLater() {

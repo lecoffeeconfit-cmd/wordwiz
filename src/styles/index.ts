@@ -1150,11 +1150,24 @@ export const styles = StyleSheet.create({
     borderRadius: 12,
     backgroundColor: 'rgba(255, 255, 255, 0.66)',
   },
+  quizDifficultyBadgeUltra: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderColor: 'rgba(205, 145, 16, 0.48)',
+    backgroundColor: 'rgba(255, 242, 190, 0.92)',
+    boxShadow: '0 5px 14px rgba(202, 145, 20, 0.2)',
+  },
+  quizDifficultyBadgeSparkle: {
+    marginRight: 4,
+  },
   quizDifficultyBadgeText: {
     color: '#A45A17',
     fontSize: 9,
     fontWeight: '900',
     letterSpacing: 0.35,
+  },
+  quizDifficultyBadgeTextUltra: {
+    color: '#8A5700',
   },
   screenHeaderAction: {
     position: 'absolute',
