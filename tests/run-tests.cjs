@@ -847,6 +847,42 @@ test('Omega Test stays playable with a one-word library', () => {
   assert.ok(recognitionQuestion.options.length >= 2);
 });
 
+test('Omega Test pairs strict recall with the strongest available prompt types', () => {
+  const words = [
+    {
+      ...makeWord('omega-context-a', 'Avid', 'Very eager or enthusiastic.'),
+      example: 'The avid reader finished a novel every few days.',
+      synonyms: ['eager', 'enthusiastic'],
+    },
+    {
+      ...makeWord('omega-context-b', 'Lucid', 'Clear and easy to understand.'),
+      example: 'Her lucid explanation made the difficult topic feel manageable.',
+      synonyms: ['clear', 'coherent'],
+    },
+    {
+      ...makeWord('omega-context-c', 'Tacit', 'Understood without being stated.'),
+      example: 'They reached a tacit agreement without saying it aloud.',
+      synonyms: ['unspoken', 'implicit'],
+    },
+  ];
+  const questions = quiz.buildOmegaTest(words, []);
+  const recognitionQuestions = questions.filter(
+    (question) => question.mode !== 'typed-word',
+  );
+
+  assert.equal(recognitionQuestions.length, words.length);
+  assert.ok(
+    recognitionQuestions.every(
+      (question) => !['word-to-definition', 'true-false'].includes(question.mode),
+    ),
+  );
+  assert.ok(
+    questions
+      .filter((question) => question.mode === 'typed-word')
+      .every((question) => question.strictSpelling),
+  );
+});
+
 test('Omega Test unlocks again seven days after the most recent assessment', () => {
   const completedAt = '2026-07-01T12:00:00.000Z';
   const analytics = {
@@ -898,12 +934,142 @@ test('quick, hard, and ultra quiz profiles build the requested retrieval challen
 
   assert.equal(quick.length, 20);
   assert.ok(hard.filter((question) => question.mode === 'typed-word').length >= 2);
+  assert.ok(
+    hard
+      .filter((question) => question.mode === 'typed-word')
+      .every((question) => question.strictSpelling),
+  );
   assert.ok(ultra.every((question) => question.mode === 'typed-word'));
   assert.ok(ultra.every((question) => question.strictSpelling));
   assert.equal(
     quiz.evaluateQuizAnswer('Avid', 'Avdi', 'typed-word', true).correct,
     false,
   );
+});
+
+test('hard practice uses varied recall and contextual prompts before repeating a format for a word', () => {
+  const words = [
+    {
+      ...makeWord('hard-a', 'Avid', 'Very eager or enthusiastic.'),
+      example: 'The avid reader finished a novel every few days.',
+      synonyms: ['eager', 'enthusiastic'],
+    },
+    {
+      ...makeWord('hard-b', 'Lucid', 'Clear and easy to understand.'),
+      example: 'Her lucid explanation made the difficult topic feel manageable.',
+      synonyms: ['clear', 'coherent'],
+    },
+    {
+      ...makeWord('hard-c', 'Tacit', 'Understood without being stated.'),
+      example: 'They reached a tacit agreement without saying it aloud.',
+      synonyms: ['unspoken', 'implicit'],
+    },
+  ];
+  const questions = quiz.buildQuiz(
+    words,
+    [],
+    Object.fromEntries(words.map((word) => [word.id, 90])),
+    [],
+    { difficulty: 'hard', questionLimit: 6 },
+  );
+
+  assert.ok(questions.filter((question) => question.mode === 'typed-word').length >= 2);
+  assert.ok(
+    questions.every(
+      (question) => !['word-to-definition', 'true-false'].includes(question.mode),
+    ),
+  );
+  words.forEach((word) => {
+    const modes = questions
+      .filter((question) => question.word.id === word.id)
+      .map((question) => question.mode);
+    assert.equal(modes.length, 2);
+    assert.notEqual(modes[0], modes[1]);
+  });
+});
+
+test('hard and ultra prompts use fuller clues and plausible nearby distractors', () => {
+  const ameliorate = {
+    ...makeWord(
+      'ameliorate',
+      'Ameliorate',
+      'To make the harmful effects of something less severe or easier to bear.',
+    ),
+    simpleDefinition: 'To make something better.',
+    partOfSpeech: 'verb',
+  };
+  const attenuate = {
+    ...makeWord(
+      'attenuate',
+      'Attenuate',
+      'To make something less severe, intense, or effective.',
+    ),
+    partOfSpeech: 'verb',
+  };
+  const alleviate = {
+    ...makeWord(
+      'alleviate',
+      'Alleviate',
+      'To make pain, difficulty, or suffering less severe.',
+    ),
+    partOfSpeech: 'verb',
+  };
+  const obfuscate = {
+    ...makeWord('obfuscate', 'Obfuscate', 'To make something unclear or confusing.'),
+    partOfSpeech: 'verb',
+  };
+  const vacillate = {
+    ...makeWord('vacillate', 'Vacillate', 'To keep changing between different opinions.'),
+    partOfSpeech: 'verb',
+  };
+  const words = [ameliorate, attenuate, alleviate, obfuscate, vacillate];
+  const ultraQuestion = quiz.buildQuiz(
+    [ameliorate],
+    [],
+    { [ameliorate.id]: 90 },
+    [],
+    { difficulty: 'ultra' },
+  )[0];
+  const definitionQuestion = quiz.buildQuiz(
+    words,
+    [],
+    Object.fromEntries(words.map((word) => [word.id, 0])),
+    [],
+    {
+      questionTypePreferences: {
+        'word-to-definition': { enabled: true, frequency: 'more' },
+        'definition-to-word': { enabled: false, frequency: 'normal' },
+        'true-false': { enabled: false, frequency: 'normal' },
+        'typed-word': { enabled: false, frequency: 'normal' },
+        'sentence-usage': { enabled: false, frequency: 'normal' },
+        'sentence-completion': { enabled: false, frequency: 'normal' },
+        'closest-synonym': { enabled: false, frequency: 'normal' },
+      },
+    },
+  ).find((question) => question.word.id === ameliorate.id);
+  const easyDefinitionQuestion = quiz.buildQuiz(
+    words,
+    [],
+    Object.fromEntries(words.map((word) => [word.id, 0])),
+    [],
+    {
+      difficulty: 'easy',
+      questionTypePreferences: {
+        'word-to-definition': { enabled: true, frequency: 'more' },
+        'definition-to-word': { enabled: false, frequency: 'normal' },
+        'true-false': { enabled: false, frequency: 'normal' },
+        'typed-word': { enabled: false, frequency: 'normal' },
+        'sentence-usage': { enabled: false, frequency: 'normal' },
+        'sentence-completion': { enabled: false, frequency: 'normal' },
+        'closest-synonym': { enabled: false, frequency: 'normal' },
+      },
+    },
+  ).find((question) => question.word.id === ameliorate.id);
+
+  assert.equal(ultraQuestion.displayText, ameliorate.definition);
+  assert.ok(definitionQuestion.options.includes(attenuate.simpleDefinition));
+  assert.ok(definitionQuestion.options.includes(alleviate.simpleDefinition));
+  assert.ok(!easyDefinitionQuestion.options.includes(attenuate.simpleDefinition));
 });
 
 test('quiz difficulty and pace use one consistent policy across every session type', () => {
@@ -1039,6 +1205,31 @@ test('contextual quiz formats use saved examples and meaningful synonym choices'
   assert.equal(completionQuestion.difficulty, 'fill-in-options');
 });
 
+test('quiz quality gate rejects placeholder examples instead of making weak context questions', () => {
+  const words = [
+    makeWord('placeholder-a', 'Avid', 'Very eager or enthusiastic.'),
+    makeWord('placeholder-b', 'Lucid', 'Clear and easy to understand.'),
+    makeWord('placeholder-c', 'Tacit', 'Understood without being stated.'),
+  ];
+  const questions = quiz.buildQuiz(
+    words,
+    [],
+    Object.fromEntries(words.map((word) => [word.id, 70])),
+    words.map((word) => word.id),
+  );
+
+  assert.ok(
+    questions.every(
+      (question) =>
+        question.mode !== 'sentence-usage' &&
+        question.mode !== 'sentence-completion',
+    ),
+  );
+  assert.ok(
+    questions.every((question) => !/\bexample\.?$/i.test(question.displayText)),
+  );
+});
+
 test('quiz questions become more demanding as word mastery grows', () => {
   assert.equal(quiz.getQuestionModeForMastery(0), 'word-to-definition');
   assert.equal(quiz.getQuestionModeForMastery(24), 'word-to-definition');
@@ -1108,6 +1299,50 @@ test('typed recall hints progress without exposing the full answer', () => {
     quiz.evaluateQuizAnswer('Compensatory', '__wordwiz-revealed-answer__', 'typed-word').correct,
     false,
   );
+});
+
+test('direct recall prompts do not reveal the answer or an obvious word form', () => {
+  const injury = {
+    ...makeWord('injury', 'Injury', 'In plain English, to wrong, to injure.', 0),
+    simpleDefinition: 'To wrong or injure.',
+    example: 'The accident left the cyclist with a serious injury.',
+  };
+  const supportWords = [
+    makeWord('support-1', 'Candid', 'Honest and direct.', 0),
+    makeWord('support-2', 'Lucid', 'Clear and easy to understand.', 0),
+    makeWord('support-3', 'Tacit', 'Understood without being stated.', 0),
+  ];
+  const typedQuestion = quiz.buildQuiz(
+    [injury],
+    [],
+    { [injury.id]: 90 },
+    [],
+    { difficulty: 'ultra' },
+  )[0];
+  const definitionQuestion = quiz.buildQuiz(
+    [injury, ...supportWords],
+    [],
+    Object.fromEntries([injury, ...supportWords].map((word) => [word.id, 70])),
+    [],
+    {
+      questionTypePreferences: {
+        'definition-to-word': { enabled: true, frequency: 'more' },
+        'word-to-definition': { enabled: false, frequency: 'normal' },
+        'true-false': { enabled: false, frequency: 'normal' },
+        'typed-word': { enabled: false, frequency: 'normal' },
+        'sentence-usage': { enabled: false, frequency: 'normal' },
+        'sentence-completion': { enabled: false, frequency: 'normal' },
+        'closest-synonym': { enabled: false, frequency: 'normal' },
+      },
+    },
+  ).find((question) => question.word.id === injury.id);
+
+  [typedQuestion, definitionQuestion].forEach((question) => {
+    assert.ok(question);
+    assert.equal(question.prompt, 'COMPLETE THE CONTEXT');
+    assert.match(question.displayText, /_____/);
+    assert.doesNotMatch(question.displayText, /injur/i);
+  });
 });
 
 test('typed recall accepts close spellings but flags the correction', () => {

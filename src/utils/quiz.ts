@@ -1,12 +1,13 @@
 import type { AnalyticsData, QuizAnswer, QuizAttempt, QuizDifficultyPreference, QuizQuestion, QuizQuestionDifficulty, QuizQuestionMode, QuizQuestionTypePreference, QuizQuestionTypePreferences, QuizRecallPaceSignal, QuizSessionMode, TimeBasedLearningSettings, Word } from '../types';
 import { FALLBACK_DEFINITIONS } from '../constants/data';
-import { getCompleteFlashcardDefinition, getWordLearningContexts } from './dictionary';
+import { getCompleteFlashcardDefinition } from './dictionary';
 
 const MAX_QUIZ_QUESTIONS = 10;
 export const MAX_QUICK_PRACTICE_QUESTIONS = 20;
 export const OMEGA_TEST_COOLDOWN_DAYS = 7;
 export const OMEGA_TEST_COOLDOWN_MS = OMEGA_TEST_COOLDOWN_DAYS * 24 * 60 * 60 * 1000;
 const RECENT_ATTEMPTS_TO_AVOID = 3;
+type QuestionChallenge = 'easy' | 'standard' | 'hard';
 export const TIMED_LEARNING_SECONDS = 15;
 export const FLUENT_RECALL_SECONDS = 6;
 export const DEFAULT_TIME_BASED_LEARNING_SETTINGS: TimeBasedLearningSettings = {
@@ -411,6 +412,10 @@ export function buildQuiz(
     masteryByWordId,
     options,
   );
+  const difficulty = getEffectiveQuizDifficulty(
+    options.sessionMode ?? 'standard',
+    options.difficulty ?? 'automatic',
+  );
 
   return planWords.map((word, index) => {
     const mode = modes[index];
@@ -420,11 +425,14 @@ export function buildQuiz(
       index,
       mode,
       getContextOffset(word, recentAttempts, index),
+      difficulty,
     );
     return {
       ...question,
       strictSpelling:
-        (options.difficulty === 'ultra' || options.sessionMode === 'mastery-test') &&
+        (difficulty === 'hard' ||
+          difficulty === 'ultra' ||
+          options.sessionMode === 'mastery-test') &&
         mode === 'typed-word',
     };
   });
@@ -440,18 +448,10 @@ export function buildOmegaTest(
   recentAttempts: QuizAttempt[] = [],
 ): QuizQuestion[] {
   const omegaWords = words.filter((word) => !word.mastery?.excludedFromPractice);
-  const recognitionModes: QuizQuestionMode[] = [
-    'word-to-definition',
-    'definition-to-word',
-    'true-false',
-    'sentence-usage',
-    'sentence-completion',
-    'closest-synonym',
-  ];
 
   return shuffle(omegaWords).flatMap((word, wordIndex) => {
     const contextOffset = getContextOffset(word, recentAttempts, wordIndex);
-    const recognitionMode = recognitionModes[wordIndex % recognitionModes.length];
+    const recognitionMode = getOmegaRecognitionMode(word, omegaWords, wordIndex);
     const modes: QuizQuestionMode[] = [recognitionMode, 'typed-word'];
 
     return modes.map((mode, modeIndex) => ({
@@ -461,10 +461,35 @@ export function buildOmegaTest(
         wordIndex * modes.length + modeIndex,
         mode,
         contextOffset + modeIndex,
+        'ultra',
       ),
       strictSpelling: mode === 'typed-word',
     }));
   });
+}
+
+/**
+ * Omega is an assessment, so its companion prompt should test transfer or
+ * recall—not the easiest recognition checks. A plain word-to-definition
+ * question remains only as a dependable fallback for a very small library.
+ */
+function getOmegaRecognitionMode(
+  word: Word,
+  words: Word[],
+  index: number,
+): QuizQuestionMode {
+  const strongestAvailable = [
+    'sentence-completion',
+    'closest-synonym',
+    'definition-to-word',
+    'sentence-usage',
+  ].filter((mode) =>
+    getSupportedQuestionModesForWord(word, words).includes(mode as QuizQuestionMode),
+  ) as QuizQuestionMode[];
+
+  return strongestAvailable.length
+    ? strongestAvailable[index % strongestAvailable.length]
+    : 'word-to-definition';
 }
 
 export function getOmegaTestAttempts(analytics: AnalyticsData) {
@@ -598,6 +623,7 @@ function getQuestionModesForSession(
 
   const counts = new Map<QuizQuestionMode, number>();
   const modes: QuizQuestionMode[] = [];
+  const usedModesByWordId = new Map<string, Set<QuizQuestionMode>>();
   planWords.forEach((word, index) => {
     const candidates = getEnabledModeCandidates(
       word,
@@ -607,10 +633,15 @@ function getQuestionModesForSession(
       questionTypePreferences,
     );
     const lastMode = modes.at(-1);
-    const contextualCandidates = candidates.filter((mode) => mode !== lastMode);
-    const pool = contextualCandidates.length ? contextualCandidates : candidates;
+    const nonRepeatingCandidates = candidates.filter((mode) => mode !== lastMode);
+    const modeCandidates = nonRepeatingCandidates.length
+      ? nonRepeatingCandidates
+      : candidates;
+    const usedForWord = usedModesByWordId.get(word.id) ?? new Set();
+    const unseenForWord = modeCandidates.filter((mode) => !usedForWord.has(mode));
+    const pool = unseenForWord.length ? unseenForWord : modeCandidates;
     const typedTarget = difficulty === 'hard'
-      ? Math.ceil((index + 1) * 0.55)
+      ? Math.ceil((index + 1) * 0.7)
       : 0;
     const typedCount = counts.get('typed-word') ?? 0;
     const mode =
@@ -620,6 +651,8 @@ function getQuestionModesForSession(
           ? 'typed-word'
           : pickLeastUsedMode(pool, counts, lastMode, questionTypePreferences);
     modes.push(mode);
+    usedForWord.add(mode);
+    usedModesByWordId.set(word.id, usedForWord);
     counts.set(mode, (counts.get(mode) ?? 0) + 1);
   });
   return modes;
@@ -649,7 +682,13 @@ function getDifficultyModeCandidates(
       mode === 'closest-synonym' ||
       mode === 'definition-to-word',
   );
-  return hard.length ? ['typed-word', ...hard] : ['typed-word'];
+  // Hard deliberately leans on direct recall, but it pairs it with the
+  // most meaningful contextual prompts available so it measures knowledge
+  // rather than simply repeating the same clue.
+  const contextualHard = hard.filter((mode) => mode !== 'typed-word');
+  return contextualHard.length
+    ? ['typed-word', ...contextualHard]
+    : ['typed-word'];
 }
 
 function getEnabledModeCandidates(
@@ -841,32 +880,74 @@ function buildQuestionForMode(
   index: number,
   mode: QuizQuestionMode,
   contextOffset = index,
+  selectedDifficulty: QuizDifficultyPreference = 'automatic',
 ) {
+  const useDetailedClues = selectedDifficulty === 'hard' || selectedDifficulty === 'ultra';
+  const questionChallenge = getQuestionChallenge(selectedDifficulty);
   if (mode === 'definition-to-word') {
-    return buildDefinitionToWordQuestion(word, words, index);
+    return buildDefinitionToWordQuestion(
+      word,
+      words,
+      index,
+      contextOffset,
+      useDetailedClues,
+      questionChallenge,
+    );
   }
 
   if (mode === 'true-false') {
-    return buildTrueFalseQuestion(word, words, index);
+    return buildTrueFalseQuestion(
+      word,
+      words,
+      index,
+      useDetailedClues,
+      questionChallenge,
+    );
   }
 
   if (mode === 'typed-word') {
-    return buildTypedWordQuestion(word);
+    return buildTypedWordQuestion(word, contextOffset, useDetailedClues);
   }
 
   if (mode === 'sentence-usage') {
-    return buildSentenceUsageQuestion(word, words, index, contextOffset);
+    return buildSentenceUsageQuestion(
+      word,
+      words,
+      index,
+      contextOffset,
+      questionChallenge,
+    );
   }
 
   if (mode === 'sentence-completion') {
-    return buildSentenceCompletionQuestion(word, words, index, contextOffset);
+    return buildSentenceCompletionQuestion(
+      word,
+      words,
+      index,
+      contextOffset,
+      questionChallenge,
+    );
   }
 
   if (mode === 'closest-synonym') {
-    return buildClosestSynonymQuestion(word, words, index);
+    return buildClosestSynonymQuestion(word, words, index, questionChallenge);
   }
 
-  return buildWordToDefinitionQuestion(word, words, index);
+  return buildWordToDefinitionQuestion(
+    word,
+    words,
+    index,
+    useDetailedClues,
+    questionChallenge,
+  );
+}
+
+function getQuestionChallenge(
+  selectedDifficulty: QuizDifficultyPreference,
+): QuestionChallenge {
+  if (selectedDifficulty === 'easy') return 'easy';
+  if (selectedDifficulty === 'hard' || selectedDifficulty === 'ultra') return 'hard';
+  return 'standard';
 }
 
 function getBalancedQuestionModes(
@@ -1149,9 +1230,17 @@ function buildWordToDefinitionQuestion(
   word: Word,
   words: Word[],
   index: number,
+  useDetailedClues = false,
+  questionChallenge: QuestionChallenge = 'standard',
 ): QuizQuestion {
-  const answer = getMeaning(word);
-  const distractors = getDefinitionDistractors(word, words, index);
+  const answer = getQuestionMeaning(word, useDetailedClues);
+  const distractors = getDefinitionDistractors(
+    word,
+    words,
+    index,
+    useDetailedClues,
+    questionChallenge,
+  );
 
   return {
     word,
@@ -1170,18 +1259,27 @@ function buildDefinitionToWordQuestion(
   word: Word,
   words: Word[],
   index: number,
+  contextOffset = index,
+  useDetailedClues = false,
+  questionChallenge: QuestionChallenge = 'standard',
 ): QuizQuestion {
-  const distractors = getWordDistractors(word, words, index);
+  const distractors = getWordDistractors(word, words, index, questionChallenge);
+  const recallPrompt = getSafeRecallPrompt(
+    word,
+    contextOffset,
+    contextOffset % 2 === 1,
+    useDetailedClues,
+  );
 
   return {
     word,
-    prompt: 'WHAT WORD MEANS THIS?',
-    displayText: getMeaning(word),
+    prompt: recallPrompt.prompt,
+    displayText: recallPrompt.displayText,
     answer: word.term,
     options: shuffle([word.term, ...distractors]),
     mode: 'definition-to-word',
     difficulty: getQuestionDifficulty('definition-to-word'),
-    helperText: 'Choose the word that matches this meaning.',
+    helperText: recallPrompt.chooseHelperText,
     feedback: `The word is "${word.term}".`,
   };
 }
@@ -1190,10 +1288,14 @@ function buildTrueFalseQuestion(
   word: Word,
   words: Word[],
   index: number,
+  useDetailedClues = false,
+  questionChallenge: QuestionChallenge = 'standard',
 ): QuizQuestion {
   const shouldBeTrue = words.length < 2 || getTermHash(word.term) % 2 === 0;
-  const pairedWord = shouldBeTrue ? word : getAlternateWord(word, words) ?? word;
-  const displayedMeaning = getMeaning(pairedWord);
+  const pairedWord = shouldBeTrue
+    ? word
+    : getAlternateWord(word, words, questionChallenge) ?? word;
+  const displayedMeaning = getQuestionMeaning(pairedWord, useDetailedClues);
 
   return {
     word,
@@ -1208,16 +1310,30 @@ function buildTrueFalseQuestion(
   };
 }
 
-function buildTypedWordQuestion(word: Word): QuizQuestion {
+function buildTypedWordQuestion(
+  word: Word,
+  contextOffset = 0,
+  useDetailedClues = false,
+): QuizQuestion {
+  // Direct recall is the strictest question type. When there is a genuine
+  // saved example, alternating it with the definition avoids repeating the
+  // exact same cue in longer hard and Ultra practice rounds.
+  const recallPrompt = getSafeRecallPrompt(
+    word,
+    contextOffset,
+    contextOffset % 2 === 1,
+    useDetailedClues,
+  );
+
   return {
     word,
-    prompt: 'WHAT WORD MEANS THIS?',
-    displayText: getMeaning(word),
+    prompt: recallPrompt.prompt,
+    displayText: recallPrompt.displayText,
     answer: word.term,
     options: [],
     mode: 'typed-word',
     difficulty: getQuestionDifficulty('typed-word'),
-    helperText: 'Type the word that matches this meaning, then check your answer.',
+    helperText: recallPrompt.typedHelperText,
     feedback: `The word is "${word.term}".`,
   };
 }
@@ -1227,9 +1343,16 @@ function buildSentenceUsageQuestion(
   words: Word[],
   index: number,
   contextOffset: number,
+  questionChallenge: QuestionChallenge = 'standard',
 ): QuizQuestion {
   const answer = getCorrectExample(word, contextOffset);
-  const distractors = getSentenceDistractors(word, words, answer, index);
+  const distractors = getSentenceDistractors(
+    word,
+    words,
+    answer,
+    index,
+    questionChallenge,
+  );
 
   return {
     word,
@@ -1249,10 +1372,11 @@ function buildSentenceCompletionQuestion(
   words: Word[],
   index: number,
   contextOffset: number,
+  questionChallenge: QuestionChallenge = 'standard',
 ): QuizQuestion {
   const context = getCorrectExample(word, contextOffset);
   const blankedContext = hideWordInExample(context, word.term) ?? context;
-  const distractors = getWordDistractors(word, words, index);
+  const distractors = getWordDistractors(word, words, index, questionChallenge);
 
   return {
     word,
@@ -1271,9 +1395,16 @@ function buildClosestSynonymQuestion(
   word: Word,
   words: Word[],
   index: number,
+  questionChallenge: QuestionChallenge = 'standard',
 ): QuizQuestion {
   const answer = getSynonymCandidates(word)[0];
-  const distractors = getSynonymDistractors(word, words, answer, index);
+  const distractors = getSynonymDistractors(
+    word,
+    words,
+    answer,
+    index,
+    questionChallenge,
+  );
 
   return {
     word,
@@ -1292,16 +1423,179 @@ function getMeaning(word: Word) {
   return getCompleteFlashcardDefinition(word.definition, word.simpleDefinition);
 }
 
-function getDefinitionDistractors(word: Word, words: Word[], index: number) {
-  const answer = getMeaning(word);
-  const otherDefinitions = words
-    .filter((item) => item.id !== word.id)
-    .map(getMeaning);
+function getQuestionMeaning(word: Word, useDetailedClues = false) {
+  const detailedDefinition = word.definition.replace(/\s+/g, ' ').trim();
+  return useDetailedClues && detailedDefinition
+    ? detailedDefinition
+    : getMeaning(word);
+}
+
+type RecallPrompt = {
+  prompt: string;
+  displayText: string;
+  typedHelperText: string;
+  chooseHelperText: string;
+};
+
+/**
+ * A definition such as "to wrong; to injure" effectively gives away
+ * “injury.” Prefer a genuine saved context in those cases, then mask the
+ * leaking word-family as a last resort so every direct-recall prompt remains
+ * answerable without displaying the answer itself.
+ */
+function getSafeRecallPrompt(
+  word: Word,
+  contextOffset = 0,
+  preferContext = false,
+  useDetailedClues = false,
+): RecallPrompt {
+  const definitions = Array.from(
+    new Set(
+      [
+        ...(useDetailedClues ? [word.definition] : []),
+        getMeaning(word),
+        word.definition,
+        word.simpleDefinition,
+      ]
+        .map((definition) => definition?.replace(/\s+/g, ' ').trim())
+        .filter((definition): definition is string => Boolean(definition)),
+    ),
+  );
+  const safeDefinition = definitions.find(
+    (definition) => !containsAnswerFamily(definition, word.term),
+  );
+
+  const context = getSafeRecallContext(word, contextOffset);
+
+  if (preferContext && context) {
+    return {
+      prompt: 'COMPLETE THE CONTEXT',
+      displayText: context,
+      typedHelperText: 'Type the saved word that completes this context, then check your answer.',
+      chooseHelperText: 'Choose the saved word that best completes this context.',
+    };
+  }
+
+  if (safeDefinition) {
+    return {
+      prompt: 'WHAT WORD MEANS THIS?',
+      displayText: safeDefinition,
+      typedHelperText: 'Type the word that matches this meaning, then check your answer.',
+      chooseHelperText: 'Choose the word that matches this meaning.',
+    };
+  }
+
+  if (context) {
+    return {
+      prompt: 'COMPLETE THE CONTEXT',
+      displayText: context,
+      typedHelperText: 'Type the saved word that completes this context, then check your answer.',
+      chooseHelperText: 'Choose the saved word that best completes this context.',
+    };
+  }
+
+  const maskedDefinition = maskAnswerFamily(
+    definitions[0] ?? 'Recall this word from your saved learning notes.',
+    word.term,
+  );
+  return {
+    prompt: 'WHAT WORD FITS THIS CLUE?',
+    displayText: maskedDefinition,
+    typedHelperText: 'Use the clue to recall the word, then check your answer.',
+    chooseHelperText: 'Choose the word that best fits this clue.',
+  };
+}
+
+function getSafeRecallContext(word: Word, contextOffset = 0) {
+  const safeContexts = getQualityContextExamples(word)
+    .map((context) => hideWordInExample(context, word.term))
+    .filter(
+      (context): context is string =>
+        context !== null && !containsAnswerFamily(context, word.term),
+    );
+
+  return safeContexts.length
+    ? safeContexts[contextOffset % safeContexts.length]
+    : null;
+}
+
+function containsAnswerFamily(value: string, term: string) {
+  const answerFamily = getAnswerFamilyStem(term);
+  if (!answerFamily) return false;
+
+  return getPromptWords(value).some((candidate) => {
+    const candidateFamily = getAnswerFamilyStem(candidate);
+    if (!candidateFamily) return false;
+    return (
+      candidateFamily === answerFamily ||
+      (answerFamily.length >= 5 &&
+        candidateFamily.length >= 5 &&
+        getSharedPrefixLength(answerFamily, candidateFamily) >= 5)
+    );
+  });
+}
+
+function maskAnswerFamily(value: string, term: string) {
+  const answerFamily = getAnswerFamilyStem(term);
+  if (!answerFamily) return value;
+
+  return value.replace(/[\p{L}\p{N}'-]+/gu, (candidate) =>
+    getAnswerFamilyStem(candidate) === answerFamily ||
+    (answerFamily.length >= 5 &&
+      getAnswerFamilyStem(candidate).length >= 5 &&
+      getSharedPrefixLength(answerFamily, getAnswerFamilyStem(candidate)) >= 5)
+      ? '_____'
+      : candidate,
+  );
+}
+
+function getPromptWords(value: string) {
+  return value.match(/[\p{L}\p{N}'-]+/gu) ?? [];
+}
+
+function getAnswerFamilyStem(value: string) {
+  let normalized = value
+    .toLocaleLowerCase()
+    .replace(/[^\p{L}\p{N}]/gu, '');
+  if (normalized.length < 4) return normalized;
+
+  normalized = normalized
+    .replace(/ies$/, 'y')
+    .replace(/(izations?|isations?|ational|fulness|ousness|iveness|ments?|ness|tions?|sions?|ities|ity|ingly|edly|ing|ed|ously|ous|ively|ive|fully|ful|ally|al|es|s)$/, '');
+
+  if (normalized.endsWith('e') && normalized.length > 4) {
+    normalized = normalized.slice(0, -1);
+  }
+  if (normalized.endsWith('y') && normalized.length > 5) {
+    normalized = normalized.slice(0, -1);
+  }
+
+  return normalized;
+}
+
+function getSharedPrefixLength(first: string, second: string) {
+  let length = 0;
+  while (length < first.length && first[length] === second[length]) {
+    length += 1;
+  }
+  return length;
+}
+
+function getDefinitionDistractors(
+  word: Word,
+  words: Word[],
+  index: number,
+  useDetailedClues = false,
+  questionChallenge: QuestionChallenge = 'standard',
+) {
+  const answer = getQuestionMeaning(word, useDetailedClues);
+  const otherDefinitions = getRankedDistractorWords(word, words, questionChallenge)
+    .map((item) => getQuestionMeaning(item, useDetailedClues));
   const fallbacks = FALLBACK_DEFINITIONS.filter(
     (definition) => definition !== answer,
   );
 
-  return shuffle(
+  return pickTopUnique(
     Array.from(
       new Set([
         ...otherDefinitions,
@@ -1309,18 +1603,75 @@ function getDefinitionDistractors(word: Word, words: Word[], index: number) {
         ...fallbacks.slice(0, index),
       ]),
     ),
-  ).slice(0, 3);
+    answer,
+    3,
+  );
 }
 
-function getWordDistractors(word: Word, words: Word[], index: number) {
-  const otherTerms = words
-    .filter((item) => item.id !== word.id)
-    .map((item) => item.term);
-  const fallbackTerms = shuffle(words.map((item) => item.term))
-    .filter((term) => term !== word.term)
-    .slice(index);
+function getWordDistractors(
+  word: Word,
+  words: Word[],
+  index: number,
+  questionChallenge: QuestionChallenge = 'standard',
+) {
+  return pickTopUnique(
+    getRankedDistractorWords(word, words, questionChallenge).map((item) => item.term),
+    word.term,
+    3,
+  );
+}
 
-  return shuffle(Array.from(new Set([...otherTerms, ...fallbackTerms]))).slice(0, 3);
+/**
+ * Strong distractors should be plausible, not random. Same-part-of-speech
+ * words with overlapping definition language are usually the fairest nearby
+ * alternatives; words from a different family are preferred to answer clones.
+ */
+function getRankedDistractorWords(
+  word: Word,
+  words: Word[],
+  questionChallenge: QuestionChallenge = 'standard',
+) {
+  const ranked = words
+    .filter(
+      (item) =>
+        item.id !== word.id &&
+        !containsAnswerFamily(item.term, word.term),
+    )
+    .sort(
+      (first, second) =>
+        getDistractorRelevance(word, second) - getDistractorRelevance(word, first) ||
+        first.term.localeCompare(second.term),
+    );
+
+  return questionChallenge === 'easy' ? ranked.reverse() : ranked;
+}
+
+function getDistractorRelevance(word: Word, candidate: Word) {
+  const wordTokens = getMeaningfulTokens(
+    `${word.definition} ${word.simpleDefinition ?? ''}`,
+  );
+  const candidateTokens = new Set(
+    getMeaningfulTokens(`${candidate.definition} ${candidate.simpleDefinition ?? ''}`),
+  );
+  const sharedTokenCount = wordTokens.filter((token) => candidateTokens.has(token)).length;
+  const samePartOfSpeech = Boolean(word.partOfSpeech) &&
+    word.partOfSpeech === candidate.partOfSpeech;
+
+  return (samePartOfSpeech ? 12 : 0) + sharedTokenCount * 3;
+}
+
+function getMeaningfulTokens(value: string) {
+  const ignored = new Set([
+    'a', 'an', 'and', 'as', 'at', 'be', 'by', 'for', 'from', 'in', 'is', 'it',
+    'of', 'on', 'or', 'that', 'the', 'this', 'to', 'used', 'with', 'word',
+  ]);
+  return Array.from(
+    new Set(
+      getPromptWords(value)
+        .map((token) => getAnswerFamilyStem(token))
+        .filter((token) => token.length >= 4 && !ignored.has(token)),
+    ),
+  );
 }
 
 function canBuildSentenceUsageQuestion(word: Word, words: Word[]) {
@@ -1333,10 +1684,39 @@ function canBuildSentenceCompletionQuestion(word: Word, words: Word[]) {
 }
 
 function getCorrectExample(word: Word, contextOffset = 0) {
-  const examples = getWordLearningContexts(word)
-    .map((context) => context.text)
-    .filter((example) => includesWholeTerm(example, word.term));
+  const examples = getQualityContextExamples(word);
   return examples.length ? examples[contextOffset % examples.length] : '';
+}
+
+function getQualityContextExamples(word: Word) {
+  return Array.from(
+    new Map(
+      [word.example, ...(word.contextExamples ?? []), ...(word.wordnik_examples ?? [])]
+        .map((context) => context.replace(/\s+/g, ' ').trim())
+        .filter((context) => isQualityContextExample(context, word.term))
+        .map((context) => [context.toLocaleLowerCase(), context]),
+    ).values(),
+  );
+}
+
+function isQualityContextExample(context: string, term: string) {
+  if (
+    context.length < 24 ||
+    context.length > 240 ||
+    !includesWholeTerm(context, term)
+  ) {
+    return false;
+  }
+
+  const normalized = context.toLocaleLowerCase();
+  const normalizedTerm = term.trim().toLocaleLowerCase();
+  return !(
+    normalized.startsWith('i learned the word ') ||
+    normalized === `${normalizedTerm} example.` ||
+    normalized === `${normalizedTerm} example` ||
+    normalized.startsWith('in a simple explanation,') ||
+    normalized.startsWith('in more formal writing,')
+  );
 }
 
 function getContextOffset(
@@ -1357,21 +1737,15 @@ function getSentenceDistractors(
   words: Word[],
   answer: string,
   index: number,
+  questionChallenge: QuestionChallenge = 'standard',
 ) {
-  const samePartOfSpeech = words.filter(
-    (item) =>
-      item.id !== word.id &&
-      Boolean(word.partOfSpeech) &&
-      item.partOfSpeech === word.partOfSpeech,
-  );
-  const otherWords = words.filter((item) => item.id !== word.id);
-  const candidates = [...samePartOfSpeech, ...otherWords].flatMap((item) => {
+  const candidates = getRankedDistractorWords(word, words, questionChallenge).flatMap((item) => {
     const source = getCorrectExample(item);
     const replacement = replaceWholeTerm(source, item.term, word.term);
     return replacement && replacement !== answer ? [replacement] : [];
   });
 
-  return rotateAndPickUnique(candidates, answer, index, 3);
+  return pickTopUnique(candidates, answer, 3);
 }
 
 function canBuildClosestSynonymQuestion(word: Word, words: Word[]) {
@@ -1387,7 +1761,10 @@ function getSynonymCandidates(word: Word) {
     .map((synonym) => synonym.trim())
     .filter(
       (synonym) =>
-        synonym.length > 1 && synonym.toLocaleLowerCase() !== word.term.toLocaleLowerCase(),
+        synonym.length >= 3 &&
+        synonym.length <= 48 &&
+        synonym.toLocaleLowerCase() !== word.term.toLocaleLowerCase() &&
+        !containsAnswerFamily(synonym, word.term),
     );
 }
 
@@ -1396,12 +1773,20 @@ function getSynonymDistractors(
   words: Word[],
   answer: string,
   index: number,
+  questionChallenge: QuestionChallenge = 'standard',
 ) {
-  const candidates = words
-    .filter((item) => item.id !== word.id)
+  const candidates = getRankedDistractorWords(word, words, questionChallenge)
     .flatMap((item) => [...getSynonymCandidates(item), item.term]);
 
-  return rotateAndPickUnique(candidates, answer, index, 3);
+  return pickTopUnique(candidates, answer, 3);
+}
+
+function pickTopUnique(
+  candidates: string[],
+  answer: string,
+  count: number,
+) {
+  return getUniqueDistractorCandidates(candidates, answer).slice(0, count);
 }
 
 function rotateAndPickUnique(
@@ -1410,8 +1795,14 @@ function rotateAndPickUnique(
   index: number,
   count: number,
 ) {
+  const unique = getUniqueDistractorCandidates(candidates, answer);
+  const start = unique.length === 0 ? 0 : index % unique.length;
+  return [...unique.slice(start), ...unique.slice(0, start)].slice(0, count);
+}
+
+function getUniqueDistractorCandidates(candidates: string[], answer: string) {
   const normalizedAnswer = answer.toLocaleLowerCase();
-  const unique = Array.from(
+  return Array.from(
     new Map(
       candidates
         .map((candidate) => candidate.trim())
@@ -1419,11 +1810,9 @@ function rotateAndPickUnique(
           (candidate) =>
             candidate.length > 1 && candidate.toLocaleLowerCase() !== normalizedAnswer,
         )
-        .map((candidate) => [candidate.toLocaleLowerCase(), candidate]),
+      .map((candidate) => [candidate.toLocaleLowerCase(), candidate]),
     ).values(),
   );
-  const start = unique.length === 0 ? 0 : index % unique.length;
-  return [...unique.slice(start), ...unique.slice(0, start)].slice(0, count);
 }
 
 function includesWholeTerm(value: string, term: string) {
@@ -1440,8 +1829,12 @@ function replaceWholeTerm(value: string, sourceTerm: string, replacement: string
   return value.replace(expression, replacement).trim();
 }
 
-function getAlternateWord(word: Word, words: Word[]) {
-  return shuffle(words).find((item) => item.id !== word.id);
+function getAlternateWord(
+  word: Word,
+  words: Word[],
+  questionChallenge: QuestionChallenge = 'standard',
+) {
+  return getRankedDistractorWords(word, words, questionChallenge)[0];
 }
 
 function getTermHash(term: string) {
