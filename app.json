@@ -59,7 +59,8 @@
         "NSAppTransportSecurity": {
           "NSAllowsArbitraryLoads": false
         }
-      }
+      },
+      "buildNumber": "26"
     },
     "android": {
       "package": "com.lecoffeeconfit.wordwiz",
