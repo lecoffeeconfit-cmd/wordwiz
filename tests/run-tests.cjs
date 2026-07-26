@@ -309,7 +309,7 @@ test('complimentary Plus access starts server-side once and lasts thirty days', 
   assert.match(subscriptionProvider, /getOrStartComplimentaryAccess/);
   assert.match(subscriptionProvider, /hasActiveRevenueCatEntitlement/);
   assert.match(subscriptionProvider, /hasActiveComplimentaryAccess/);
-  assert.match(homeScreen, /COMPLIMENTARY WORDWIZ PLUS/);
+  assert.match(homeScreen, /COMPLIMENTARY PLUS ACCESS/);
 });
 
 test('word saving trims input and creates a new saved word', () => {

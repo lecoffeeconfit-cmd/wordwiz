@@ -31,7 +31,9 @@ export function HomeScreen({
   onReviewWord,
   onQuiz,
   onStats,
+  onOpenPlus,
   complimentaryAccess,
+  showFreePlanNotice,
 }: {
   words: Word[];
   analytics: AnalyticsData;
@@ -42,7 +44,9 @@ export function HomeScreen({
   onReviewWord: (wordId: string) => void;
   onQuiz: () => void;
   onStats: () => void;
+  onOpenPlus: () => void;
   complimentaryAccess: { daysRemaining: number; expiresAt: string | null } | null;
+  showFreePlanNotice: boolean;
 }) {
   const [achievementCarouselWidth, setAchievementCarouselWidth] = useState(0);
   const [showAllReviewWords, setShowAllReviewWords] = useState(false);
@@ -50,6 +54,7 @@ export function HomeScreen({
   const lastReviewWordTapAt = useRef(0);
   const reviewWordTapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const homeProgressSparkle = useRef(new Animated.Value(0.35)).current;
+  const complimentarySparkle = useRef(new Animated.Value(0.5)).current;
   const mastery = words.map((word) => getWordMastery(word, analytics));
   const overallMastery = words.length
     ? Math.round(mastery.reduce((total, score) => total + score, 0) / words.length)
@@ -149,6 +154,31 @@ export function HomeScreen({
     return () => animation.stop();
   }, [hasProgressCelebration, homeProgressSparkle]);
 
+  useEffect(() => {
+    if (!complimentaryAccess) {
+      complimentarySparkle.setValue(0.5);
+      return;
+    }
+
+    const animation = Animated.loop(
+      Animated.sequence([
+        Animated.timing(complimentarySparkle, {
+          toValue: 1,
+          duration: 1450,
+          useNativeDriver: true,
+        }),
+        Animated.timing(complimentarySparkle, {
+          toValue: 0.5,
+          duration: 1450,
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+
+    animation.start();
+    return () => animation.stop();
+  }, [complimentaryAccess, complimentarySparkle]);
+
   useEffect(
     () => () => {
       if (reviewWordTapTimer.current) {
@@ -230,31 +260,65 @@ export function HomeScreen({
       </View>
 
       {complimentaryAccess ? (
-        <View
-          accessible
-          accessibilityLabel={`Your complimentary WordWiz Plus access has ${complimentaryAccess.daysRemaining} days left`}
-          style={styles.homeTrialCard}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`View WordWiz Plus plans. Your complimentary access has ${complimentaryAccess.daysRemaining} days left.`}
+          accessibilityHint="Opens WordWiz Plus plans"
+          onPress={onOpenPlus}
+          style={({ pressed }) => [styles.homeTrialCard, pressed && styles.pressed]}
         >
           <View style={styles.homeTrialIcon}>
-            <Ionicons name="sparkles" size={19} color={COLORS.purpleDark} />
+            <Ionicons name="sparkles" size={22} color={COLORS.purpleDark} />
+            <Animated.View
+              pointerEvents="none"
+              style={[styles.homeTrialIconTwinkle, { opacity: complimentarySparkle }]}
+            >
+              <Ionicons name="sparkles" size={11} color="#D39A16" />
+            </Animated.View>
+            <View pointerEvents="none" style={styles.homeTrialIconGoldStar}>
+              <Ionicons name="star" size={8} color="#D39A16" />
+            </View>
+            <View pointerEvents="none" style={styles.homeTrialIconGoldDust}>
+              <Ionicons name="star" size={5} color="#F0BE45" />
+            </View>
           </View>
           <View style={styles.homeTrialCopy}>
-            <Text style={styles.homeTrialLabel}>COMPLIMENTARY WORDWIZ PLUS</Text>
+            <Text style={styles.homeTrialLabel}>COMPLIMENTARY PLUS ACCESS</Text>
             <Text style={styles.homeTrialTitle}>
-              {complimentaryAccess.daysRemaining} {complimentaryAccess.daysRemaining === 1 ? 'day' : 'days'} of full access left
+              {complimentaryAccess.daysRemaining} {complimentaryAccess.daysRemaining === 1 ? 'day' : 'days'} left
             </Text>
             <Text style={styles.homeTrialSubtitle}>
-              Enjoy every learning tool — no card required.
+              All Plus tools included. No payment required.
             </Text>
           </View>
-          <Ionicons name="checkmark-circle" size={19} color={COLORS.purpleDark} />
-        </View>
+          <Ionicons name="chevron-forward" size={20} color={COLORS.purpleDark} />
+        </Pressable>
+      ) : showFreePlanNotice ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="You are using the free WordWiz plan. View WordWiz Plus plans."
+          accessibilityHint="Opens WordWiz Plus plans"
+          onPress={onOpenPlus}
+          style={({ pressed }) => [styles.homeFreePlanCard, pressed && styles.pressed]}
+        >
+          <View style={styles.homeFreePlanIcon}>
+            <Ionicons name="book-outline" size={20} color={COLORS.blue} />
+          </View>
+          <View style={styles.homeTrialCopy}>
+            <Text style={styles.homeFreePlanLabel}>WORDWIZ FREE</Text>
+            <Text style={styles.homeFreePlanTitle}>10 new words each month</Text>
+            <Text style={styles.homeFreePlanSubtitle}>
+              Flashcards stay open for every saved word.
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={20} color={COLORS.blue} />
+        </Pressable>
       ) : null}
 
       <View
         style={[
           styles.homeOverviewCard,
-          complimentaryAccess && styles.homeOverviewCardAfterTrial,
+          (complimentaryAccess || showFreePlanNotice) && styles.homeOverviewCardAfterTrial,
         ]}
       >
           <View style={styles.overviewHeader}>

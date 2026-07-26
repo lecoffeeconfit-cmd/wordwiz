@@ -1250,7 +1250,7 @@ export const MASTERY_LEVELS = [
     shortTitle: 'Novice',
     minScore: 0,
     color: NOVICE_MASTERY_COLOR,
-    encouragement: 'Start with a few honest reviews.',
+    encouragement: 'Each review helps a new word take root in memory.',
   },
   {
     title: 'Apprentice WordWiz',

@@ -1069,8 +1069,6 @@ export function DashboardScreen({
 
       <View style={styles.streakReminderGrid}>
         <View style={styles.streakCard}>
-          <View pointerEvents="none" style={styles.streakMagicAura} />
-          <View pointerEvents="none" style={styles.streakMagicGoldAura} />
           <View pointerEvents="none" style={styles.streakSparkleLayer}>
             <Animated.View
               style={[

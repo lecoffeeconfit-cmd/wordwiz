@@ -109,6 +109,34 @@ export function WordWizPlusModal({
             <Benefit icon="analytics-outline" text="Mastery, retention, and recall insights" />
           </View>
 
+          {subscription.hasActiveComplimentaryAccess ? (
+            <View style={styles.plusComplimentaryNotice}>
+              <View style={styles.plusComplimentaryNoticeIcon}>
+                <Ionicons name="sparkles" size={17} color="#B77A08" />
+              </View>
+              <View style={styles.plusComplimentaryNoticeCopy}>
+                <Text style={styles.plusComplimentaryNoticeLabel}>
+                  30-DAY COMPLIMENTARY PLUS ACCESS
+                </Text>
+                <Text style={styles.plusComplimentaryNoticeText}>
+                  {subscription.complimentaryDaysRemaining} {subscription.complimentaryDaysRemaining === 1 ? 'day' : 'days'} remaining. Subscribe anytime to continue after it ends.
+                </Text>
+              </View>
+            </View>
+          ) : !subscription.hasPlusAccess && !subscription.isAccessLoading ? (
+            <View style={styles.plusFreePlanNotice}>
+              <View style={styles.plusFreePlanNoticeIcon}>
+                <Ionicons name="book-outline" size={17} color={COLORS.blue} />
+              </View>
+              <View style={styles.plusComplimentaryNoticeCopy}>
+                <Text style={styles.plusFreePlanNoticeLabel}>YOUR FREE PLAN</Text>
+                <Text style={styles.plusFreePlanNoticeText}>
+                  Add up to 10 new words each calendar month. Flashcards stay available for every word you save.
+                </Text>
+              </View>
+            </View>
+          ) : null}
+
           {subscription.isLoading ? (
             <View style={styles.plusLoadingCard}>
               <ActivityIndicator color={COLORS.purpleDark} />
