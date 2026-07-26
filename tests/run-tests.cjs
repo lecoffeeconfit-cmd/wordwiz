@@ -221,10 +221,14 @@ test('subscription access uses the configured public iOS key and active plus ent
 test('private keys cannot be read by the app or included through public Expo variables', () => {
   const envSource = fs.readFileSync(path.join(projectRoot, 'src/config/env.ts'), 'utf8');
   const buildCheck = fs.readFileSync(path.join(projectRoot, 'scripts/check-public-env.cjs'), 'utf8');
+  const supabaseSource = fs.readFileSync(path.join(projectRoot, 'src/services/supabase.ts'), 'utf8');
 
   assert.doesNotMatch(envSource, /EXPO_PUBLIC_(SUPABASE_SERVICE_ROLE|SERVICE_ROLE|OPENAI_API_KEY|WORDNIK_API_KEY|SECRET_KEY)/);
   assert.match(buildCheck, /EXPO_PUBLIC_SUPABASE_SERVICE_ROLE_KEY/);
   assert.match(buildCheck, /process\.exit\(1\)/);
+  assert.match(supabaseSource, /expo-secure-store/);
+  assert.match(supabaseSource, /WHEN_UNLOCKED_THIS_DEVICE_ONLY/);
+  assert.doesNotMatch(supabaseSource, /storage:\s*AsyncStorage/);
 });
 
 test('password recovery returns to WordWiz and requires a new password before continuing', () => {

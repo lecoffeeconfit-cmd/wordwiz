@@ -48,7 +48,8 @@
           }
         }
       ],
-      "expo-font"
+      "expo-font",
+      "expo-secure-store"
     ],
     "ios": {
       "bundleIdentifier": "com.lecoffeeconfit.wordwiz",
