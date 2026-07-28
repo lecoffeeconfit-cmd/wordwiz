@@ -4,6 +4,11 @@ import type { AuthUser } from '../types';
 import { configureErrorReporting, type ErrorContext } from './errorReporting';
 
 let sentryInitialized = false;
+const pendingStartupBreadcrumbs: Array<{
+  stage: string;
+  status: 'started' | 'completed' | 'failed';
+  code?: string;
+}> = [];
 
 export function initializeSentry() {
   if (!env.sentryDsn || sentryInitialized) {
@@ -35,6 +40,9 @@ export function initializeSentry() {
     });
 
     sentryInitialized = true;
+    pendingStartupBreadcrumbs.splice(0).forEach((breadcrumb) => {
+      addStartupBreadcrumb(breadcrumb.stage, breadcrumb.status, breadcrumb.code);
+    });
   } catch (error) {
     // Telemetry must never prevent WordWiz from launching.
     configureErrorReporting(null);
@@ -68,6 +76,48 @@ export function wrapWithSentry<T>(component: T): T {
     }
     return component;
   }
+}
+
+/**
+ * Startup diagnostics intentionally contain stage names and safe codes only.
+ * They never include user, auth, or request data.
+ */
+export function addStartupBreadcrumb(
+  stage: string,
+  status: 'started' | 'completed' | 'failed',
+  code?: string,
+) {
+  const breadcrumb = { stage, status, code };
+  console.info(`[startup] ${stage}:${status}${code ? ` (${code})` : ''}`);
+
+  if (!sentryInitialized) {
+    pendingStartupBreadcrumbs.push(breadcrumb);
+    return;
+  }
+
+  Sentry.addBreadcrumb({
+    category: 'startup',
+    level: status === 'failed' ? 'error' : 'info',
+    message: `${stage}:${status}`,
+    data: code ? { code } : undefined,
+  });
+}
+
+export function captureStartupException(
+  error: unknown,
+  stage: string,
+  code: string,
+) {
+  addStartupBreadcrumb(stage, 'failed', code);
+  if (!sentryInitialized) {
+    return;
+  }
+
+  Sentry.withScope((scope) => {
+    scope.setTag('startup_stage', stage);
+    scope.setTag('startup_code', code);
+    Sentry.captureException(error);
+  });
 }
 
 function applyContext(

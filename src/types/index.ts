@@ -86,6 +86,13 @@ export type WordMasteryProgress = {
   reviewNextAt?: string;
   excludedFromPractice?: boolean;
   excludedFromPracticeAt?: string;
+  /**
+   * Curated collection words can be studied in their deck without being
+   * counted as part of the learner's personal WordWiz library.  Missing
+   * values intentionally mean "personal" so existing saved words retain
+   * their current behavior.
+   */
+  librarySource?: 'collection' | 'personal';
   studySets?: StudySetMembership[];
 };
 

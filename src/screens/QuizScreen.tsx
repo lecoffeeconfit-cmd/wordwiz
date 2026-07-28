@@ -4,7 +4,7 @@ import { ActivityIndicator, Alert, Animated, FlatList, Pressable, ScrollView, Te
 import { COLORS } from '../constants/theme';
 import type { AnalyticsData, LegalPage, QuizAnswer, QuizDifficultyPreference, QuizPreferences, QuizProgress, QuizQuestion, QuizSessionMode, ReminderSettings, ReviewRating, SortMode, TimeBasedLearningSettings, Word } from '../types';
 import { styles } from '../styles';
-import { buildCategoryPracticeQuiz, buildOmegaTestAsync, buildQuiz, calculateStreakStats, evaluateQuizAnswer, formatReminderTime, formatStudyTime, formatWordFlaggedDate, getDayKey, getEffectiveQuizDifficulty, getMistakeReviewWordIds, getNewStudyWords, getOmegaTestStatus, getQuizQuestionPace, getQuizRecallPaceSignal, getRecentDays, getStreakMessage, getStreakWeek, getStudySets, getTimedLearningBonusXp, getTypedRecallHint, getWordMastery, getWordMasteryCategoryForWord, NEW_STUDY_GROUP, normalizeTimeBasedLearningSettings, shuffle, TIMED_LEARNING_SECONDS, WORD_MASTERY_CATEGORIES, type WordMasteryCategoryId } from '../utils';
+import { buildCategoryPracticeQuiz, buildOmegaTestAsync, buildQuiz, calculateStreakStats, evaluateQuizAnswer, formatReminderTime, formatStudyTime, formatWordFlaggedDate, getDayKey, getEffectiveQuizDifficulty, getMistakeReviewWordIds, getNewStudyWords, getOmegaTestStatus, getQuizQuestionPace, getQuizRecallPaceSignal, getRecentDays, getStreakMessage, getStreakWeek, getStudySets, getTimedLearningBonusXp, getTypedRecallHint, getWordMastery, getWordMasteryCategoryForWord, isPersonalLibraryWord, NEW_STUDY_GROUP, normalizeTimeBasedLearningSettings, shuffle, TIMED_LEARNING_SECONDS, WORD_MASTERY_CATEGORIES, type WordMasteryCategoryId } from '../utils';
 import { DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, ProgressFill, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 import { reportError, trackEvent } from '../services';
 
@@ -270,6 +270,10 @@ export function QuizScreen({
       })),
     [analytics, words],
   );
+  const personalWords = useMemo(
+    () => words.filter(isPersonalLibraryWord),
+    [words],
+  );
   const studySets = useMemo(() => getStudySets(words), [words]);
   const categoryCounts = useMemo(
     () =>
@@ -278,30 +282,34 @@ export function QuizScreen({
           ...counts,
           [category.id]:
             category.id === 'all'
-              ? words.length
-              : wordMastery.filter((item) => item.categoryId === category.id)
+              ? personalWords.length
+              : wordMastery.filter(
+                  (item) =>
+                    isPersonalLibraryWord(item.word) &&
+                    item.categoryId === category.id,
+                )
                   .length,
         }),
         {} as Record<WordMasteryCategoryId, number>,
       ),
-    [wordMastery, words.length],
+    [personalWords.length, wordMastery],
   );
   const flaggedCount = useMemo(
-    () => words.filter((word) => word.isFlagged).length,
-    [words],
+    () => personalWords.filter((word) => word.isFlagged).length,
+    [personalWords],
   );
   const newWords = useMemo(
-    () => getNewStudyWords(words, analytics),
-    [analytics, words],
+    () => getNewStudyWords(personalWords, analytics),
+    [analytics, personalWords],
   );
   const filteredQuizWords = useMemo(
     () =>
       selectedCategory === 'all'
-        ? words
+        ? personalWords
         : selectedCategory === 'new'
           ? newWords
         : selectedCategory === 'flagged'
-          ? words.filter((word) => word.isFlagged)
+          ? personalWords.filter((word) => word.isFlagged)
         : selectedCategory.startsWith('set:')
           ? words.filter((word) =>
               word.mastery?.studySets?.some(
@@ -309,9 +317,13 @@ export function QuizScreen({
               ),
             )
         : wordMastery
-            .filter((item) => item.categoryId === selectedCategory)
+            .filter(
+              (item) =>
+                isPersonalLibraryWord(item.word) &&
+                item.categoryId === selectedCategory,
+            )
             .map((item) => item.word),
-    [newWords, selectedCategory, wordMastery, words],
+    [newWords, personalWords, selectedCategory, wordMastery, words],
   );
   const masteryTestWords = useMemo(
     () =>

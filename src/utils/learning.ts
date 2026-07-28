@@ -27,6 +27,15 @@ export type StudySet = StudySetMembership & {
   wordIds: string[];
 };
 
+/**
+ * A word from a curated collection remains available in that collection until
+ * the learner explicitly adds it to My Words. Older records have no source
+ * marker, so they deliberately continue to count as personal words.
+ */
+export function isPersonalLibraryWord(word: Word) {
+  return word.mastery?.librarySource !== 'collection';
+}
+
 /** Build the learner's sets from membership stored with each word's cloud-safe mastery data. */
 export function getStudySets(words: Word[]): StudySet[] {
   const sets = new Map<string, StudySet>();

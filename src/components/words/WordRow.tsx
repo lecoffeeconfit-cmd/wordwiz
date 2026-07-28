@@ -20,6 +20,8 @@ export function WordRow({
   onDoublePress,
   onRemove,
   onToggleFlag,
+  onAddToMyWords,
+  isInMyWords = true,
 }: {
   word: Word;
   index: number;
@@ -27,6 +29,8 @@ export function WordRow({
   onDoublePress?: (word: Word) => void;
   onRemove: (word: Word) => void;
   onToggleFlag: (wordId: string) => void;
+  onAddToMyWords?: (word: Word) => void;
+  isInMyWords?: boolean;
 }) {
   const letterColor = getLetterColor(word.term);
   const lastPressAt = useRef(0);
@@ -141,25 +145,47 @@ export function WordRow({
         </View>
       </Pressable>
       <View style={styles.wordRowActions}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={
-            word.isFlagged ? 'Remove word from flagged words' : 'Flag word'
-          }
-          accessibilityState={{ selected: word.isFlagged }}
-          onPress={() => onToggleFlag(word.id)}
-          style={({ pressed }) => [
-            styles.wordFlagButton,
-            word.isFlagged && styles.wordFlagButtonActive,
-            pressed && styles.pressed,
-          ]}
-        >
-          <Ionicons
-            name={word.isFlagged ? 'bookmark' : 'bookmark-outline'}
-            size={17}
-            color={word.isFlagged ? COLORS.purpleDark : COLORS.muted}
-          />
-        </Pressable>
+        {onAddToMyWords ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={isInMyWords ? `${word.term} is in My Words` : `Add ${word.term} to My Words`}
+            accessibilityHint={isInMyWords ? undefined : 'Adds this collection word to your personal WordWiz library.'}
+            accessibilityState={{ selected: isInMyWords }}
+            disabled={isInMyWords}
+            onPress={() => onAddToMyWords(word)}
+            style={({ pressed }) => [
+              styles.wordAddToLibraryButton,
+              isInMyWords && styles.wordAddToLibraryButtonDone,
+              pressed && !isInMyWords && styles.pressed,
+            ]}
+          >
+            <Ionicons
+              name={isInMyWords ? 'checkmark' : 'add'}
+              size={20}
+              color={isInMyWords ? COLORS.teal : COLORS.purpleDark}
+            />
+          </Pressable>
+        ) : (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={
+              word.isFlagged ? 'Remove word from flagged words' : 'Flag word'
+            }
+            accessibilityState={{ selected: word.isFlagged }}
+            onPress={() => onToggleFlag(word.id)}
+            style={({ pressed }) => [
+              styles.wordFlagButton,
+              word.isFlagged && styles.wordFlagButtonActive,
+              pressed && styles.pressed,
+            ]}
+          >
+            <Ionicons
+              name={word.isFlagged ? 'bookmark' : 'bookmark-outline'}
+              size={17}
+              color={word.isFlagged ? COLORS.purpleDark : COLORS.muted}
+            />
+          </Pressable>
+        )}
         <View style={styles.wordRowAudioActions}>
           <SpeakButton term={word.term} />
           <SpeakDefinitionButton

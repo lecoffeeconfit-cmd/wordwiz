@@ -18,7 +18,8 @@ import {
 
 type SpeechRecognitionModule = {
   isRecognitionAvailable: () => boolean;
-  requestPermissionsAsync: () => Promise<{ granted: boolean }>;
+  getPermissionsAsync: () => Promise<SpeechPermissionResponse>;
+  requestPermissionsAsync: () => Promise<SpeechPermissionResponse>;
   start: (options: {
     lang: string;
     interimResults: boolean;
@@ -27,10 +28,17 @@ type SpeechRecognitionModule = {
     androidIntentOptions: { EXTRA_LANGUAGE_MODEL: 'web_search' };
   }) => void;
   stop: () => void;
+  abort: () => void;
   addListener: (
     eventName: string,
     listener: (event?: unknown) => void,
   ) => { remove: () => void };
+};
+
+type SpeechPermissionResponse = {
+  granted: boolean;
+  canAskAgain?: boolean;
+  status?: 'granted' | 'denied' | 'undetermined';
 };
 
 async function loadSpeechRecognitionModule(): Promise<SpeechRecognitionModule | null> {
@@ -187,27 +195,76 @@ export function AddWordModal({
   }
 
   const [isDictating, setIsDictating] = useState(false);
+  const [isStartingDictation, setIsStartingDictation] = useState(false);
+  const isDictationActive = isDictating || isStartingDictation;
 
   function clearSpeechRecognitionListeners() {
     speechRecognitionListenersRef.current.forEach((listener) => listener.remove());
     speechRecognitionListenersRef.current = [];
   }
 
+  function finishDictation() {
+    setIsDictating(false);
+    setIsStartingDictation(false);
+  }
+
+  function stopDictation({
+    discard = false,
+    updateState = true,
+  }: {
+    discard?: boolean;
+    updateState?: boolean;
+  } = {}) {
+    const speechRecognition = speechRecognitionModuleRef.current;
+    if (updateState) {
+      finishDictation();
+    }
+    try {
+      if (discard) {
+        speechRecognition?.abort();
+      } else {
+        speechRecognition?.stop();
+      }
+    } catch {
+      // A recognizer can finish before a user taps Stop. Its result is already kept.
+    }
+  }
+
+  function showDictationPermissionHelp() {
+    Alert.alert(
+      'Allow dictation in Settings',
+      'WordWiz needs Microphone and Speech Recognition access to turn your voice into a word.',
+      [
+        { text: 'Not now', style: 'cancel' },
+        { text: 'Open Settings', onPress: () => void Linking.openSettings() },
+      ],
+    );
+  }
+
   function listenForDictation(speechRecognition: SpeechRecognitionModule) {
     clearSpeechRecognitionListeners();
     speechRecognitionListenersRef.current = [
-      speechRecognition.addListener('start', () => setIsDictating(true)),
-      speechRecognition.addListener('end', () => setIsDictating(false)),
+      speechRecognition.addListener('start', () => {
+        setIsStartingDictation(false);
+        setIsDictating(true);
+      }),
+      speechRecognition.addListener('end', finishDictation),
       speechRecognition.addListener('result', (event) => {
-        const result = event as { results?: Array<{ transcript?: string }> } | undefined;
+        const result = event as {
+          isFinal?: boolean;
+          results?: Array<{ transcript?: string }>;
+        } | undefined;
         const transcript = result?.results?.[0]?.transcript?.trim();
         if (transcript) {
           updateTermFromDictation(transcript);
+          if (result?.isFinal) {
+            setLookupStatus('Word heard. Tap Auto define when you’re ready.');
+          }
         }
       }),
       speechRecognition.addListener('error', (event) => {
         const error = event as { error?: string; message?: string } | undefined;
-        setIsDictating(false);
+        finishDictation();
         if (!['aborted', 'no-speech', 'speech-timeout'].includes(error?.error ?? '')) {
           Alert.alert('Dictation unavailable', error?.message || 'Please try again.');
         }
@@ -217,54 +274,82 @@ export function AddWordModal({
 
   useEffect(() => {
     return () => {
+      stopDictation({ discard: true, updateState: false });
       clearSpeechRecognitionListeners();
     };
   }, []);
 
+  useEffect(() => {
+    if (!visible) {
+      stopDictation({ discard: true });
+      clearSpeechRecognitionListeners();
+    }
+  }, [visible]);
+
   async function toggleDictation() {
-    if (isDictating) {
-      speechRecognitionModuleRef.current?.stop();
+    if (isDictationActive) {
+      if (isDictating) {
+        stopDictation();
+      }
       return;
     }
 
-    const speechRecognition = await loadSpeechRecognitionModule();
-    if (!speechRecognition) {
-      Alert.alert(
-        'Dictation needs a new build',
-        'This preview does not include microphone dictation yet. Use a WordWiz development or production build to try it.',
-      );
-      return;
-    }
+    setIsStartingDictation(true);
+    try {
+      const speechRecognition = await loadSpeechRecognitionModule();
+      if (!speechRecognition) {
+        Alert.alert(
+          'Dictation needs a new build',
+          'This preview does not include microphone dictation yet. Use a WordWiz development or production build to try it.',
+        );
+        return;
+      }
 
-    speechRecognitionModuleRef.current = speechRecognition;
-    if (!speechRecognition.isRecognitionAvailable()) {
+      speechRecognitionModuleRef.current = speechRecognition;
+      if (!speechRecognition.isRecognitionAvailable()) {
+        Alert.alert(
+          'Dictation unavailable',
+          'Speech recognition is unavailable on this device. Check your device settings, then try again.',
+        );
+        return;
+      }
+
+      let permission = await speechRecognition.getPermissionsAsync();
+      if (!permission.granted && permission.canAskAgain !== false) {
+        permission = await speechRecognition.requestPermissionsAsync();
+      }
+      if (!permission.granted) {
+        if (permission.canAskAgain === false) {
+          showDictationPermissionHelp();
+        } else {
+          Alert.alert(
+            'Microphone permission needed',
+            'Allow microphone and speech recognition access to dictate a word.',
+          );
+        }
+        return;
+      }
+
+      Keyboard.dismiss();
+      listenForDictation(speechRecognition);
+      setIsDictating(true);
+      speechRecognition.start({
+        lang: 'en-US',
+        interimResults: true,
+        maxAlternatives: 1,
+        iosTaskHint: 'confirmation',
+        androidIntentOptions: {
+          EXTRA_LANGUAGE_MODEL: 'web_search',
+        },
+      });
+    } catch {
       Alert.alert(
         'Dictation unavailable',
-        'Turn on speech recognition in your device settings, then try again.',
+        'WordWiz could not start dictation. Please try again or type the word instead.',
       );
-      return;
+    } finally {
+      setIsStartingDictation(false);
     }
-
-    const permission = await speechRecognition.requestPermissionsAsync();
-    if (!permission.granted) {
-      Alert.alert(
-        'Microphone permission needed',
-        'Allow microphone and speech recognition access to dictate a word.',
-      );
-      return;
-    }
-
-    Keyboard.dismiss();
-    listenForDictation(speechRecognition);
-    speechRecognition.start({
-      lang: 'en-US',
-      interimResults: true,
-      maxAlternatives: 1,
-      iosTaskHint: 'confirmation',
-      androidIntentOptions: {
-        EXTRA_LANGUAGE_MODEL: 'web_search',
-      },
-    });
   }
 
   async function autoDefine(nextTerm = term) {
@@ -565,26 +650,26 @@ export function AddWordModal({
               rightAccessory={
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel={isDictating ? 'Stop dictation' : 'Start dictation'}
+                  accessibilityLabel={isDictationActive ? 'Stop dictation' : 'Start dictation'}
                   accessibilityHint={
-                    isDictating
+                    isDictationActive
                       ? 'Stops listening and keeps the recognized word.'
                       : 'Starts listening so you can say a word.'
                   }
                   onPress={() => void toggleDictation()}
                   style={({ pressed }) => [
                     styles.voiceEntryButton,
-                    isDictating && styles.voiceEntryButtonActive,
+                    isDictationActive && styles.voiceEntryButtonActive,
                     pressed && styles.pressed,
                   ]}
                 >
                   <Ionicons
-                    name={isDictating ? 'stop-circle' : 'mic'}
+                    name={isDictationActive ? 'stop-circle' : 'mic'}
                     size={20}
                     color={COLORS.purpleDark}
                   />
                   <Text style={styles.voiceEntryButtonText}>
-                    {isDictating ? 'STOP' : 'DICTATE'}
+                    {isDictationActive ? 'LISTENING…' : 'DICTATE'}
                   </Text>
                 </Pressable>
               }

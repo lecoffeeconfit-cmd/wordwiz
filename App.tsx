@@ -2,30 +2,26 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
 import AppContent from './src/application/AppContent';
-import { initializeSentry, wrapWithSentry } from './src/services';
+import { initializeSentry, reportStartupStage } from './src/services';
 import { SubscriptionProvider } from './src/subscription/SubscriptionProvider';
 
-void SplashScreen.preventAutoHideAsync().catch(() => {
-  // The native splash may already be hidden during a reload. Either state is safe.
-});
 SplashScreen.setOptions({
   duration: 250,
   fade: true,
 });
 
-initializeSentry();
-
 function App() {
   useEffect(() => {
-    // AppContent hides the splash as soon as its loading UI is mounted. Keep a
-    // small fallback so a startup exception can never leave people trapped on
-    // the native launch screen indefinitely.
+    // Initialize telemetry only after the root has committed, so telemetry can
+    // never prevent the release app from reaching its startup screen.
+    initializeSentry();
+    reportStartupStage('navigation', 'completed');
+
+    // We intentionally do not call preventAutoHideAsync. Expo's default native
+    // behavior is safer if JS fails before React mounts. This is a final guard
+    // for normal startup and handled startup failures.
     const splashFallbackTimeout = setTimeout(() => {
-      try {
-        SplashScreen.hide();
-      } catch {
-        // The splash was already hidden; there is nothing else to recover.
-      }
+      void SplashScreen.hideAsync().catch(() => undefined);
     }, 1500);
 
     return () => clearTimeout(splashFallbackTimeout);
@@ -40,4 +36,4 @@ function App() {
   );
 }
 
-export default wrapWithSentry(App);
+export default App;

@@ -70,6 +70,10 @@ import {
   scheduleDailyReminder,
   setSentryUser,
   trackEvent,
+  getStartupFailureCode,
+  reportStartupFailure,
+  reportStartupStage,
+  withStartupTimeout,
 } from '../services';
 import { env } from '../config/env';
 import { useSubscription } from '../subscription/SubscriptionProvider';
@@ -92,6 +96,7 @@ import type {
   StudySetMembership,
 } from '../types';
 import type { Provider } from '@supabase/supabase-js';
+import type { StartupFailureCode, StartupStage } from '../services';
 import {
   addQuizAttempt,
   applyFlashcardReview,
@@ -165,6 +170,10 @@ export default function AppContent() {
   const [quizPreferences, setQuizPreferences] =
     useState<QuizPreferences>(DEFAULT_QUIZ_PREFERENCES);
   const [isReady, setIsReady] = useState(false);
+  const [startupStage, setStartupStage] = useState<StartupStage>('js_entry');
+  const [startupFailure, setStartupFailure] =
+    useState<StartupFailureCode | null>(null);
+  const [startupAttempt, setStartupAttempt] = useState(0);
   const [appNotice, setAppNotice] = useState<string | null>(null);
   const [currentDayKey, setCurrentDayKey] = useState(getDayKey());
   const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState(false);
@@ -186,6 +195,7 @@ export default function AppContent() {
   const latestWords = useRef<Word[]>([]);
   const starterCollectionEnrichmentIds = useRef(new Set<string>());
   const hasHiddenNativeSplash = useRef(false);
+  const startupStageRef = useRef<StartupStage>('js_entry');
   const lastReminderRefreshKey = useRef<string | null>(null);
   const isSavingWord = useRef(false);
   const pendingPlusAction = useRef<(() => void) | null>(null);
@@ -237,24 +247,49 @@ export default function AppContent() {
   );
   const smartReminderRefreshKey = `${reminderSettings.hour}:${reminderSettings.minute}:${JSON.stringify(smartReminderContext)}`;
 
-  const hideNativeSplash = useCallback(() => {
+  const showStartupStage = useCallback((stage: StartupStage) => {
+    startupStageRef.current = stage;
+    setStartupStage(stage);
+  }, []);
+
+  const hideNativeSplash = useCallback(async () => {
     if (hasHiddenNativeSplash.current) {
       return;
     }
 
+    showStartupStage('splash');
     try {
-      SplashScreen.hide();
+      reportStartupStage('splash', 'started');
+      await SplashScreen.hideAsync();
       hasHiddenNativeSplash.current = true;
+      reportStartupStage('splash', 'completed');
     } catch (error) {
-      reportError(error, { area: 'hide_native_splash' });
+      reportStartupFailure(error, 'splash');
     }
-  }, []);
+  }, [showStartupStage]);
 
   useEffect(() => {
-    // Do not depend solely on an onLayout callback here. On a release launch,
-    // a child layout failure would otherwise leave the native splash visible.
-    hideNativeSplash();
+    // Do not depend solely on onLayout. A release failure must still dismiss
+    // the native splash once React reaches this component.
+    void hideNativeSplash();
   }, [hideNativeSplash]);
+
+  const retryStartup = useCallback(() => {
+    setStartupFailure(null);
+    setAppNotice(null);
+    setIsReady(false);
+    showStartupStage('js_entry');
+    setStartupAttempt((attempt) => attempt + 1);
+  }, [showStartupStage]);
+
+  const signOutAfterStartupFailure = useCallback(() => {
+    void signOutWithSupabase()
+      .catch((error) => reportError(error, { area: 'startup_failure_sign_out' }))
+      .finally(() => {
+        setCurrentUser(null);
+        retryStartup();
+      });
+  }, [retryStartup]);
 
   const openLegalPage = useCallback((page: LegalPage) => {
     void WebBrowser.openBrowserAsync(LEGAL_PAGE_URLS[page]).catch((error) => {
@@ -271,26 +306,39 @@ export default function AppContent() {
   }, [words]);
 
   useEffect(() => {
+    let isActive = true;
+
     async function loadData() {
+      setStartupFailure(null);
+      setIsReady(false);
       try {
         trackEvent('app_opened');
+        showStartupStage('environment');
+        reportStartupStage('environment', 'started');
         if (!env.isSupabaseConfigured) {
-          setWords([]);
-          setQuizProgress(null);
-          setAnalytics(EMPTY_ANALYTICS);
-          setReminderSettings(DEFAULT_REMINDER);
-          setDailyQuizGoal(1);
-          setTimedLearningEnabled(false);
-          setTimeBasedLearningSettings(DEFAULT_TIME_BASED_LEARNING_SETTINGS);
-          setQuizPreferences(DEFAULT_QUIZ_PREFERENCES);
-          return;
+          throw new Error('Startup environment is not configured.');
         }
+        reportStartupStage('environment', 'completed');
+
+        // WordWiz uses bundled fonts and images; this marker confirms no async
+        // font or asset operation is holding startup in a release build.
+        showStartupStage('assets');
+        await withStartupTimeout('assets', async () => undefined);
+
+        showStartupStage('supabase_client');
+        await withStartupTimeout('supabase_client', async () => {
+          if (!supabase) throw new Error('Supabase client is unavailable.');
+        });
 
         logCloudSync('auth:get_session_start', {
           screen: 'Launch',
           reason: 'restore_session',
         });
-        const sessionResult = await supabase.auth.getSession();
+        showStartupStage('auth_session');
+        const sessionResult = await withStartupTimeout(
+          'auth_session',
+          () => supabase.auth.getSession(),
+        );
         logCloudSync('auth:get_session_complete', {
           screen: 'Launch',
           reason: 'restore_session',
@@ -302,7 +350,11 @@ export default function AppContent() {
         setCurrentUser(sessionUser);
 
         if (sessionUser) {
-          await loadUserCache(sessionUser.id);
+          showStartupStage('profile_data');
+          await withStartupTimeout(
+            'profile_data',
+            () => loadUserCache(sessionUser.id, true),
+          );
         } else {
           setWords([]);
           setQuizProgress(null);
@@ -314,7 +366,13 @@ export default function AppContent() {
           setQuizPreferences(DEFAULT_QUIZ_PREFERENCES);
         }
       } catch (error) {
-        reportError(error, { area: 'app_boot' });
+        const failedStage = startupStageRef.current;
+        const failureCode = failedStage === 'js_entry' || failedStage === 'loading_state'
+          ? 'STARTUP_ENTRY_FAILED'
+          : getStartupFailureCode(failedStage);
+        if (failedStage !== 'js_entry' && failedStage !== 'loading_state') {
+          reportStartupFailure(error, failedStage);
+        }
         setWords([]);
         setAnalytics(EMPTY_ANALYTICS);
         setReminderSettings(DEFAULT_REMINDER);
@@ -322,17 +380,29 @@ export default function AppContent() {
         setTimedLearningEnabled(false);
         setTimeBasedLearningSettings(DEFAULT_TIME_BASED_LEARNING_SETTINGS);
         setQuizPreferences(DEFAULT_QUIZ_PREFERENCES);
-        setAppNotice('WordWiz had trouble loading saved data. Please try again when you are connected.');
+        setStartupFailure(failureCode);
       } finally {
-        await clearLegacyLearningData();
-        setIsReady(true);
+        try {
+          await withStartupTimeout('profile_data', clearLegacyLearningData);
+        } catch {
+          // Legacy cleanup is best effort and must not block startup recovery.
+        }
+        if (isActive) {
+          showStartupStage('loading_state');
+          reportStartupStage('loading_state', 'started');
+          setIsReady(true);
+          reportStartupStage('loading_state', 'completed');
+          void hideNativeSplash();
+        }
       }
     }
 
-    loadData();
+    void loadData();
 
     if (!env.isSupabaseConfigured) {
-      return;
+      return () => {
+        isActive = false;
+      };
     }
 
     const { data: authListener } = supabase.auth.onAuthStateChange(
@@ -345,9 +415,10 @@ export default function AppContent() {
     );
 
     return () => {
+      isActive = false;
       authListener.subscription.unsubscribe();
     };
-  }, []);
+  }, [hideNativeSplash, showStartupStage, startupAttempt]);
 
   useEffect(() => {
     if (!env.isSupabaseConfigured) {
@@ -396,7 +467,11 @@ export default function AppContent() {
   }, [currentUser]);
 
   useEffect(() => {
-    void subscription.syncUser(currentUser?.id ?? null);
+    void subscription.syncUser(currentUser?.id ?? null).catch((error) => {
+      // Access checks are intentionally non-blocking after the main app has
+      // rendered. Their timeout/error state remains available in the paywall.
+      reportError(error, { area: 'startup_subscription_sync' });
+    });
   }, [currentUser?.id, subscription.syncUser]);
 
   useEffect(() => {
@@ -484,7 +559,7 @@ export default function AppContent() {
     }
   }, [currentUser?.id, isReady]);
 
-  async function loadUserCache(userId: string) {
+  async function loadUserCache(userId: string, throwOnFailure = false) {
     try {
       achievementWalletLoadedUserId.current = null;
       setAchievementWallet(EMPTY_ACHIEVEMENT_WALLET);
@@ -570,6 +645,9 @@ export default function AppContent() {
       setTimeBasedLearningSettings(DEFAULT_TIME_BASED_LEARNING_SETTINGS);
       setQuizPreferences(DEFAULT_QUIZ_PREFERENCES);
       setAppNotice('Saved data on this device could not be read. Please try again when you are connected.');
+      if (throwOnFailure) {
+        throw error;
+      }
     }
   }
 
@@ -602,9 +680,12 @@ export default function AppContent() {
         }
 
         setAppNotice(null);
-        const cloudData = await fetchUserLearningData(
-          userId,
-          getScreenContext(activeTab, 'hydrate_learning_data'),
+        const cloudData = await withStartupTimeout(
+          'profile_data',
+          () => fetchUserLearningData(
+            userId,
+            getScreenContext(activeTab, 'hydrate_learning_data'),
+          ),
         );
 
         if (!isActive) {
@@ -934,35 +1015,66 @@ export default function AppContent() {
     );
     if (previousWords.length === 0) return true;
 
-    const nextWords = previousWords.map((word) => ({
-      ...word,
-      mastery: {
-        ...getWordMasteryProgress(word, analytics),
-        studySets: (word.mastery?.studySets ?? []).filter(
-          (set) => set.id !== studySetId,
-        ),
-      },
-    }));
+    const membership = previousWords
+      .flatMap((word) => word.mastery?.studySets ?? [])
+      .find((set) => set.id === studySetId);
+    const isCuratedCollection =
+      membership?.kind === 'collection' ||
+      studySetId.startsWith('wordwiz-collection:');
+
+    const collectionOnlyWordIds = new Set(
+      isCuratedCollection
+        ? previousWords
+            .filter((word) =>
+              word.mastery?.librarySource === 'collection' &&
+              (word.mastery?.studySets ?? []).every(
+                (set) => set.id === studySetId,
+              ),
+            )
+            .map((word) => word.id)
+        : [],
+    );
+    const nextWords = previousWords
+      .filter((word) => !collectionOnlyWordIds.has(word.id))
+      .map((word) => ({
+        ...word,
+        mastery: {
+          ...getWordMasteryProgress(word, analytics),
+          studySets: (word.mastery?.studySets ?? []).filter(
+            (set) => set.id !== studySetId,
+          ),
+        },
+      }));
     const nextWordsById = new Map(nextWords.map((word) => [word.id, word]));
     const previousWordsById = new Map(
       previousWords.map((word) => [word.id, word]),
     );
 
     setWords((currentWords) =>
-      currentWords.map((word) => nextWordsById.get(word.id) ?? word),
+      currentWords
+        .filter((word) => !collectionOnlyWordIds.has(word.id))
+        .map((word) => nextWordsById.get(word.id) ?? word),
     );
 
     if (currentUser && cloudHydratedUserId.current === currentUser.id) {
       try {
-        const membership = previousWords
-          .flatMap((word) => word.mastery?.studySets ?? [])
-          .find((set) => set.id === studySetId);
         if (membership) {
-          await saveCloudStudySetMembership(
-            previousWords.map((word) => word.id),
-            membership,
-            false,
-          );
+          await Promise.all([
+            nextWords.length > 0
+              ? saveCloudStudySetMembership(
+                  nextWords.map((word) => word.id),
+                  membership,
+                  false,
+                )
+              : Promise.resolve(),
+            ...[...collectionOnlyWordIds].map((wordId) =>
+              deleteCloudWord(
+                currentUser.id,
+                wordId,
+                getScreenContext('words', 'delete_wordwiz_collection'),
+              ),
+            ),
+          ]);
         } else {
           await saveCloudWords(
           currentUser.id,
@@ -974,13 +1086,18 @@ export default function AppContent() {
       } catch (error) {
         reportError(error, { area: 'delete_study_set' });
         trackEvent('cloud_sync_failed', { operation: 'delete_study_set' });
-        setWords((currentWords) =>
-          currentWords.map((word) =>
+        setWords((currentWords) => {
+          const restored = currentWords.map((word) =>
             nextWordsById.has(word.id)
               ? previousWordsById.get(word.id) ?? word
               : word,
-          ),
-        );
+          );
+          const restoredIds = new Set(restored.map((word) => word.id));
+          return [
+            ...restored,
+            ...previousWords.filter((word) => !restoredIds.has(word.id)),
+          ];
+        });
         deferCloudSync();
         return false;
       }
@@ -1545,6 +1662,15 @@ export default function AppContent() {
       (word) => getSavedWordTermKey(word.term) === getSavedWordTermKey(cleanTerm),
     );
     if (existingWord && wordToEdit?.id !== existingWord.id) {
+      if (existingWord.mastery?.librarySource === 'collection') {
+        const didAddToMyWords = await addCollectionWordToMyWords(existingWord.id);
+        if (didAddToMyWords && options.closeAfterSave !== false) {
+          setShowAddWord(false);
+          setWordToEdit(null);
+          setActiveTab('words');
+        }
+        return didAddToMyWords;
+      }
       return 'duplicate';
     }
     const isEditingExistingWord = Boolean(
@@ -1624,6 +1750,81 @@ export default function AppContent() {
       setActiveTab('words');
     }
     return true;
+  }
+
+  async function addCollectionWordToMyWords(wordId: string) {
+    return (await addCollectionWordsToMyWords([wordId])) === 1;
+  }
+
+  async function addCollectionWordsToMyWords(wordIds: string[]) {
+    const requestedIds = new Set(wordIds);
+    const existingWords = words.filter(
+      (word) =>
+        requestedIds.has(word.id) &&
+        word.mastery?.librarySource === 'collection',
+    );
+    if (existingWords.length === 0) {
+      return 0;
+    }
+
+    const previousWordsById = new Map(
+      existingWords.map((word) => [word.id, word]),
+    );
+    const promotedWords = existingWords.map((word) => ({
+      ...word,
+      mastery: {
+        ...getWordMasteryProgress(word, analytics),
+        librarySource: 'personal' as const,
+      },
+    }));
+    const promotedWordsById = new Map(
+      promotedWords.map((word) => [word.id, word]),
+    );
+
+    setWords((currentWords) =>
+      currentWords.map((word) => promotedWordsById.get(word.id) ?? word),
+    );
+
+    if (!currentUser || cloudHydratedUserId.current !== currentUser.id) {
+      return promotedWords.length;
+    }
+
+    const results = await Promise.allSettled(
+      promotedWords.map((word) =>
+        saveCloudWord(
+          currentUser.id,
+          word,
+          getScreenContext('words', 'add_collection_words_to_my_words'),
+        ),
+      ),
+    );
+    const failedWordIds = new Set(
+      results.flatMap((result, index) =>
+        result.status === 'rejected' ? [promotedWords[index].id] : [],
+      ),
+    );
+
+    if (failedWordIds.size > 0) {
+      const firstFailure = results.find(
+        (result): result is PromiseRejectedResult => result.status === 'rejected',
+      );
+      reportError(firstFailure?.reason, { area: 'add_collection_words_to_my_words' });
+      trackEvent('cloud_sync_failed', { operation: 'add_collection_words_to_my_words' });
+      setWords((currentWords) =>
+        currentWords.map((word) =>
+          failedWordIds.has(word.id)
+            ? previousWordsById.get(word.id) ?? word
+            : word,
+        ),
+      );
+    }
+
+    const savedCount = promotedWords.length - failedWordIds.size;
+    if (savedCount > 0) {
+      markCloudCacheFresh(currentUser.id);
+      trackEvent('word_saved', { updatedExisting: true, fromCollection: true });
+    }
+    return savedCount;
   }
 
   async function enrichStarterCollectionWords(initialWords: Word[]) {
@@ -1753,6 +1954,7 @@ export default function AppContent() {
         ...wordData,
         mastery: {
           ...getWordMasteryProgress(wordData, analytics),
+          librarySource: 'collection' as const,
           studySets: [membership],
         },
       };
@@ -2205,6 +2407,8 @@ export default function AppContent() {
           onToggleFlag={toggleWordFlag}
           onSelectWord={(word) => openCards(word.id)}
           onTogglePracticeExclusion={toggleWordPracticeExclusion}
+          onAddCollectionWordToMyWords={addCollectionWordToMyWords}
+          onAddCollectionWordsToMyWords={addCollectionWordsToMyWords}
           onAddStarterCollection={addStarterCollection}
           onCreateStudySet={createStudySet}
           onDeleteStudySet={deleteStudySet}
@@ -2292,8 +2496,24 @@ export default function AppContent() {
   // take longer on a real device, so keep the cached app usable while it
   // refreshes in the background instead of turning a slow request into an
   // indefinite launch screen.
+  if (startupFailure) {
+    return (
+      <StartupFailureScreen
+        code={startupFailure}
+        onRetry={retryStartup}
+        onSignOut={currentUser ? signOutAfterStartupFailure : undefined}
+        onLayout={() => void hideNativeSplash()}
+      />
+    );
+  }
+
   if (!isReady) {
-    return <WordSyncLoadingScreen onLayout={hideNativeSplash} />;
+    return (
+      <WordSyncLoadingScreen
+        stage={startupStage}
+        onLayout={() => void hideNativeSplash()}
+      />
+    );
   }
 
   if (!env.isSupabaseConfigured) {
@@ -2716,13 +2936,70 @@ async function clearLegacyLearningData() {
   ]);
 }
 
-function WordSyncLoadingScreen({ onLayout }: { onLayout: () => void }) {
+function WordSyncLoadingScreen({
+  onLayout,
+  stage,
+}: {
+  onLayout: () => void;
+  stage: StartupStage;
+}) {
   return (
     <SafeAreaView style={styles.loadingScreen} onLayout={onLayout}>
       <Ionicons name="sparkles" size={34} color={COLORS.purpleDark} />
       <Text style={styles.loadingTitle}>Getting your words ready...</Text>
+      <Text style={styles.startupStageText}>
+        {getStartupStageLabel(stage)}
+      </Text>
     </SafeAreaView>
   );
+}
+
+function StartupFailureScreen({
+  code,
+  onRetry,
+  onSignOut,
+  onLayout,
+}: {
+  code: StartupFailureCode;
+  onRetry: () => void;
+  onSignOut?: () => void;
+  onLayout: () => void;
+}) {
+  return (
+    <SafeAreaView style={styles.startupFailureScreen} onLayout={onLayout}>
+      <Ionicons name="cloud-offline-outline" size={38} color={COLORS.purpleDark} />
+      <Text style={styles.startupFailureTitle}>WordWiz needs a fresh start</Text>
+      <Text style={styles.startupFailureText}>
+        Your learning data is safe. Please try again.
+      </Text>
+      <Text style={styles.startupFailureCode}>{code}</Text>
+      <Pressable onPress={onRetry} style={styles.startupRetryButton}>
+        <Text style={styles.startupRetryText}>RETRY</Text>
+      </Pressable>
+      {onSignOut ? (
+        <Pressable onPress={onSignOut} style={styles.startupSignOutButton}>
+          <Text style={styles.startupSignOutText}>SIGN OUT</Text>
+        </Pressable>
+      ) : null}
+    </SafeAreaView>
+  );
+}
+
+function getStartupStageLabel(stage: StartupStage) {
+  const labels: Record<StartupStage, string> = {
+    js_entry: 'Starting WordWiz…',
+    environment: 'Checking app setup…',
+    assets: 'Preparing visual assets…',
+    supabase_client: 'Connecting secure storage…',
+    auth_session: 'Restoring your session…',
+    profile_data: 'Loading your learning data…',
+    complimentary_access: 'Checking access…',
+    revenuecat: 'Connecting subscriptions…',
+    navigation: 'Opening WordWiz…',
+    splash: 'Opening WordWiz…',
+    loading_state: 'Finishing startup…',
+  };
+  return labels[stage];
 }
 
 function createUuid() {

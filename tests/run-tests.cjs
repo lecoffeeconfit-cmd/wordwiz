@@ -284,8 +284,27 @@ test('starter collections save words and existing memberships in one production 
   assert.match(migration, /grant execute on function public\.add_starter_collection/);
   assert.match(migration, /notify pgrst, 'reload schema'/);
   assert.match(appContent, /createCloudStarterCollection\(/);
+  assert.match(appContent, /librarySource: 'collection'/);
   assert.doesNotMatch(appContent, /batch\.map\(createCloudWordWithFreeLimit\)/);
   assert.match(wordUsage, /add_starter_collection/);
+});
+
+test('curated collection words stay out of My Words until explicitly promoted', () => {
+  const collectionWord = {
+    ...makeWord('collection-word', 'Tacit', 'Understood without being spoken.'),
+    mastery: { librarySource: 'collection' },
+  };
+  const personalWord = makeWord('personal-word', 'Luminous', 'Giving off light.');
+
+  assert.equal(learning.isPersonalLibraryWord(collectionWord), false);
+  assert.equal(learning.isPersonalLibraryWord(personalWord), true);
+  assert.equal(
+    learning.isPersonalLibraryWord({
+      ...collectionWord,
+      mastery: { librarySource: 'personal' },
+    }),
+    true,
+  );
 });
 
 test('complimentary Plus access starts server-side once and lasts thirty days', () => {

@@ -22,7 +22,7 @@ import {
 import { COLORS } from '../constants/theme';
 import type { AnalyticsData, LegalPage, QuizAnswer, QuizProgress, QuizQuestion, ReminderSettings, SortMode, Word } from '../types';
 import { styles } from '../styles';
-import { getStudySets } from '../utils';
+import { getStudySets, isPersonalLibraryWord } from '../utils';
 import { DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 
 export function WordsScreen({
@@ -36,6 +36,8 @@ export function WordsScreen({
   onToggleFlag,
   onSelectWord,
   onTogglePracticeExclusion,
+  onAddCollectionWordToMyWords,
+  onAddCollectionWordsToMyWords,
   onAddStarterCollection,
   onCreateStudySet,
   onDeleteStudySet,
@@ -53,6 +55,8 @@ export function WordsScreen({
   onToggleFlag: (wordId: string) => void;
   onSelectWord: (word: Word) => void;
   onTogglePracticeExclusion: (wordId: string) => void;
+  onAddCollectionWordToMyWords: (wordId: string) => Promise<boolean>;
+  onAddCollectionWordsToMyWords: (wordIds: string[]) => Promise<number>;
   onAddStarterCollection: (collection: WordWizStarterCollection) => Promise<{
     added: number;
     alreadySaved: number;
@@ -80,6 +84,8 @@ export function WordsScreen({
   } | null>(null);
   const [studySetName, setStudySetName] = useState('');
   const [selectedStudySetId, setSelectedStudySetId] = useState<string | null>(null);
+  const [selectedCollectionLibraryWordIds, setSelectedCollectionLibraryWordIds] = useState<string[]>([]);
+  const [isAddingCollectionWordsToMyWords, setIsAddingCollectionWordsToMyWords] = useState(false);
   const [selectedStudyWordIds, setSelectedStudyWordIds] = useState<string[]>([]);
   const [isSavingStudySet, setIsSavingStudySet] = useState(false);
   const [addingCollectionId, setAddingCollectionId] = useState<string | null>(null);
@@ -87,12 +93,34 @@ export function WordsScreen({
   const addingCollectionRef = useRef(false);
   const searchBoxY = useRef(0);
   const normalizedSearchQuery = searchQuery.trim().toLowerCase();
+  const personalWords = useMemo(
+    () => words.filter(isPersonalLibraryWord),
+    [words],
+  );
   const studySets = useMemo(() => getStudySets(words), [words]);
   const activeStudySet = studySets.find((set) => set.id === selectedStudySetId);
+  const isViewingCuratedCollection =
+    activeStudySet?.kind === 'collection' ||
+    activeStudySet?.id.startsWith('wordwiz-collection:') === true;
+  const collectionWordsAvailableToAdd = useMemo(
+    () =>
+      isViewingCuratedCollection && activeStudySet
+        ? words.filter(
+            (word) =>
+              activeStudySet.wordIds.includes(word.id) &&
+              !isPersonalLibraryWord(word),
+          )
+        : [],
+    [activeStudySet, isViewingCuratedCollection, words],
+  );
+  const selectedCollectionWordsToAdd = useMemo(() => {
+    const selectedIds = new Set(selectedCollectionLibraryWordIds);
+    return collectionWordsAvailableToAdd.filter((word) => selectedIds.has(word.id));
+  }, [collectionWordsAvailableToAdd, selectedCollectionLibraryWordIds]);
   const filteredWords = useMemo(() => {
     const setWords = activeStudySet
       ? words.filter((word) => activeStudySet.wordIds.includes(word.id))
-      : words;
+      : personalWords;
     const searchableWords = showFlaggedOnly
       ? setWords.filter((word) => word.isFlagged)
       : setWords;
@@ -114,7 +142,11 @@ export function WordsScreen({
         .toLowerCase()
         .includes(normalizedSearchQuery),
     );
-  }, [activeStudySet, normalizedSearchQuery, showFlaggedOnly, words]);
+  }, [activeStudySet, normalizedSearchQuery, personalWords, showFlaggedOnly, words]);
+
+  useEffect(() => {
+    setSelectedCollectionLibraryWordIds([]);
+  }, [selectedStudySetId]);
   function scrollSearchIntoView() {
     setIsSearchFocused(true);
 
@@ -151,15 +183,15 @@ export function WordsScreen({
       const result = await onAddStarterCollection(selectedCollection);
       if (!result.blocked) {
         const added = result.added
-          ? `Added ${result.added} ${result.added === 1 ? 'word' : 'words'} to your collection.`
-          : 'Every word is already saved, so this is now ready as a deck.';
+          ? `${result.added} ${result.added === 1 ? 'word is' : 'words are'} ready in this collection.`
+          : 'This collection is ready to study.';
         const kept = result.alreadySaved
-          ? ` ${result.alreadySaved} existing ${result.alreadySaved === 1 ? 'word was' : 'words were'} kept as-is.`
+          ? ` ${result.alreadySaved} existing ${result.alreadySaved === 1 ? 'word was' : 'words were'} kept in the collection.`
           : '';
         const enrichment = result.enrichmentScheduled
           ? ' Pronunciations, word history, related words, and extra examples will fill in quietly in the background.'
           : '';
-        Alert.alert('Collection ready', `${added}${kept}${enrichment}`);
+        Alert.alert('Collection ready', `${added}${kept} Add any word to My Words from inside the deck.${enrichment}`);
         setSelectedStudySetId(`wordwiz-collection:${collection.id}`);
       }
     } finally {
@@ -207,7 +239,9 @@ export function WordsScreen({
   function confirmDeleteStudySet(studySetId: string, studySetName: string) {
     Alert.alert(
       `Remove “${studySetName}”?`,
-      'This removes the deck from Flashcards and Quiz. Every word stays saved in your WordWiz library.',
+      studySetId.startsWith('wordwiz-collection:')
+        ? 'This removes the curated deck. Words you added to My Words stay saved; collection-only words are removed with the deck.'
+        : 'This removes the deck from Flashcards and Quiz. Every word stays saved in your WordWiz library.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -296,6 +330,38 @@ export function WordsScreen({
     );
   }
 
+  async function addWordToMyWords(word: Word) {
+    const didAdd = await onAddCollectionWordToMyWords(word.id);
+    if (!didAdd) {
+      Alert.alert(
+        'Could not add to My Words',
+        'Please check your connection and try again.',
+      );
+    }
+  }
+
+  async function addSelectedCollectionWordsToMyWords() {
+    if (selectedCollectionWordsToAdd.length === 0 || isAddingCollectionWordsToMyWords) {
+      return;
+    }
+
+    setIsAddingCollectionWordsToMyWords(true);
+    try {
+      const savedCount = await onAddCollectionWordsToMyWords(
+        selectedCollectionWordsToAdd.map((word) => word.id),
+      );
+      setSelectedCollectionLibraryWordIds([]);
+      if (savedCount !== selectedCollectionWordsToAdd.length) {
+        Alert.alert(
+          'Some words were not added',
+          `${savedCount} of ${selectedCollectionWordsToAdd.length} words were added to My Words. Please try the rest again.`,
+        );
+      }
+    } finally {
+      setIsAddingCollectionWordsToMyWords(false);
+    }
+  }
+
   return (
     <>
       <KeyboardAvoidingView
@@ -326,14 +392,14 @@ export function WordsScreen({
                 <Ionicons name="book" size={25} color={COLORS.purpleDark} />
               </View>
               <View style={styles.progressCopy}>
-                <Text style={styles.progressNumber}>{words.length} words</Text>
+                <Text style={styles.progressNumber}>{personalWords.length} words</Text>
                 <Text style={styles.progressLabel}>
-                  {words.length === 0
+                  {personalWords.length === 0
                     ? 'Your collection is ready to grow'
                     : 'Your vocabulary is growing!'}
                 </Text>
               </View>
-              {words.length > 0 && (
+              {personalWords.length > 0 && (
                 <Pressable onPress={onStudy} style={styles.studyButton}>
                   <Ionicons name="play" size={15} color={COLORS.white} />
                   <Text style={styles.studyButtonText}>STUDY</Text>
@@ -436,7 +502,7 @@ export function WordsScreen({
                   <Text style={[
                     styles.studySetFilterText,
                     selectedStudySetId === null && styles.studySetFilterTextActive,
-                  ]}>All words</Text>
+                  ]}>My words</Text>
                 </Pressable>
                 {studySets.map((set) => {
                   const isActive = set.id === selectedStudySetId;
@@ -466,7 +532,7 @@ export function WordsScreen({
             ) : null}
 
             <View style={styles.listToolbar}>
-              <Text style={styles.sectionTitle}>
+              <Text numberOfLines={1} ellipsizeMode="tail" style={styles.sectionTitle}>
                 {showFlaggedOnly
                   ? 'FLAGGED WORDS'
                   : activeStudySet
@@ -492,13 +558,67 @@ export function WordsScreen({
               </View>
             </View>
 
-            {words.length > 0 ? (
+            {isViewingCuratedCollection && collectionWordsAvailableToAdd.length > 0 ? (
+              <View style={styles.collectionLibraryBulkCard}>
+                <View style={styles.collectionLibraryBulkCopy}>
+                  <Text style={styles.collectionLibraryBulkTitle}>ADD TO MY WORDS</Text>
+                  <Text style={styles.collectionLibraryBulkText}>
+                    {selectedCollectionWordsToAdd.length > 0
+                      ? `${selectedCollectionWordsToAdd.length} selected`
+                      : `${collectionWordsAvailableToAdd.length} collection words available`}
+                  </Text>
+                </View>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={selectedCollectionWordsToAdd.length > 0 ? 'Deselect every collection word' : 'Select every collection word'}
+                  onPress={() => setSelectedCollectionLibraryWordIds(
+                    selectedCollectionWordsToAdd.length > 0
+                      ? []
+                      : collectionWordsAvailableToAdd.map((word) => word.id),
+                  )}
+                  style={({ pressed }) => [
+                    styles.collectionLibrarySelectButton,
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <Text style={styles.collectionLibrarySelectText}>
+                    {selectedCollectionWordsToAdd.length > 0 ? 'DESELECT ALL' : 'SELECT ALL'}
+                  </Text>
+                </Pressable>
+                {selectedCollectionWordsToAdd.length > 0 ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`Add ${selectedCollectionWordsToAdd.length} selected words to My Words`}
+                    accessibilityState={{ busy: isAddingCollectionWordsToMyWords }}
+                    disabled={isAddingCollectionWordsToMyWords}
+                    onPress={() => void addSelectedCollectionWordsToMyWords()}
+                    style={({ pressed }) => [
+                      styles.collectionLibraryAddButton,
+                      (pressed || isAddingCollectionWordsToMyWords) && styles.pressed,
+                    ]}
+                  >
+                    {isAddingCollectionWordsToMyWords ? (
+                      <ActivityIndicator size="small" color={COLORS.white} />
+                    ) : (
+                      <Ionicons name="add" size={15} color={COLORS.white} />
+                    )}
+                    <Text style={styles.collectionLibraryAddText}>
+                      ADD {selectedCollectionWordsToAdd.length}
+                    </Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            ) : null}
+
+            {filteredWords.length > 0 ? (
               <Text style={styles.wordListGestureHint}>
-                Need to remove a word? Press and hold it · Double-tap to pause practice
+                {isViewingCuratedCollection
+                  ? 'Tap + to add a word to My Words · Double-tap to pause practice'
+                  : 'Need to remove a word? Press and hold it · Double-tap to pause practice'}
               </Text>
             ) : null}
 
-            {words.length > 0 && (
+            {filteredWords.length > 0 && (
               <View
                 onLayout={(event) => {
                   searchBoxY.current = event.nativeEvent.layout.y;
@@ -572,6 +692,8 @@ export function WordsScreen({
             onDoublePress={openPracticeSettings}
             onRemove={onRemove}
             onToggleFlag={onToggleFlag}
+            onAddToMyWords={isViewingCuratedCollection ? addWordToMyWords : undefined}
+            isInMyWords={isPersonalLibraryWord(item)}
           />
         )}
         />
@@ -604,8 +726,8 @@ export function WordsScreen({
                 </Text>
                 <Text style={styles.collectionModalSubtitle}>
                   {selectedStarterCollection
-                    ? `Choose what to add—deselect any words you already know.`
-                    : 'Open a collection to see every included word before you add it.'}
+                    ? 'Choose the words you want to learn. They stay in this collection until you add one to My Words.'
+                    : 'Open a collection to preview every word and choose what to include.'}
                 </Text>
               </View>
               <Pressable
@@ -630,29 +752,36 @@ export function WordsScreen({
               const selectedWords = collection.words.filter((collectionWord) =>
                 selectedTerms.has(collectionWord.term.toLowerCase()),
               );
-              const alreadySaved = selectedWords.filter((collectionWord) =>
-                words.some((word) => word.term.toLowerCase() === collectionWord.term.toLowerCase()),
+              const alreadyInMyWords = selectedWords.filter((collectionWord) =>
+                personalWords.some((word) => word.term.toLowerCase() === collectionWord.term.toLowerCase()),
               ).length;
               const isAdding = addingCollectionId === collection.id;
-              const remainingCount = selectedWords.length - alreadySaved;
               const collectionSetId = `wordwiz-collection:${collection.id}`;
+              const alreadyIncluded = selectedWords.filter((collectionWord) =>
+                words.some(
+                  (word) =>
+                    word.term.toLowerCase() === collectionWord.term.toLowerCase() &&
+                    word.mastery?.studySets?.some((set) => set.id === collectionSetId),
+                ),
+              ).length;
+              const remainingCount = selectedWords.length - alreadyIncluded;
               const isInMyDecks = studySets.some((set) => set.id === collectionSetId);
               const hasSelectedWords = selectedWords.length > 0;
               const isComplete = hasSelectedWords && remainingCount === 0 && isInMyDecks;
               const allWordsSelected = selectedWords.length === collection.words.length;
               const actionLabel = !hasSelectedWords
-                ? 'SELECT WORDS TO ADD'
+                ? 'SELECT WORDS TO INCLUDE'
                 : isComplete
-                ? 'IN MY DECKS'
+                ? 'COLLECTION READY'
                 : remainingCount === 0
-                  ? 'ADD TO MY DECKS'
-                  : `ADD ${remainingCount} WORDS`;
+                  ? 'UPDATE COLLECTION'
+                  : `START ${remainingCount} WORDS`;
               return (
                 <>
                   <View style={styles.collectionDetailSummary}>
                     <Ionicons name={collection.icon} size={18} color={collection.color === 'purple' ? COLORS.purpleDark : COLORS.orange} />
                     <Text style={styles.collectionDetailSummaryText}>{collection.subtitle}</Text>
-                    {alreadySaved > 0 ? <Text style={styles.collectionDetailSavedText}>{alreadySaved} saved</Text> : null}
+                    {alreadyInMyWords > 0 ? <Text style={styles.collectionDetailSavedText}>{alreadyInMyWords} in My Words</Text> : null}
                   </View>
                   <View style={styles.collectionDetailSelectionRow}>
                     <Text style={styles.collectionDetailSelectionText}>
@@ -678,7 +807,7 @@ export function WordsScreen({
                     contentContainerStyle={styles.collectionDetailListContent}
                   >
                     {collection.words.map((collectionWord) => {
-                      const isSaved = words.some((word) =>
+                      const isSaved = personalWords.some((word) =>
                         word.term.toLowerCase() === collectionWord.term.toLowerCase(),
                       );
                       const isSelected = selectedTerms.has(collectionWord.term.toLowerCase());
@@ -687,7 +816,7 @@ export function WordsScreen({
                           key={collectionWord.term}
                           accessibilityRole="checkbox"
                           accessibilityState={{ checked: isSelected }}
-                          accessibilityLabel={`${isSelected ? 'Remove' : 'Add'} ${collectionWord.term} from this collection`}
+                          accessibilityLabel={`${isSelected ? 'Remove' : 'Include'} ${collectionWord.term} in this collection`}
                           onPress={() => toggleCollectionWord(collectionWord.term)}
                           style={({ pressed }) => [
                             styles.collectionDetailWord,
@@ -708,7 +837,7 @@ export function WordsScreen({
                                 {isSaved ? (
                                   <View style={styles.collectionDetailWordSaved}>
                                     <Ionicons name="checkmark" size={11} color={COLORS.teal} />
-                                    <Text style={styles.collectionDetailWordSavedText}>SAVED</Text>
+                                    <Text style={styles.collectionDetailWordSavedText}>MY WORDS</Text>
                                   </View>
                                 ) : null}
                               </View>
@@ -809,7 +938,7 @@ export function WordsScreen({
                 <Text style={styles.collectionModalEyebrow}>MY STUDY SET</Text>
                 <Text style={styles.collectionModalTitle}>Build a focused set</Text>
                 <Text style={styles.collectionModalSubtitle}>
-                  Pick the words you want together. Your new set will appear in Quiz.
+                  Pick from your personal words. Your new set will appear in Quiz.
                 </Text>
               </View>
               <Pressable
@@ -834,11 +963,11 @@ export function WordsScreen({
               <Text style={styles.studySetSelectLabel}>CHOOSE WORDS</Text>
               <Pressable
                 onPress={() => setSelectedStudyWordIds(
-                  selectedStudyWordIds.length === words.length ? [] : words.map((word) => word.id),
+                  selectedStudyWordIds.length === personalWords.length ? [] : personalWords.map((word) => word.id),
                 )}
               >
                 <Text style={styles.studySetSelectAllText}>
-                  {selectedStudyWordIds.length === words.length ? 'CLEAR ALL' : 'SELECT ALL'}
+                  {selectedStudyWordIds.length === personalWords.length ? 'CLEAR ALL' : 'SELECT ALL'}
                 </Text>
               </Pressable>
             </View>
@@ -848,7 +977,7 @@ export function WordsScreen({
               style={styles.studySetBuilderList}
               contentContainerStyle={styles.studySetWordList}
             >
-              {words.map((word) => {
+              {personalWords.map((word) => {
                 const selected = selectedStudyWordIds.includes(word.id);
                 return (
                   <Pressable
@@ -906,7 +1035,7 @@ export function WordsScreen({
                 <Text style={styles.collectionModalEyebrow}>MY DECKS</Text>
                 <Text style={styles.collectionModalTitle}>Keep practice organized</Text>
                 <Text style={styles.collectionModalSubtitle}>
-                  Ready-made collections and personal sets appear here, in Flashcards, and in Quiz. Removing a deck never deletes its words.
+                  Ready-made collections and personal sets appear here, in Flashcards, and in Quiz. Removing a collection keeps only the words you added to My Words.
                 </Text>
               </View>
               <Pressable
@@ -948,7 +1077,9 @@ export function WordsScreen({
                   <Pressable
                     accessibilityRole="button"
                     accessibilityLabel={`Remove ${set.name} deck`}
-                    accessibilityHint="Removes this deck but keeps every word saved."
+                    accessibilityHint={isCollection
+                      ? 'Removes this collection. Words in My Words stay saved.'
+                      : 'Removes this deck but keeps every word saved.'}
                     onPress={() => confirmDeleteStudySet(set.id, set.name)}
                     style={({ pressed }) => [styles.studySetDeleteButton, pressed && styles.pressed]}
                   >

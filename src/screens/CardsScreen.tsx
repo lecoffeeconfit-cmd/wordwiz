@@ -4,7 +4,7 @@ import { AppState, FlatList, Pressable, ScrollView, Text, View } from 'react-nat
 import { COLORS } from '../constants/theme';
 import type { AnalyticsData, LegalPage, QuizAnswer, QuizProgress, QuizQuestion, ReminderSettings, SortMode, Word } from '../types';
 import { styles } from '../styles';
-import { buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, formatWordAddedDate, formatWordFlaggedDate, getCompleteFlashcardDefinition, getDayKey, getNewStudyWords, getRecentDays, getStreakMessage, getStreakWeek, getStudySets, getWordLearningContexts, getWordMastery, getWordMasteryCategoryForWord, NEW_STUDY_GROUP, shuffle, sortWordsAlphabetically, WORD_MASTERY_CATEGORIES, type WordMasteryCategoryId } from '../utils';
+import { buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, formatWordAddedDate, formatWordFlaggedDate, getCompleteFlashcardDefinition, getDayKey, getNewStudyWords, getRecentDays, getStreakMessage, getStreakWeek, getStudySets, getWordLearningContexts, getWordMastery, getWordMasteryCategoryForWord, isPersonalLibraryWord, NEW_STUDY_GROUP, shuffle, sortWordsAlphabetically, WORD_MASTERY_CATEGORIES, type WordMasteryCategoryId } from '../utils';
 import { DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, ProgressFill, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, SpeakButton, SpeakDefinitionButton, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 
 type CardsStudyGroupId = WordMasteryCategoryId | 'new' | 'flagged' | `set:${string}`;
@@ -65,6 +65,10 @@ export function CardsScreen({
       ? words.filter((word) => word.isFlagged).map((word) => word.id)
       : null,
   );
+  const personalWords = useMemo(
+    () => words.filter(isPersonalLibraryWord),
+    [words],
+  );
   const wordMastery = useMemo(
     () =>
       words.map((word) => ({
@@ -80,32 +84,36 @@ export function CardsScreen({
           ...counts,
           [category.id]:
             category.id === 'all'
-              ? words.length
-              : wordMastery.filter((item) => item.categoryId === category.id)
+              ? personalWords.length
+              : wordMastery.filter(
+                  (item) =>
+                    isPersonalLibraryWord(item.word) &&
+                    item.categoryId === category.id,
+                )
                   .length,
         }),
         {} as Record<WordMasteryCategoryId, number>,
       ),
-    [wordMastery, words.length],
+    [personalWords.length, wordMastery],
   );
   const flaggedCount = useMemo(
-    () => words.filter((word) => word.isFlagged).length,
-    [words],
+    () => personalWords.filter((word) => word.isFlagged).length,
+    [personalWords],
   );
   const newWords = useMemo(
-    () => getNewStudyWords(words, analytics),
-    [analytics, words],
+    () => getNewStudyWords(personalWords, analytics),
+    [analytics, personalWords],
   );
   const studySets = useMemo(() => getStudySets(words), [words]);
   const filteredWords = useMemo(
     () =>
       selectedCategory === 'all'
-        ? words
+        ? personalWords
         : selectedCategory === 'new'
           ? newWords
         : selectedCategory === 'flagged'
-          ? words.filter((word) =>
-              (flaggedSessionIds ?? words.filter((item) => item.isFlagged).map((item) => item.id)).includes(word.id),
+          ? personalWords.filter((word) =>
+              (flaggedSessionIds ?? personalWords.filter((item) => item.isFlagged).map((item) => item.id)).includes(word.id),
             )
         : selectedCategory.startsWith('set:')
           ? words.filter((word) =>
@@ -114,9 +122,13 @@ export function CardsScreen({
               ),
             )
         : wordMastery
-            .filter((item) => item.categoryId === selectedCategory)
+            .filter(
+              (item) =>
+                isPersonalLibraryWord(item.word) &&
+                item.categoryId === selectedCategory,
+            )
             .map((item) => item.word),
-    [flaggedSessionIds, newWords, selectedCategory, wordMastery, words],
+    [flaggedSessionIds, newWords, personalWords, selectedCategory, wordMastery, words],
   );
   const studyGroups: CardsStudyGroup[] = [
     WORD_MASTERY_CATEGORIES[0],

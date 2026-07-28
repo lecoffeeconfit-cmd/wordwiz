@@ -5,6 +5,7 @@ import {
   getOrStartComplimentaryAccess,
   hasPlusAccess as hasActiveRevenueCatEntitlement,
   revenueCat,
+  withStartupTimeout,
   type ComplimentaryAccess,
   type PurchaseResult,
   type RestoreResult,
@@ -86,7 +87,10 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
     setIsAccessLoading(true);
     setAccessError(null);
     try {
-      const access = await getOrStartComplimentaryAccess();
+      const access = await withStartupTimeout(
+        'complimentary_access',
+        getOrStartComplimentaryAccess,
+      );
       if (generation !== accessGeneration.current || activeUserId.current !== userId) return;
       setComplimentaryAccess(access);
     } catch (error) {
@@ -107,13 +111,13 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
   const syncUser = useCallback(async (userId: string | null) => {
     activeUserId.current = userId;
     if (!userId) {
-      await revenueCat.syncUser(null);
+      await withStartupTimeout('revenuecat', () => revenueCat.syncUser(null));
       await refreshAccessForUser(null);
       return;
     }
 
     await Promise.all([
-      revenueCat.syncUser(userId),
+      withStartupTimeout('revenuecat', () => revenueCat.syncUser(userId)),
       refreshAccessForUser(userId),
     ]);
   }, [refreshAccessForUser]);
