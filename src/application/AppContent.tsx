@@ -165,7 +165,6 @@ export default function AppContent() {
   const [quizPreferences, setQuizPreferences] =
     useState<QuizPreferences>(DEFAULT_QUIZ_PREFERENCES);
   const [isReady, setIsReady] = useState(false);
-  const [isCloudLoading, setIsCloudLoading] = useState(false);
   const [appNotice, setAppNotice] = useState<string | null>(null);
   const [currentDayKey, setCurrentDayKey] = useState(getDayKey());
   const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState(false);
@@ -243,9 +242,19 @@ export default function AppContent() {
       return;
     }
 
-    hasHiddenNativeSplash.current = true;
-    SplashScreen.hide();
+    try {
+      SplashScreen.hide();
+      hasHiddenNativeSplash.current = true;
+    } catch (error) {
+      reportError(error, { area: 'hide_native_splash' });
+    }
   }, []);
+
+  useEffect(() => {
+    // Do not depend solely on an onLayout callback here. On a release launch,
+    // a child layout failure would otherwise leave the native splash visible.
+    hideNativeSplash();
+  }, [hideNativeSplash]);
 
   const openLegalPage = useCallback((page: LegalPage) => {
     void WebBrowser.openBrowserAsync(LEGAL_PAGE_URLS[page]).catch((error) => {
@@ -592,7 +601,6 @@ export default function AppContent() {
           return;
         }
 
-        setIsCloudLoading(true);
         setAppNotice(null);
         const cloudData = await fetchUserLearningData(
           userId,
@@ -628,9 +636,6 @@ export default function AppContent() {
       } finally {
         if (cloudHydratingUserId.current === userId) {
           cloudHydratingUserId.current = null;
-        }
-        if (isActive) {
-          setIsCloudLoading(false);
         }
       }
     }
@@ -2283,7 +2288,11 @@ export default function AppContent() {
     );
   }
 
-  if (!isReady || (isCloudLoading && currentUser)) {
+  // Only the initial local startup should block the app. Cloud hydration can
+  // take longer on a real device, so keep the cached app usable while it
+  // refreshes in the background instead of turning a slow request into an
+  // indefinite launch screen.
+  if (!isReady) {
     return <WordSyncLoadingScreen onLayout={hideNativeSplash} />;
   }
 

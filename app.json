@@ -60,7 +60,7 @@
           "NSAllowsArbitraryLoads": false
         }
       },
-      "buildNumber": "26"
+      "buildNumber": "27"
     },
     "android": {
       "package": "com.lecoffeeconfit.wordwiz",
