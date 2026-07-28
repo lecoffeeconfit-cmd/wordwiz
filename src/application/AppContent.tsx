@@ -2718,9 +2718,9 @@ async function clearLegacyLearningData() {
 
 function WordSyncLoadingScreen({ onLayout }: { onLayout: () => void }) {
   return (
-    <SafeAreaView style={styles.wordSyncLoadingScreen} onLayout={onLayout}>
-      <Ionicons name="sparkles" size={48} color={COLORS.blue} />
-      <Text style={styles.wordSyncLoadingTitle}>Getting your words ready...</Text>
+    <SafeAreaView style={styles.loadingScreen} onLayout={onLayout}>
+      <Ionicons name="sparkles" size={34} color={COLORS.purpleDark} />
+      <Text style={styles.loadingTitle}>Getting your words ready...</Text>
     </SafeAreaView>
   );
 }

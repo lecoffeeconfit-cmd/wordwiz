@@ -81,20 +81,6 @@ export const styles = StyleSheet.create({
     lineHeight: 22,
     textAlign: 'center',
   },
-  wordSyncLoadingScreen: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: COLORS.white,
-  },
-  wordSyncLoadingTitle: {
-    marginTop: 28,
-    color: COLORS.ink,
-    fontSize: 29,
-    fontWeight: '700',
-    letterSpacing: -0.45,
-    textAlign: 'center',
-  },
   appNotice: {
     marginHorizontal: 20,
     marginTop: 8,
