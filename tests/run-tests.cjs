@@ -871,7 +871,7 @@ test('quiz builder creates answer options for up to ten words', () => {
   });
 });
 
-test('Omega Test covers every eligible word with varied prompts and strict recall', () => {
+test('Omega Test covers every eligible word without forcing typed recall from vague clues', () => {
   const words = [
     makeWord('omega-a', 'Avid', 'Very eager or enthusiastic.'),
     makeWord('omega-b', 'Brisk', 'Quick and energetic.'),
@@ -890,16 +890,11 @@ test('Omega Test covers every eligible word with varied prompts and strict recal
   ['omega-a', 'omega-b'].forEach((wordId) => {
     const wordQuestions = questions.filter((question) => question.word.id === wordId);
     assert.equal(wordQuestions.length, 2);
-    assert.ok(wordQuestions.some((question) => question.mode === 'typed-word'));
     assert.ok(
-      wordQuestions.some(
-        (question) => question.mode !== 'typed-word' && question.options.length >= 2,
-      ),
+      wordQuestions.every((question) => question.options.length >= 2),
     );
   });
-  questions
-    .filter((question) => question.mode === 'typed-word')
-    .forEach((question) => assert.equal(question.strictSpelling, true));
+  assert.equal(questions.filter((question) => question.mode === 'typed-word').length, 0);
 });
 
 test('Omega Test stays playable with a one-word library', () => {
@@ -908,11 +903,9 @@ test('Omega Test stays playable with a one-word library', () => {
 
   assert.equal(questions.length, 2);
   assert.equal(questions.filter((question) => question.word.id === word.id).length, 2);
-  assert.ok(questions.some((question) => question.mode === 'typed-word'));
-  const recognitionQuestion = questions.find((question) => question.mode !== 'typed-word');
-  assert.ok(recognitionQuestion);
-  assert.ok(recognitionQuestion.options.includes(recognitionQuestion.answer));
-  assert.ok(recognitionQuestion.options.length >= 2);
+  assert.ok(questions.every((question) => question.mode !== 'typed-word'));
+  assert.ok(questions.every((question) => question.options.includes(question.answer)));
+  assert.ok(questions.every((question) => question.options.length >= 2));
 });
 
 test('Omega Test pairs strict recall with the strongest available prompt types', () => {
@@ -947,7 +940,12 @@ test('Omega Test pairs strict recall with the strongest available prompt types',
   assert.ok(
     questions
       .filter((question) => question.mode === 'typed-word')
-      .every((question) => question.strictSpelling),
+      .every((question) => {
+        const letterCount = Array.from(question.answer).filter(
+          (character) => /\p{L}/u.test(character),
+        ).length;
+        return question.strictSpelling && question.answerLetterCount === letterCount;
+      }),
   );
 });
 
@@ -981,6 +979,88 @@ test('Omega Test unlocks again seven days after the most recent assessment', () 
   );
 });
 
+test('a saved Omega Test starts its weekly timer while remaining resumable', () => {
+  const startedAt = '2026-07-01T12:00:00.000Z';
+  const startedAtMs = Date.parse(startedAt);
+  const analytics = { quizHistory: [], cardHistory: [] };
+
+  assert.equal(
+    quiz.getOmegaTestStatus(analytics, startedAtMs + 60_000, startedAt).available,
+    false,
+  );
+  assert.equal(
+    quiz.getOmegaTestStatus(
+      analytics,
+      startedAtMs + 7 * 24 * 60 * 60 * 1000,
+      startedAt,
+    ).available,
+    true,
+  );
+});
+
+test('advanced quizzes can vary only aligned dictionary definition phrasing', () => {
+  const word = {
+    ...makeWord(
+      'definition-variant',
+      'Avid',
+      'Showing eager interest in something important.',
+    ),
+    simpleDefinition: 'Very eager and interested.',
+    definitionVariants: [
+      {
+        text: 'Marked by eager interest and enthusiasm.',
+        source: 'Wiktionary',
+        partOfSpeech: 'adjective',
+      },
+      {
+        text: 'A small river flowing into a larger one.',
+        source: 'Dictionary API',
+        partOfSpeech: 'noun',
+      },
+    ],
+  };
+
+  assert.equal(quiz.getDefinitionVariantForQuiz(word, 'none'), null);
+  assert.equal(
+    quiz.getDefinitionVariantForQuiz(word, 'full', 0),
+    'Marked by eager interest and enthusiasm.',
+  );
+  const standardVariantCount = Array.from({ length: 25 }, (_, offset) =>
+    quiz.getDefinitionVariantForQuiz(word, 'light', offset),
+  ).filter(Boolean).length;
+  assert.ok(standardVariantCount > 0);
+  assert.ok(standardVariantCount < 25);
+});
+
+test('ended-early Omega Tests are retained for stats and start the weekly cooldown', () => {
+  const endedAt = '2026-07-10T12:00:00.000Z';
+  const analytics = {
+    quizHistory: [],
+    omegaTestHistory: [{
+      id: 'omega-ended-early',
+      date: '2026-07-10',
+      score: 2,
+      total: 10,
+      durationSeconds: 75,
+      completed: false,
+      completedAt: endedAt,
+      answers: [{
+        wordId: 'omega-a',
+        correct: true,
+        sessionMode: 'omega-test',
+        attemptStatus: 'incomplete',
+      }],
+    }],
+    cardHistory: [],
+  };
+
+  assert.equal(quiz.getOmegaTestAttempts(analytics).length, 1);
+  assert.equal(
+    quiz.getOmegaTestStatus(analytics, Date.parse(endedAt) + 60_000).available,
+    false,
+  );
+});
+
 test('quick, hard, and ultra quiz profiles build the requested retrieval challenge', () => {
   const words = [
     makeWord('quick-a', 'Avid', 'Very eager or enthusiastic.'),
@@ -1001,14 +1081,14 @@ test('quick, hard, and ultra quiz profiles build the requested retrieval challen
   });
 
   assert.equal(quick.length, 20);
-  assert.ok(hard.filter((question) => question.mode === 'typed-word').length >= 2);
+  assert.equal(hard.filter((question) => question.mode === 'typed-word').length, 0);
   assert.ok(
     hard
       .filter((question) => question.mode === 'typed-word')
       .every((question) => question.strictSpelling),
   );
-  assert.ok(ultra.every((question) => question.mode === 'typed-word'));
-  assert.ok(ultra.every((question) => question.strictSpelling));
+  assert.ok(ultra.every((question) => question.mode !== 'typed-word'));
+  assert.ok(ultra.every((question) => question.options.includes(question.answer)));
   assert.equal(
     quiz.evaluateQuizAnswer('Avid', 'Avdi', 'typed-word', true).correct,
     false,
@@ -1134,7 +1214,8 @@ test('hard and ultra prompts use fuller clues and plausible nearby distractors',
     },
   ).find((question) => question.word.id === ameliorate.id);
 
-  assert.equal(ultraQuestion.displayText, ameliorate.definition);
+  assert.ok(ultraQuestion.displayText.includes(ameliorate.definition));
+  assert.ok(ultraQuestion.displayText.includes('Part of speech: verb'));
   assert.ok(definitionQuestion.options.includes(attenuate.simpleDefinition));
   assert.ok(definitionQuestion.options.includes(alleviate.simpleDefinition));
   assert.ok(!easyDefinitionQuestion.options.includes(attenuate.simpleDefinition));
@@ -1271,6 +1352,40 @@ test('contextual quiz formats use saved examples and meaningful synonym choices'
   assert.match(completionQuestion.displayText, /_____/);
   assert.ok(completionQuestion.options.includes(completionQuestion.answer));
   assert.equal(completionQuestion.difficulty, 'fill-in-options');
+  const completionLetterCount = Array.from(completionQuestion.answer).filter(
+    (character) => /\p{L}/u.test(character),
+  ).length;
+  assert.equal(completionQuestion.answerLetterCount, completionLetterCount);
+});
+
+test('sentence completion is skipped when saved choices are near-synonyms', () => {
+  const words = [
+    {
+      ...makeWord('avid', 'Avid', 'Showing eager interest and enthusiasm.'),
+      example: 'Her avid reading continued well after bedtime.',
+      synonyms: ['eager', 'keen'],
+    },
+    {
+      ...makeWord('eager', 'Eager', 'Showing eager interest and enthusiasm.'),
+      example: 'He was eager to start the new project.',
+      synonyms: ['avid', 'keen'],
+    },
+    {
+      ...makeWord('keen', 'Keen', 'Showing eager interest and enthusiasm.'),
+      example: 'They had a keen interest in the result.',
+      synonyms: ['avid', 'eager'],
+    },
+  ];
+  const questions = quiz.buildQuiz(
+    words,
+    [],
+    Object.fromEntries(words.map((word) => [word.id, 70])),
+    words.map((word) => word.id),
+  );
+
+  assert.ok(
+    questions.every((question) => question.mode !== 'sentence-completion'),
+  );
 });
 
 test('quiz quality gate rejects placeholder examples instead of making weak context questions', () => {
@@ -1307,7 +1422,7 @@ test('quiz questions become more demanding as word mastery grows', () => {
   assert.equal(quiz.getQuestionModeForMastery(85), 'typed-word');
 });
 
-test('strong-word quizzes rotate formats and cap typed recall', () => {
+test('strong-word quizzes avoid typed recall when their clues are generic', () => {
   const words = Array.from({ length: 10 }, (_, index) =>
     makeWord(`strong-${index}`, `Strong${index}`, `Definition ${index}`, 0),
   );
@@ -1320,8 +1435,7 @@ test('strong-word quizzes rotate formats and cap typed recall', () => {
   const modes = questions.map((question) => question.mode);
   const typedCount = modes.filter((mode) => mode === 'typed-word').length;
 
-  assert.ok(typedCount >= 3);
-  assert.ok(typedCount <= 4);
+  assert.equal(typedCount, 0);
   modes.forEach((mode, index) => {
     assert.notDeepEqual(modes.slice(index, index + 3), [mode, mode, mode]);
   });
@@ -1346,7 +1460,95 @@ test('question type preferences can disable formats and prioritize a chosen form
   );
 
   assert.equal(questions.length, words.length);
-  assert.ok(questions.every((question) => question.mode === 'typed-word'));
+  assert.ok(questions.every((question) => question.mode !== 'typed-word'));
+});
+
+test('question type preferences can run a true-false-only quiz', () => {
+  const words = Array.from({ length: 5 }, (_, index) =>
+    makeWord(`true-false-${index}`, `Statement${index}`, `Definition ${index}`, 0),
+  );
+  const questionTypePreferences = Object.fromEntries(
+    quiz.QUIZ_QUESTION_MODES.map((mode) => [mode, {
+      enabled: mode === 'true-false',
+      frequency: 'normal',
+    }]),
+  );
+  const questions = quiz.buildQuiz(
+    words,
+    [],
+    Object.fromEntries(words.map((word) => [word.id, 40])),
+    [],
+    { questionTypePreferences },
+  );
+
+  assert.equal(questions.length, words.length);
+  assert.ok(questions.every((question) => question.mode === 'true-false'));
+});
+
+test('new quizzes avoid the most recently used format for a word when another is fair', () => {
+  const words = Array.from({ length: 4 }, (_, index) =>
+    makeWord(`rotation-${index}`, `Rotation${index}`, `A distinct learning definition ${index}.`, 0),
+  );
+  const recentAttempts = [{
+    id: 'recent-format',
+    date: '2026-07-28',
+    score: 4,
+    total: 4,
+    durationSeconds: 60,
+    completedAt: '2026-07-28T12:00:00.000Z',
+    answers: words.map((word) => ({
+      wordId: word.id,
+      correct: true,
+      questionMode: 'word-to-definition',
+      answeredAt: '2026-07-28T12:00:00.000Z',
+    })),
+  }];
+  const questions = quiz.buildQuiz(words, recentAttempts, {}, []);
+
+  assert.equal(questions.length, words.length);
+  assert.ok(questions.every((question) => question.mode !== 'word-to-definition'));
+});
+
+test('Omega rotates a word into another valid recognition format on a later attempt', () => {
+  const words = [
+    {
+      ...makeWord('omega-rotate-a', 'Avid', 'Very eager or enthusiastic about an activity.', 0),
+      example: 'The avid reader finished a novel every few days.',
+      synonyms: ['eager', 'enthusiastic'],
+    },
+    {
+      ...makeWord('omega-rotate-b', 'Lucid', 'Clear and easy to understand.', 0),
+      example: 'Her lucid explanation made the difficult topic manageable.',
+      synonyms: ['clear', 'coherent'],
+    },
+    {
+      ...makeWord('omega-rotate-c', 'Tacit', 'Understood without being stated openly.', 0),
+      example: 'They reached a tacit agreement without saying it aloud.',
+      synonyms: ['unspoken', 'implicit'],
+    },
+  ];
+  const first = quiz.buildOmegaTest(words, []);
+  const firstMode = first.find(
+    (question) => question.word.id === 'omega-rotate-a' && question.mode !== 'typed-word',
+  ).mode;
+  const laterAttempt = [{
+    id: 'omega-rotation-history',
+    date: '2026-07-28',
+    score: 2,
+    total: 2,
+    durationSeconds: 60,
+    completedAt: '2026-07-28T12:00:00.000Z',
+    answers: [
+      { wordId: 'omega-rotate-a', correct: true, sessionMode: 'omega-test' },
+      { wordId: 'omega-rotate-a', correct: true, sessionMode: 'omega-test' },
+    ],
+  }];
+  const later = quiz.buildOmegaTest(words, laterAttempt);
+  const laterMode = later.find(
+    (question) => question.word.id === 'omega-rotate-a' && question.mode !== 'typed-word',
+  ).mode;
+
+  assert.notEqual(laterMode, firstMode);
 });
 
 test('typed recall hints progress without exposing the full answer', () => {
@@ -1416,6 +1618,10 @@ test('direct recall prompts do not reveal the answer or an obvious word form', (
 test('typed recall accepts close spellings but flags the correction', () => {
   assert.deepEqual(
     quiz.evaluateQuizAnswer('Compensatory', 'Compensitory', 'typed-word'),
+    { correct: true, hasSpellingNote: true },
+  );
+  assert.deepEqual(
+    quiz.evaluateQuizAnswer('Compensatory', 'Compensitory', 'sentence-completion'),
     { correct: true, hasSpellingNote: true },
   );
   assert.deepEqual(
@@ -1806,7 +2012,7 @@ test('quiz prompts use a complete definition when a saved summary is cut off', (
   };
   const [question] = quiz.buildQuiz([word], [], { [word.id]: 85 });
   assert.equal(question.mode, 'typed-word');
-  assert.equal(question.displayText, definition);
+  assert.ok(question.displayText.includes(definition));
 });
 
 test('durable mastery needs repeated, delayed quiz evidence', () => {
@@ -1837,6 +2043,69 @@ test('durable mastery needs repeated, delayed quiz evidence', () => {
     analytics,
   )[0];
   assert.equal(word.mastery.masteryPercent, 21);
+});
+
+test('long-term retention requires separate-day evidence and a passed seven-day stage', () => {
+  const analytics = { cardHistory: [], quizHistory: [] };
+  const retained = {
+    ...makeWord('long-term-retained', 'Steadfast', 'Firmly loyal.', 0),
+    mastery: {
+      masteryPercent: 82, totalCorrect: 5, totalIncorrect: 0, correctStreak: 4,
+      successfulReviewDays: ['2026-01-01', '2026-01-04', '2026-01-11'],
+      recentResults: [], reviewStage: 5, lastReviewResult: 'correct',
+    },
+  };
+  const developing = {
+    ...makeWord('long-term-developing', 'Emergent', 'Coming into view.', 0),
+    mastery: {
+      masteryPercent: 55, totalCorrect: 3, totalIncorrect: 0, correctStreak: 3,
+      successfulReviewDays: ['2026-01-01', '2026-01-04'],
+      recentResults: [], reviewStage: 4, lastReviewResult: 'correct',
+    },
+  };
+  const recentlyMissed = {
+    ...makeWord('long-term-missed', 'Transient', 'Lasting briefly.', 0),
+    mastery: {
+      masteryPercent: 72, totalCorrect: 4, totalIncorrect: 1, correctStreak: 0,
+      successfulReviewDays: ['2026-01-01', '2026-01-04', '2026-01-11'],
+      recentResults: [], reviewStage: 6, lastReviewResult: 'wrong',
+    },
+  };
+
+  assert.deepEqual(
+    learning.getLongTermRetention([retained, developing, recentlyMissed], analytics),
+    { measuredWords: 3, retainedWords: 1, developingWords: 2, percent: 33 },
+  );
+});
+
+test('word learning signal scores need repeated and spaced evidence to become strong', () => {
+  const emerging = learning.getWordLearningSignalScores({
+    masteryPercent: 0,
+    totalCorrect: 1,
+    totalIncorrect: 0,
+    correctStreak: 1,
+    successfulReviewDays: ['2026-01-01'],
+    recentResults: [],
+    reviewStage: 0,
+    directRecallCorrect: 1,
+    delayedDirectRecallCorrect: 0,
+    lastReviewResult: 'correct',
+  });
+  const established = learning.getWordLearningSignalScores({
+    masteryPercent: 100,
+    totalCorrect: 8,
+    totalIncorrect: 0,
+    correctStreak: 8,
+    successfulReviewDays: ['2026-01-01', '2026-01-04', '2026-01-11'],
+    recentResults: [],
+    reviewStage: 5,
+    directRecallCorrect: 4,
+    delayedDirectRecallCorrect: 2,
+    lastReviewResult: 'correct',
+  });
+
+  assert.deepEqual(emerging, { recall: 44, retention: 22, longTermRetention: 21 });
+  assert.deepEqual(established, { recall: 100, retention: 100, longTermRetention: 100 });
 });
 
 test('delayed correct recall earns a retention bonus while mistakes reduce mastery', () => {
@@ -2154,7 +2423,7 @@ test('category practice expands small groups with distinct formats without extra
     makeWord('four', 'Four', 'Fourth.', 0),
   ];
   const quizSets = [
-    [oneWord, 3],
+    [oneWord, 2],
     [twoWords, 4],
     [threeWords, 6],
   ];
@@ -2229,6 +2498,39 @@ test('standard quizzes give small collections varied prompts for every word', ()
   );
 });
 
+test('next-quiz words lead every quiz and return to normal scheduling after practice', () => {
+  const words = [
+    makeWord('one', 'One', 'First.', 0),
+    {
+      ...makeWord('two', 'Two', 'Second.', 0),
+      mastery: { reviewNext: true, reviewNextAt: '2026-01-02T09:00:00.000Z' },
+    },
+    makeWord('three', 'Three', 'Third.', 0),
+    {
+      ...makeWord('four', 'Four', 'Fourth.', 0),
+      mastery: { reviewNext: true, reviewNextAt: '2026-01-01T09:00:00.000Z' },
+    },
+  ];
+  const questions = quiz.buildQuiz(words, [], {});
+  assert.deepEqual(
+    questions.slice(0, 2).map((question) => question.word.id),
+    ['four', 'two'],
+  );
+
+  const [practiced] = learning.applyQuizMastery(
+    [words[1]],
+    [{
+      wordId: 'two',
+      correct: true,
+      difficulty: 'multiple-choice',
+      answeredAt: '2026-01-02T10:00:00.000Z',
+    }],
+    { cardHistory: [], quizHistory: [] },
+  );
+  assert.equal(practiced.mastery.reviewNext, false);
+  assert.equal(practiced.mastery.reviewNextAt, undefined);
+});
+
 test('flagged words remain ordinary words for mastery and small-group practice', () => {
   const flaggedWord = {
     ...makeWord('flagged', 'Flagged', 'Marked for extra study.', 0),
@@ -2236,7 +2538,7 @@ test('flagged words remain ordinary words for mastery and small-group practice',
     flaggedAt: '2026-01-01T09:00:00.000Z',
   };
   const questions = quiz.buildCategoryPracticeQuiz([flaggedWord], [], {});
-  assert.equal(questions.length, 3);
+  assert.equal(questions.length, 2);
 
   const updatedWord = learning.applyQuizMastery(
     [flaggedWord],
@@ -2351,6 +2653,35 @@ test('harder quiz evidence earns more mastery than recognition', () => {
   assert.equal(recall.mastery.masteryPercent, 10);
 });
 
+test('question types contribute mastery in proportion to retrieval strength', () => {
+  const modes = [
+    ['true-false', 2],
+    ['word-to-definition', 3],
+    ['closest-synonym', 4],
+    ['sentence-usage', 5],
+    ['definition-to-word', 7],
+    ['sentence-completion', 8],
+    ['typed-word', 10],
+  ];
+
+  modes.forEach(([questionMode, expectedMastery], index) => {
+    const word = makeWord(`evidence-${index}`, `Word${index}`, 'A useful definition.', 0);
+    const [updatedWord] = learning.applyQuizMastery(
+      [word],
+      [{
+        wordId: word.id,
+        correct: true,
+        questionMode,
+        difficulty: 'multiple-choice',
+        answeredAt: '2026-01-01T10:00:00.000Z',
+      }],
+      { cardHistory: [], quizHistory: [] },
+    );
+
+    assert.equal(updatedWord.mastery.masteryPercent, expectedMastery);
+  });
+});
+
 test('quiz builder avoids recently quizzed words when enough alternatives exist', () => {
   const words = [
     makeWord('1', 'Alpha', 'First'),
@@ -2441,11 +2772,18 @@ test('quiz attempt labels keep the first quiz of a day as daily', () => {
     date: '2026-01-02',
     completedAt: '2026-01-02T09:00:00.000Z',
   };
-  const history = [practiceAttempt, nextDailyAttempt, dailyAttempt];
+  const omegaAttempt = {
+    ...dailyAttempt,
+    id: 'omega-1',
+    completedAt: '2026-01-01T08:00:00.000Z',
+    answers: [{ wordId: 'word-1', correct: true, sessionMode: 'omega-test' }],
+  };
+  const history = [practiceAttempt, nextDailyAttempt, omegaAttempt, dailyAttempt];
 
   assert.equal(learning.getQuizAttemptKind(dailyAttempt, history), 'daily');
   assert.equal(learning.getQuizAttemptKind(practiceAttempt, history), 'practice');
   assert.equal(learning.getQuizAttemptKind(nextDailyAttempt, history), 'daily');
+  assert.equal(learning.getQuizAttemptKind(omegaAttempt, history), 'omega-test');
 });
 
 test('review priority favors missed words over ordinary new words', () => {
@@ -2678,4 +3016,47 @@ sample
 
   assert.ok(etymology.includes('1754'));
   assert.ok(etymology.includes('Middle English'));
+});
+
+test('admin dashboard keeps privileged user controls behind server-side access checks', () => {
+  const migration = fs.readFileSync(
+    path.join(projectRoot, 'supabase/admin_dashboard_migration.sql'),
+    'utf8',
+  );
+  const adminFunction = fs.readFileSync(
+    path.join(projectRoot, 'supabase/functions/admin-dashboard/index.ts'),
+    'utf8',
+  );
+  const adminClient = fs.readFileSync(
+    path.join(projectRoot, 'src/services/admin.ts'),
+    'utf8',
+  );
+  const adminPermissions = fs.readFileSync(
+    path.join(projectRoot, 'supabase/admin_dashboard_permissions.sql'),
+    'utf8',
+  );
+  const adminReportingRange = fs.readFileSync(
+    path.join(projectRoot, 'supabase/admin_dashboard_reporting_range.sql'),
+    'utf8',
+  );
+
+  assert.match(migration, /create table if not exists public\.app_admins/i);
+  assert.match(migration, /enable row level security/i);
+  assert.match(migration, /is_my_admin/i);
+  assert.match(migration, /screen_time_sessions/i);
+  assert.match(migration, /record_my_screen_time/i);
+  assert.match(adminFunction, /auth\.getUser\(\)/);
+  assert.match(adminFunction, /rpc\(\s*'is_my_admin'/);
+  assert.match(adminFunction, /SUPABASE_SECRET_KEYS/);
+  assert.match(adminFunction, /SUPABASE_SERVICE_ROLE_KEY/);
+  assert.match(adminFunction, /USER_DIRECTORY_PAGE_SIZE/);
+  assert.match(adminFunction, /listUsers\(\{ page, perPage: USER_DIRECTORY_PAGE_SIZE \}\)/);
+  assert.match(adminFunction, /p_range: reportingRange/);
+  assert.match(adminFunction, /deleteUser\(targetUserId, false\)/);
+  assert.doesNotMatch(adminClient, /SERVICE_ROLE/i);
+  assert.match(adminPermissions, /grant select, insert, update on table\s+public\.word_addition_usage/i);
+  assert.match(adminPermissions, /to service_role/i);
+  assert.match(adminReportingRange, /admin_dashboard_metrics\(p_range text default '30d'\)/i);
+  assert.match(adminReportingRange, /when 'today'/i);
+  assert.match(adminReportingRange, /when 'all'/i);
 });

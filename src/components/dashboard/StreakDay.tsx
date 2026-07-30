@@ -22,7 +22,7 @@ export function StreakDay({
         <Ionicons
           name={day.active ? 'flame' : 'ellipse'}
           size={day.active ? 16 : 8}
-          color={day.active ? COLORS.white : '#C9D2DB'}
+          color={day.active ? '#FFBC4E' : '#C9D2DB'}
         />
       </View>
       <Text style={[styles.streakDayLabel, day.today && styles.streakDayToday]}>

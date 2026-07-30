@@ -7,7 +7,7 @@ import { styles } from '../styles';
 import { buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, formatWordAddedDate, formatWordFlaggedDate, getCompleteFlashcardDefinition, getDayKey, getNewStudyWords, getRecentDays, getStreakMessage, getStreakWeek, getStudySets, getWordLearningContexts, getWordMastery, getWordMasteryCategoryForWord, isPersonalLibraryWord, NEW_STUDY_GROUP, shuffle, sortWordsAlphabetically, WORD_MASTERY_CATEGORIES, type WordMasteryCategoryId } from '../utils';
 import { DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, ProgressFill, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, SpeakButton, SpeakDefinitionButton, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 
-type CardsStudyGroupId = WordMasteryCategoryId | 'new' | 'flagged' | `set:${string}`;
+type CardsStudyGroupId = WordMasteryCategoryId | 'new' | 'flagged' | 'sets' | `set:${string}`;
 
 type CardsStudyGroup = {
   id: CardsStudyGroupId;
@@ -105,6 +105,10 @@ export function CardsScreen({
     [analytics, personalWords],
   );
   const studySets = useMemo(() => getStudySets(words), [words]);
+  const allStudySetWords = useMemo(
+    () => words.filter((word) => (word.mastery?.studySets?.length ?? 0) > 0),
+    [words],
+  );
   const filteredWords = useMemo(
     () =>
       selectedCategory === 'all'
@@ -115,6 +119,8 @@ export function CardsScreen({
           ? personalWords.filter((word) =>
               (flaggedSessionIds ?? personalWords.filter((item) => item.isFlagged).map((item) => item.id)).includes(word.id),
             )
+        : selectedCategory === 'sets'
+          ? allStudySetWords
         : selectedCategory.startsWith('set:')
           ? words.filter((word) =>
               word.mastery?.studySets?.some(
@@ -128,7 +134,7 @@ export function CardsScreen({
                 item.categoryId === selectedCategory,
             )
             .map((item) => item.word),
-    [flaggedSessionIds, newWords, personalWords, selectedCategory, wordMastery, words],
+    [allStudySetWords, flaggedSessionIds, newWords, personalWords, selectedCategory, wordMastery, words],
   );
   const studyGroups: CardsStudyGroup[] = [
     WORD_MASTERY_CATEGORIES[0],
@@ -144,8 +150,16 @@ export function CardsScreen({
     color: COLORS.blue,
     pale: COLORS.bluePale,
   }));
+  const allStudySetsGroup: CardsStudyGroup = {
+    id: 'sets',
+    label: 'My Sets',
+    shortLabel: 'My Sets',
+    icon: 'layers',
+    color: COLORS.blue,
+    pale: COLORS.bluePale,
+  };
   const selectedCategoryDetails =
-    [...studyGroups, ...studySetGroups].find(
+    [...studyGroups, allStudySetsGroup, ...studySetGroups].find(
       (category) => category.id === selectedCategory,
     ) ?? studyGroups[0];
   const alphabeticalWords = useMemo(
@@ -308,10 +322,28 @@ export function CardsScreen({
 
   const studySetSelector = (
     <View style={styles.practiceStudySetsRow}>
-      <View style={styles.practiceStudySetsHeading}>
-        <Ionicons name="layers-outline" size={15} color={COLORS.blue} />
-        <Text style={styles.practiceStudySetsTitle}>MY SETS</Text>
-      </View>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Practice every word in My Sets"
+        accessibilityHint="Combines every curated and personal study set into one practice deck."
+        accessibilityState={{ selected: selectedCategory === 'sets' }}
+        disabled={studySets.length === 0}
+        onPress={() => {
+          setSelectedCategory((current) => current === 'sets' ? 'all' : 'sets');
+          setFlaggedSessionIds(null);
+        }}
+        style={({ pressed }) => [
+          styles.practiceStudySetsHeading,
+          selectedCategory === 'sets' && styles.practiceStudySetsHeadingActive,
+          pressed && studySets.length > 0 && styles.pressed,
+        ]}
+      >
+        <Ionicons name="layers-outline" size={15} color={selectedCategory === 'sets' ? COLORS.white : COLORS.blue} />
+        <Text style={[
+          styles.practiceStudySetsTitle,
+          selectedCategory === 'sets' && styles.practiceStudySetsTitleActive,
+        ]}>MY SETS</Text>
+      </Pressable>
       {studySets.length > 0 ? (
         <ScrollView
           horizontal

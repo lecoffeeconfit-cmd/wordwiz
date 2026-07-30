@@ -1,4 +1,4 @@
-import type { StudySetMembership, Word } from '../types';
+import type { DefinitionVariant, StudySetMembership, Word } from '../types';
 import { supabase } from './supabase';
 
 export const FREE_WORD_LIMIT = 10;
@@ -283,6 +283,7 @@ type WordRow = {
   term: string;
   definition: string;
   simple_definition: string | null;
+  definition_variants?: DefinitionVariant[] | null;
   example: string;
   context_examples?: string[] | null;
   part_of_speech: string | null;
@@ -306,6 +307,7 @@ function mapWordRow(row: WordRow): Word {
     term: row.term,
     definition: row.definition,
     simpleDefinition: row.simple_definition ?? undefined,
+    definitionVariants: row.definition_variants ?? [],
     example: row.example,
     contextExamples: row.context_examples ?? [],
     partOfSpeech: row.part_of_speech ?? undefined,
@@ -330,6 +332,7 @@ function toWordPayload(word: Word) {
     term: word.term,
     definition: word.definition,
     simple_definition: word.simpleDefinition ?? null,
+    definition_variants: word.definitionVariants ?? [],
     example: word.example,
     context_examples: word.contextExamples ?? [],
     part_of_speech: word.partOfSpeech ?? null,

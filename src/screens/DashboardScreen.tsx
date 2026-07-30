@@ -2,13 +2,14 @@ import { Ionicons } from '@expo/vector-icons';
 import { Canvas as SkiaCanvas, Circle as SkiaCircle, Group as SkiaGroup, Path as SkiaPath, Skia, vec } from '@shopify/react-native-skia';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { LayoutChangeEvent } from 'react-native';
-import { ActivityIndicator, Alert, Animated, Easing, FlatList, Image, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, Animated, Easing, FlatList, Image, Modal, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { COLORS } from '../constants/theme';
 import type { AnalyticsData, LegalPage, QuizAnswer, QuizDifficultyPreference, QuizPreferences, QuizProgress, QuizQuestion, QuizQuestionMode, ReminderSettings, SortMode, TimeBasedLearningSettings, Word } from '../types';
 import type { QuizFeedbackSummary } from '../utils';
 import type { AuthUser } from '../types';
+import type { PausedQuizSession } from './QuizScreen';
 import { styles } from '../styles';
-import { DEFAULT_TIME_BASED_LEARNING_SETTINGS, MASTERY_LEVELS, buildAchievements, buildQuiz, calculateStreakStats, FLUENT_RECALL_SECONDS, formatReminderTime, formatStudyTime, getDayKey, getDueReviewWords, getHeroProgressColor, getMasteryLevel, getMasteryLevelProgress, getNextMasteryLevel, getOmegaTestAttempts, getProgressColor, getProgressPaleColor, getQuizAttemptKind, getQuizFeedbackByWord, getQuizFeedbackSummary, getQuizRecallPaceByQuestionType, getQuizRecallPaceByWord, getQuizResponseSignalSummary, getQuizRetrievalProfile, getRecentDays, getRecentStreakLengths, getStreakMessage, getStreakMilestone, getStreakWeek, getWordMastery, getWordMasteryCategory, getWordMasteryCategoryForWord, normalizeQuestionTypePreferences, normalizeTimeBasedLearningSettings, shuffle } from '../utils';
+import { DEFAULT_TIME_BASED_LEARNING_SETTINGS, MASTERY_LEVELS, buildAchievements, buildQuiz, calculateStreakStats, FLUENT_RECALL_SECONDS, formatReminderTime, formatStudyTime, getDayKey, getDueReviewWords, getHeroProgressColor, getLongTermRetention, getMasteryLevel, getMasteryLevelProgress, getNextMasteryLevel, getOmegaTestAttempts, getOmegaTestStatus, getProgressColor, getProgressPaleColor, getQuizAttemptKind, getQuizFeedbackByWord, getQuizFeedbackSummary, getQuizRecallPaceByQuestionType, getQuizRecallPaceByWord, getQuizResponseSignalSummary, getQuizRetrievalProfile, getRecentDays, getRecentStreakLengths, getStreakMessage, getStreakMilestone, getStreakWeek, getWordLearningSignalScores, getWordMastery, getWordMasteryCategory, getWordMasteryCategoryForWord, getWordMasteryProgress, isCompletedOmegaTestAttempt, normalizeQuestionTypePreferences, normalizeTimeBasedLearningSettings, shuffle } from '../utils';
 import { CompactPagination, DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, ProgressFill, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 import { LessonProgressRing } from '../components/dashboard/LessonProgressRing';
 import { useSubscription } from '../subscription/SubscriptionProvider';
@@ -32,12 +33,36 @@ const DAILY_ACTIVITY_TARGET_STUDY_SECONDS = 10 * 60;
 const QUIZ_ACCURACY_RING_SIZE = 116;
 const QUIZ_ACCURACY_RING_STROKE = 14;
 const QUIZ_ACCURACY_RING_RADIUS = (QUIZ_ACCURACY_RING_SIZE - QUIZ_ACCURACY_RING_STROKE) / 2;
-const QUIZ_DIFFICULTY_OPTIONS: { id: QuizDifficultyPreference; label: string }[] = [
-  { id: 'automatic', label: 'Auto' },
-  { id: 'easy', label: 'Easy' },
-  { id: 'standard', label: 'Standard' },
-  { id: 'hard', label: 'Hard' },
-  { id: 'ultra', label: 'Ultra' },
+const QUIZ_DIFFICULTY_OPTIONS: {
+  id: QuizDifficultyPreference;
+  label: string;
+  description: string;
+}[] = [
+  {
+    id: 'automatic',
+    label: 'Auto',
+    description: 'Adjusts each question to your current mastery of that word.',
+  },
+  {
+    id: 'easy',
+    label: 'Easy',
+    description: 'A gentler start that favors recognizing the right answer.',
+  },
+  {
+    id: 'standard',
+    label: 'Standard',
+    description: 'A balanced mix of recognition, recall, and context practice.',
+  },
+  {
+    id: 'hard',
+    label: 'Hard',
+    description: 'Leans into tougher retrieval and context questions to stretch recall.',
+  },
+  {
+    id: 'ultra',
+    label: 'Ultra',
+    description: 'The most demanding practice, with stronger recall prompts and fewer clues.',
+  },
 ];
 
 const QUESTION_TYPE_OPTIONS: {
@@ -106,9 +131,40 @@ const QUESTION_TYPE_OPTIONS: {
   },
 ];
 
+const QUESTION_MIX_PRESETS: {
+  id: 'balanced' | 'choices-and-true-false' | 'true-false-only';
+  label: string;
+  detail: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  modes: QuizQuestionMode[];
+}[] = [
+  {
+    id: 'balanced',
+    label: 'Balanced',
+    detail: 'Every question type',
+    icon: 'shuffle',
+    modes: QUESTION_TYPE_OPTIONS.map((option) => option.id),
+  },
+  {
+    id: 'choices-and-true-false',
+    label: 'Choices + T/F',
+    detail: 'Multiple choice and checks',
+    icon: 'checkmark-circle-outline',
+    modes: ['word-to-definition', 'definition-to-word', 'true-false'],
+  },
+  {
+    id: 'true-false-only',
+    label: 'True / false',
+    detail: 'One simple format',
+    icon: 'help-circle-outline',
+    modes: ['true-false'],
+  },
+];
+
 export function DashboardScreen({
   words,
   analytics,
+  pausedOmegaSession,
   timedLearningEnabled,
   timeBasedLearningSettings,
   quizPreferences,
@@ -131,11 +187,14 @@ export function DashboardScreen({
   onLogout,
   onChangePassword,
   onDeleteAccount,
+  isAdmin = false,
+  onOpenAdmin,
   onOpenOnboardingGuide,
   onOpenPlus,
 }: {
   words: Word[];
   analytics: AnalyticsData;
+  pausedOmegaSession?: PausedQuizSession | null;
   timedLearningEnabled: boolean;
   timeBasedLearningSettings: TimeBasedLearningSettings;
   quizPreferences: QuizPreferences;
@@ -158,6 +217,8 @@ export function DashboardScreen({
   onLogout: () => void;
   onChangePassword: (password: string) => Promise<boolean>;
   onDeleteAccount: () => void;
+  isAdmin?: boolean;
+  onOpenAdmin?: () => void;
   onOpenOnboardingGuide: () => void;
   onOpenPlus: () => void;
 }) {
@@ -200,12 +261,15 @@ export function DashboardScreen({
   const [achievementsExpanded, setAchievementsExpanded] = useState(false);
   const [achievementPage, setAchievementPage] = useState(0);
   const [masteryExpanded, setMasteryExpanded] = useState(false);
+  const [masteryOverviewWordId, setMasteryOverviewWordId] = useState<string | null>(null);
   const [quizTrendExpanded, setQuizTrendExpanded] = useState(false);
+  const [omegaStatsExpanded, setOmegaStatsExpanded] = useState(false);
+  const [omegaStatsNow, setOmegaStatsNow] = useState(() => Date.now());
   const [practiceEstimateExpanded, setPracticeEstimateExpanded] = useState(false);
   const [isRetrievalProgressionExpanded, setIsRetrievalProgressionExpanded] = useState(false);
   const [dueReviewsExpanded, setDueReviewsExpanded] = useState(false);
   const [dueReviewPage, setDueReviewPage] = useState(0);
-  const pendingDueReviewTap = useRef<{
+  const pendingStudyPriorityTap = useRef<{
     wordId: string;
     timeout: ReturnType<typeof setTimeout>;
   } | null>(null);
@@ -225,9 +289,21 @@ export function DashboardScreen({
   const normalizedQuestionTypePreferences = normalizeQuestionTypePreferences(
     quizPreferences.questionTypes,
   );
+  const selectedQuizDifficulty = QUIZ_DIFFICULTY_OPTIONS.find(
+    (option) => option.id === quizPreferences.difficulty,
+  ) ?? QUIZ_DIFFICULTY_OPTIONS[0];
   const enabledQuestionTypeCount = QUESTION_TYPE_OPTIONS.filter(
     (option) => normalizedQuestionTypePreferences[option.id].enabled,
   ).length;
+  const activeQuestionMixPreset = QUESTION_MIX_PRESETS.find((preset) =>
+    QUESTION_TYPE_OPTIONS.every((option) => {
+      const preference = normalizedQuestionTypePreferences[option.id];
+      return (
+        preference.enabled === preset.modes.includes(option.id) &&
+        preference.frequency === 'normal'
+      );
+    }),
+  );
   const masterSparkleScale = useRef(new Animated.Value(1)).current;
   const flaggedCountScale = useRef(new Animated.Value(1)).current;
   const streakSparkleFloat = useRef(new Animated.Value(0)).current;
@@ -236,7 +312,6 @@ export function DashboardScreen({
   const refreshTokenFloat = useRef(new Animated.Value(0)).current;
   const refreshTokenGlow = useRef(new Animated.Value(0.45)).current;
   const [recentlyUnflaggedWordIds, setRecentlyUnflaggedWordIds] = useState<string[]>([]);
-  const lastMasteryRowTapAt = useRef(0);
   const lastAchievementTapAt = useRef(0);
   const lastQuizTrendTapAt = useRef(0);
   const todayKey = getDayKey();
@@ -256,16 +331,42 @@ export function DashboardScreen({
   const hasQuizAnswers = totalQuizQuestions > 0;
   const hasNoCorrectAnswers = hasQuizAnswers && totalCorrect === 0;
   const omegaTestAttempts = getOmegaTestAttempts(analytics);
-  const omegaTestAverage = omegaTestAttempts.length
+  const pausedOmegaAnswered = pausedOmegaSession?.answers.length ?? 0;
+  const pausedOmegaAccuracy = pausedOmegaAnswered
+    ? Math.round(((pausedOmegaSession?.score ?? 0) / pausedOmegaAnswered) * 100)
+    : null;
+  const pausedOmegaStatus = getOmegaTestStatus(
+    analytics,
+    omegaStatsNow,
+    pausedOmegaSession?.startedAt,
+  );
+  const completedOmegaTestAttempts = omegaTestAttempts.filter(
+    isCompletedOmegaTestAttempt,
+  );
+  const incompleteOmegaTestAttempts = omegaTestAttempts.filter(
+    (attempt) => !isCompletedOmegaTestAttempt(attempt),
+  );
+  const latestIncompleteOmegaTest = incompleteOmegaTestAttempts[0] ?? null;
+  const latestIncompleteOmegaAnswered = latestIncompleteOmegaTest
+    ? latestIncompleteOmegaTest.answers.filter((answer) => !answer.isAttemptMarker)
+        .length
+    : 0;
+  const latestIncompleteOmegaAccuracy = latestIncompleteOmegaAnswered
     ? Math.round(
-        omegaTestAttempts.reduce(
+        ((latestIncompleteOmegaTest?.score ?? 0) / latestIncompleteOmegaAnswered) *
+          100,
+      )
+    : null;
+  const omegaTestAverage = completedOmegaTestAttempts.length
+    ? Math.round(
+        completedOmegaTestAttempts.reduce(
           (total, attempt) =>
             total + (attempt.total ? (attempt.score / attempt.total) * 100 : 0),
           0,
-        ) / omegaTestAttempts.length,
+        ) / completedOmegaTestAttempts.length,
       )
     : 0;
-  const omegaTestBest = omegaTestAttempts.reduce(
+  const omegaTestBest = completedOmegaTestAttempts.reduce(
     (best, attempt) =>
       Math.max(
         best,
@@ -275,6 +376,14 @@ export function DashboardScreen({
   );
   const flaggedWordIds = words.filter((word) => word.isFlagged).map((word) => word.id);
   const flaggedCount = flaggedWordIds.length;
+
+  useEffect(() => {
+    if (!pausedOmegaSession) return;
+
+    setOmegaStatsNow(Date.now());
+    const interval = setInterval(() => setOmegaStatsNow(Date.now()), 60_000);
+    return () => clearInterval(interval);
+  }, [pausedOmegaSession?.startedAt]);
 
   useEffect(() => {
     Animated.sequence([
@@ -423,6 +532,8 @@ export function DashboardScreen({
         ...feedback,
         term: word?.term ?? feedback.wordTerm ?? 'Saved word',
         collectionName: getCollectionName(word) ?? feedback.collectionName,
+        isSaved: Boolean(word),
+        word,
       };
     });
   const feedbackWordPageCount = Math.max(
@@ -450,6 +561,8 @@ export function DashboardScreen({
         ...pace,
         term,
         collectionName: getCollectionName(word) ?? pace.collectionName,
+        isSaved: Boolean(word),
+        word,
       };
     });
   const recallPaceWordPageCount = Math.max(
@@ -481,6 +594,7 @@ export function DashboardScreen({
     analytics,
     timeBasedLearningSettings,
   );
+  const longTermRetention = getLongTermRetention(words, analytics);
   const totalSeconds =
     analytics.quizHistory.reduce(
       (total, attempt) => total + attempt.durationSeconds,
@@ -524,11 +638,11 @@ export function DashboardScreen({
       )
     : dueReviews.slice(0, DUE_REVIEW_PREVIEW_SIZE);
 
-  function handleDueReviewPress(wordId: string) {
-    const pendingTap = pendingDueReviewTap.current;
+  function handleStudyPriorityPress(wordId: string) {
+    const pendingTap = pendingStudyPriorityTap.current;
     if (pendingTap?.wordId === wordId) {
       clearTimeout(pendingTap.timeout);
-      pendingDueReviewTap.current = null;
+      pendingStudyPriorityTap.current = null;
       onToggleWordFocus(wordId);
       return;
     }
@@ -538,19 +652,42 @@ export function DashboardScreen({
       onToggleWordReviewNext(pendingTap.wordId);
     }
 
-    pendingDueReviewTap.current = {
+    pendingStudyPriorityTap.current = {
       wordId,
       timeout: setTimeout(() => {
         onToggleWordReviewNext(wordId);
-        pendingDueReviewTap.current = null;
+        pendingStudyPriorityTap.current = null;
+      }, 250),
+    };
+  }
+
+  function handleMasteryWordPress(wordId: string) {
+    const pendingTap = pendingStudyPriorityTap.current;
+    if (pendingTap?.wordId === wordId) {
+      clearTimeout(pendingTap.timeout);
+      pendingStudyPriorityTap.current = null;
+      setMasteryOverviewWordId(wordId);
+      return;
+    }
+
+    if (pendingTap) {
+      clearTimeout(pendingTap.timeout);
+      onToggleWordReviewNext(pendingTap.wordId);
+    }
+
+    pendingStudyPriorityTap.current = {
+      wordId,
+      timeout: setTimeout(() => {
+        onToggleWordReviewNext(wordId);
+        pendingStudyPriorityTap.current = null;
       }, 250),
     };
   }
 
   useEffect(
     () => () => {
-      if (pendingDueReviewTap.current) {
-        clearTimeout(pendingDueReviewTap.current.timeout);
+      if (pendingStudyPriorityTap.current) {
+        clearTimeout(pendingStudyPriorityTap.current.timeout);
       }
     },
     [],
@@ -558,6 +695,22 @@ export function DashboardScreen({
 
   function startDueReview() {
     onReviewDue(queuedDueReviewWordIds);
+  }
+
+  function applyQuestionMixPreset(modes: QuizQuestionMode[]) {
+    onQuizPreferencesChange({
+      ...quizPreferences,
+      questionTypes: QUESTION_TYPE_OPTIONS.reduce(
+        (preferences, option) => ({
+          ...preferences,
+          [option.id]: {
+            enabled: modes.includes(option.id),
+            frequency: 'normal',
+          },
+        }),
+        {},
+      ),
+    });
   }
   const masteryPageCount = Math.max(
     1,
@@ -721,19 +874,6 @@ export function DashboardScreen({
     }
   }
 
-  const collapseMasteryListOnDoubleTap = () => {
-    if (!masteryExpanded) return;
-
-    const tappedAt = Date.now();
-    if (tappedAt - lastMasteryRowTapAt.current < 340) {
-      lastMasteryRowTapAt.current = 0;
-      setMasteryExpanded(false);
-      return;
-    }
-
-    lastMasteryRowTapAt.current = tappedAt;
-  };
-
   const collapseAchievementsOnDoubleTap = () => {
     if (!achievementsExpanded) return;
 
@@ -849,9 +989,9 @@ export function DashboardScreen({
         </Text>
       ) : (
         <>
-          {masteryExpanded ? (
-            <Text style={styles.expandedListHint}>Double-tap any word to show fewer</Text>
-          ) : null}
+          <Text style={styles.studyPriorityHint}>
+            Tap a word for your next quiz · Double-tap for its learning overview
+          </Text>
           {masteryPreview.map((item) => {
             const wordCategory = item.category;
             const isMasterWord = wordCategory.id === 'master';
@@ -859,17 +999,14 @@ export function DashboardScreen({
             return (
               <Pressable
                 key={item.word.id}
-                accessibilityRole={masteryExpanded ? 'button' : undefined}
-                accessibilityHint={
-                  masteryExpanded
-                    ? 'Double-tap twice quickly to collapse the word list'
-                    : undefined
-                }
-                disabled={!masteryExpanded}
-                onPress={collapseMasteryListOnDoubleTap}
-                style={[
+                accessibilityRole="button"
+                accessibilityLabel={`Set ${item.word.term} for your next quiz. Double-tap to open its learning overview.`}
+                accessibilityState={{ selected: item.word.mastery?.reviewNext || item.word.mastery?.focusMode }}
+                onPress={() => handleMasteryWordPress(item.word.id)}
+                style={({ pressed }) => [
                   styles.masteryRow,
                   isMasterWord && styles.masteryRowComplete,
+                  pressed && styles.pressed,
                 ]}
               >
                 <View style={styles.masteryRowTop}>
@@ -882,6 +1019,7 @@ export function DashboardScreen({
                     </Text>
                   </View>
                   <View style={styles.masteryPercentRow}>
+                    <StudyPriorityBadge word={item.word} />
                     {isMasterWord ? (
                       <Animated.View
                         style={[
@@ -972,7 +1110,12 @@ export function DashboardScreen({
     </DashboardSection>
   );
 
+  const masteryOverviewWord = masteryOverviewWordId
+    ? words.find((word) => word.id === masteryOverviewWordId) ?? null
+    : null;
+
   return (
+    <>
     <ScrollView
       style={styles.screen}
       contentContainerStyle={styles.dashboardContent}
@@ -1080,39 +1223,6 @@ export function DashboardScreen({
               ]}
             >
               <Ionicons name="sparkles" size={18} color="#E2AF2F" />
-            </Animated.View>
-            <Animated.View
-              style={[
-                styles.streakSparkleSmall,
-                {
-                  opacity: streakSparklePulse,
-                  transform: [{ translateY: Animated.multiply(streakSparkleFloat, -0.55) }],
-                },
-              ]}
-            >
-              <Ionicons name="sparkles" size={11} color="#F4C866" />
-            </Animated.View>
-            <Animated.View
-              style={[
-                styles.streakSparkleTiny,
-                {
-                  opacity: streakSparklePulse,
-                  transform: [{ translateY: Animated.multiply(streakSparkleFloat, 0.4) }],
-                },
-              ]}
-            >
-              <Ionicons name="star" size={8} color="#FFE7A1" />
-            </Animated.View>
-            <Animated.View
-              style={[
-                styles.streakSparkleGold,
-                {
-                  opacity: streakSparklePulse,
-                  transform: [{ translateY: Animated.multiply(streakSparkleFloat, -0.3) }],
-                },
-              ]}
-            >
-              <Ionicons name="sparkles" size={10} color="#E2AF2F" />
             </Animated.View>
           </View>
           <View style={styles.streakCardHeader}>
@@ -1366,14 +1476,17 @@ export function DashboardScreen({
                 pale="#EAF3FF"
               />
             </View>
-            <View style={styles.retrievalEvidenceRow}>
-              <Ionicons name="key-outline" size={17} color={COLORS.purpleDark} />
-              <Text style={styles.retrievalEvidenceText}>
-                {retrievalProfile.directRecallCorrect} answers recalled without choices · {retrievalProfile.delayedDirectRecallCorrect} still recalled a day later · {retrievalProfile.confidencePercent}% confidence
-              </Text>
-            </View>
           </>
         )}
+        <LongTermRetentionCard retention={longTermRetention} />
+        {retrievalProfile.totalAnswers ? (
+          <View style={styles.retrievalEvidenceRow}>
+            <Ionicons name="key-outline" size={17} color={COLORS.purpleDark} />
+            <Text style={styles.retrievalEvidenceText}>
+              {retrievalProfile.directRecallCorrect} answers recalled without choices · {retrievalProfile.delayedDirectRecallCorrect} still recalled a day later · {retrievalProfile.confidencePercent}% confidence
+            </Text>
+          </View>
+        ) : null}
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="How WordWiz builds retrieval"
@@ -1478,8 +1591,31 @@ export function DashboardScreen({
           </View>
         ) : (
           <View style={styles.feedbackWordList}>
+            <Text style={styles.studyPriorityHint}>
+              Tap a saved word for your next quiz · Double-tap to focus it
+            </Text>
             {feedbackWordsForPage.map((feedback) => (
-              <View key={feedback.wordId} style={styles.feedbackWordRow}>
+              <Pressable
+                key={feedback.wordId}
+                accessibilityRole={feedback.isSaved ? 'button' : undefined}
+                accessibilityLabel={
+                  feedback.isSaved
+                    ? `Set ${feedback.term} for your next quiz. Double-tap to focus it.`
+                    : undefined
+                }
+                accessibilityState={{
+                  disabled: !feedback.isSaved,
+                  selected: Boolean(feedback.word?.mastery?.reviewNext || feedback.word?.mastery?.focusMode),
+                }}
+                disabled={!feedback.isSaved}
+                onPress={() => handleStudyPriorityPress(feedback.wordId)}
+                style={({ pressed }) => [
+                  styles.feedbackWordRow,
+                  feedback.word?.mastery?.reviewNext && styles.statsWordRowQueued,
+                  feedback.word?.mastery?.focusMode && styles.statsWordRowFocused,
+                  pressed && styles.pressed,
+                ]}
+              >
                 <View style={styles.feedbackWordHeader}>
                   <View style={styles.feedbackWordTitleGroup}>
                     <Text numberOfLines={1} style={styles.feedbackWordName}>
@@ -1494,12 +1630,13 @@ export function DashboardScreen({
                       </View>
                     ) : null}
                   </View>
+                  <StudyPriorityBadge word={feedback.word} />
                   <Text style={styles.feedbackWordTotal}>
                     {feedback.total} {feedback.total === 1 ? 'check-in' : 'check-ins'}
                   </Text>
                 </View>
                 <FeedbackDistribution summary={feedback} compact />
-              </View>
+              </Pressable>
             ))}
             {feedbackWordPageCount > 1 ? (
               <CompactPagination
@@ -1578,9 +1715,15 @@ export function DashboardScreen({
           </View>
         ) : (
           <>
+            {recallPaceView === 'words' ? (
+              <Text style={styles.studyPriorityHint}>
+                Tap a saved word for your next quiz · Double-tap to focus it
+              </Text>
+            ) : null}
             <RecallPaceList
               items={recallPace}
               view={recallPaceView}
+              onStudyPriorityPress={handleStudyPriorityPress}
             />
             {recallPaceView === 'words' && recallPaceWordPageCount > 1 ? (
               <CompactPagination
@@ -1646,7 +1789,7 @@ export function DashboardScreen({
                       : `Move ${item.word.term} to the front of the next review. Double-tap to focus on it.`
                   }
                   accessibilityState={{ selected: isQueued }}
-                  onPress={() => handleDueReviewPress(item.word.id)}
+                  onPress={() => handleStudyPriorityPress(item.word.id)}
                   style={({ pressed }) => [
                     styles.dueReviewRow,
                     isQueued && styles.dueReviewRowQueued,
@@ -2305,7 +2448,7 @@ export function DashboardScreen({
           })}
         </ScrollView>
         <Text style={styles.quizPreferenceHint}>
-          Auto adapts to each word. Easy favors recognition; Hard and Ultra favor typed recall.
+          {selectedQuizDifficulty.description}
         </Text>
 
         <View style={styles.questionMixCard}>
@@ -2321,9 +2464,11 @@ export function DashboardScreen({
                 <Ionicons name="shuffle" size={18} color={COLORS.purpleDark} />
               </View>
               <View style={styles.questionMixHeaderCopy}>
-                <Text style={styles.quizPreferenceLabel}>QUESTION MIX</Text>
+                <Text style={styles.quizPreferenceLabel}>QUESTION TYPES</Text>
                 <Text style={styles.questionMixSummary}>
-                  {enabledQuestionTypeCount} types on · More appears about twice as often
+                  {activeQuestionMixPreset
+                    ? `${activeQuestionMixPreset.label} · ${enabledQuestionTypeCount} types on`
+                    : `${enabledQuestionTypeCount} types on · Custom mix`}
                 </Text>
               </View>
             </View>
@@ -2342,8 +2487,63 @@ export function DashboardScreen({
           {isQuestionMixExpanded ? (
             <>
               <Text style={styles.questionMixHint}>
-                Tap a type to see how it supports learning. Keep at least one type on; WordWiz still spaces prompts out when it can.
+                Choose a quick mix, or tailor every question type below. Your choices apply to Daily, Standard, Quick, Challenge, and Mistake Review quizzes; Omega keeps its own varied assessment mix.
               </Text>
+              <Text style={styles.questionMixPresetLabel}>QUICK MIXES</Text>
+              <View style={styles.questionMixPresetRow}>
+                {QUESTION_MIX_PRESETS.map((preset) => {
+                  const isActive = activeQuestionMixPreset?.id === preset.id;
+                  return (
+                    <Pressable
+                      key={preset.id}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Use ${preset.label} question mix`}
+                      accessibilityState={{ selected: isActive }}
+                      onPress={() => applyQuestionMixPreset(preset.modes)}
+                      style={({ pressed }) => [
+                        styles.questionMixPreset,
+                        isActive && styles.questionMixPresetActive,
+                        pressed && styles.pressed,
+                      ]}
+                    >
+                      <View
+                        style={[
+                          styles.questionMixPresetIcon,
+                          isActive && styles.questionMixPresetIconActive,
+                        ]}
+                      >
+                        <Ionicons
+                          name={preset.icon}
+                          size={15}
+                          color={isActive ? COLORS.white : COLORS.purpleDark}
+                        />
+                      </View>
+                      <View style={styles.questionMixPresetCopy}>
+                        <Text
+                          numberOfLines={1}
+                          style={[
+                            styles.questionMixPresetTitle,
+                            isActive && styles.questionMixPresetTitleActive,
+                          ]}
+                        >
+                          {preset.label}
+                        </Text>
+                        <Text
+                          numberOfLines={1}
+                          style={[
+                            styles.questionMixPresetDetail,
+                            isActive && styles.questionMixPresetDetailActive,
+                          ]}
+                        >
+                          {preset.detail}
+                        </Text>
+                      </View>
+                    </Pressable>
+                  );
+                })}
+              </View>
+              <View style={styles.questionMixDivider} />
+              <Text style={styles.questionMixPresetLabel}>CUSTOMIZE TYPES</Text>
               {QUESTION_TYPE_OPTIONS.map((option) => {
                 const preference = normalizedQuestionTypePreferences[option.id];
                 const detailVisible = expandedQuestionType === option.id;
@@ -2560,62 +2760,175 @@ export function DashboardScreen({
 
       <DashboardSection
         title="OMEGA TESTS"
-        badge={omegaTestAttempts.length ? `${omegaTestAttempts.length} taken` : 'Weekly'}
+        badge={pausedOmegaSession
+          ? 'In progress'
+          : omegaTestAttempts.length
+            ? `${omegaTestAttempts.length} attempts`
+            : 'Weekly'}
       >
-        {omegaTestAttempts.length === 0 ? (
+        {omegaTestAttempts.length === 0 && !pausedOmegaSession ? (
           <View style={styles.omegaStatsEmpty}>
             <AnimatedOmegaStatsIcon />
             <View style={styles.omegaStatsEmptyCopy}>
               <Text style={styles.omegaStatsEmptyTitle}>Your full-word assessment lives here</Text>
               <Text style={styles.omegaStatsEmptyText}>
-                Complete an Omega Test from Quiz to track every weekly result, accuracy, and time.
+                Completed results and ended-early progress will appear here. Ending early starts the weekly reset, but does not change your weekly score.
               </Text>
             </View>
           </View>
         ) : (
           <>
-            <View style={styles.omegaStatsSummaryRow}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Show Omega Test attempt history"
+              accessibilityState={{ expanded: omegaStatsExpanded }}
+              onPress={() => setOmegaStatsExpanded((expanded) => !expanded)}
+              style={({ pressed }) => [
+                styles.omegaStatsSummaryRow,
+                pressed && styles.pressed,
+              ]}
+            >
               <AnimatedOmegaStatsIcon compact />
               <View style={styles.omegaStatsMetric}>
-                <Text style={styles.omegaStatsMetricValue}>{omegaTestBest}%</Text>
+                <Text style={styles.omegaStatsMetricValue}>
+                  {completedOmegaTestAttempts.length ? `${omegaTestBest}%` : '—'}
+                </Text>
                 <Text style={styles.omegaStatsMetricLabel}>Best score</Text>
               </View>
               <View style={styles.omegaStatsMetricDivider} />
               <View style={styles.omegaStatsMetric}>
-                <Text style={styles.omegaStatsMetricValue}>{omegaTestAverage}%</Text>
+                <Text style={styles.omegaStatsMetricValue}>
+                  {completedOmegaTestAttempts.length ? `${omegaTestAverage}%` : '—'}
+                </Text>
                 <Text style={styles.omegaStatsMetricLabel}>Average</Text>
               </View>
               <View style={styles.omegaStatsMetricDivider} />
               <View style={styles.omegaStatsMetric}>
-                <Text style={styles.omegaStatsMetricValue}>{omegaTestAttempts.length}</Text>
-                <Text style={styles.omegaStatsMetricLabel}>Taken</Text>
+                <Text style={styles.omegaStatsMetricValue}>
+                  {completedOmegaTestAttempts.length}/{omegaTestAttempts.length}
+                </Text>
+                <Text style={styles.omegaStatsMetricLabel}>Finished</Text>
               </View>
-            </View>
-            <View style={styles.omegaStatsHistory}>
-              {omegaTestAttempts.map((attempt) => {
-                const percent = attempt.total
-                  ? Math.round((attempt.score / attempt.total) * 100)
-                  : 0;
-                const dateLabel = new Date(`${attempt.date}T12:00:00`).toLocaleDateString(
-                  'en-US',
-                  { month: 'short', day: 'numeric', year: 'numeric' },
-                );
-                return (
-                  <View key={attempt.id} style={styles.omegaStatsHistoryRow}>
-                    <View style={styles.omegaStatsHistoryIcon}>
-                      <Ionicons name="shield-checkmark" size={15} color={COLORS.purpleDark} />
-                    </View>
-                    <View style={styles.omegaStatsHistoryCopy}>
-                      <Text style={styles.omegaStatsHistoryTitle}>Omega Test · {dateLabel}</Text>
-                      <Text style={styles.omegaStatsHistoryText}>
-                        {attempt.score}/{attempt.total} correct · {formatStudyTime(attempt.durationSeconds)}
+              <Ionicons
+                name={omegaStatsExpanded ? 'chevron-up' : 'chevron-down'}
+                size={18}
+                color={COLORS.purpleDark}
+              />
+            </Pressable>
+            {pausedOmegaSession ? (
+              <View style={styles.omegaStatsLatestIncomplete}>
+                <View style={styles.omegaStatsLatestIncompleteIcon}>
+                  <Ionicons name="pause" size={16} color="#A36A08" />
+                </View>
+                <View style={styles.omegaStatsLatestIncompleteCopy}>
+                  <Text style={styles.omegaStatsLatestIncompleteTitle}>
+                    Omega Test saved — ready to resume
+                  </Text>
+                  <Text style={styles.omegaStatsLatestIncompleteText}>
+                    {pausedOmegaAnswered}/{pausedOmegaSession.quiz.length} questions answered
+                    {pausedOmegaAccuracy === null ? '' : ` · ${pausedOmegaAccuracy}% correct so far`}
+                    {` · ${formatStudyTime(Math.max(1, Math.round(pausedOmegaSession.quizElapsedMs / 1000)))} logged`}
+                  </Text>
+                  <Text style={styles.omegaStatsPausedTimer}>
+                    Weekly timer: {formatOmegaTimer(pausedOmegaStatus.remainingMs)}
+                  </Text>
+                </View>
+                <Text style={styles.omegaStatsLatestIncompleteState}>PAUSED</Text>
+              </View>
+            ) : null}
+            {latestIncompleteOmegaTest ? (
+              <View style={styles.omegaStatsLatestIncomplete}>
+                <View style={styles.omegaStatsLatestIncompleteIcon}>
+                  <Ionicons name="bookmark" size={16} color="#A36A08" />
+                </View>
+                <View style={styles.omegaStatsLatestIncompleteCopy}>
+                  <Text style={styles.omegaStatsLatestIncompleteTitle}>
+                    Latest Omega progress saved
+                  </Text>
+                  <Text style={styles.omegaStatsLatestIncompleteText}>
+                    {latestIncompleteOmegaAnswered}/{latestIncompleteOmegaTest.total} questions answered
+                    {latestIncompleteOmegaAccuracy === null
+                      ? ''
+                      : ` · ${latestIncompleteOmegaAccuracy}% correct so far`}
+                  </Text>
+                </View>
+                <Text style={styles.omegaStatsLatestIncompleteState}>ENDED EARLY</Text>
+              </View>
+            ) : null}
+            <Text style={styles.omegaStatsTapHint}>
+              {incompleteOmegaTestAttempts.length
+                ? `${incompleteOmegaTestAttempts.length} ended early · Tap for every attempt`
+                : 'Tap to view every completed assessment'}
+            </Text>
+            {omegaStatsExpanded ? (
+              <View style={styles.omegaStatsHistory}>
+                {omegaTestAttempts.map((attempt) => {
+                  const isComplete = isCompletedOmegaTestAttempt(attempt);
+                  const answeredQuestions = attempt.answers.filter(
+                    (answer) => !answer.isAttemptMarker,
+                  ).length;
+                  const accuracyPercent = answeredQuestions
+                    ? Math.round((attempt.score / answeredQuestions) * 100)
+                    : null;
+                  const completionPercent = attempt.total
+                    ? Math.round((answeredQuestions / attempt.total) * 100)
+                    : 0;
+                  const dateLabel = new Date(`${attempt.date}T12:00:00`).toLocaleDateString(
+                    'en-US',
+                    { month: 'short', day: 'numeric', year: 'numeric' },
+                  );
+                  return (
+                    <View
+                      key={attempt.id}
+                      style={[
+                        styles.omegaStatsHistoryRow,
+                        !isComplete && styles.omegaStatsHistoryRowIncomplete,
+                      ]}
+                    >
+                      <View style={[
+                        styles.omegaStatsHistoryIcon,
+                        !isComplete && styles.omegaStatsHistoryIconIncomplete,
+                      ]}>
+                        <Ionicons
+                          name={isComplete ? 'shield-checkmark' : 'pause-circle'}
+                          size={15}
+                          color={isComplete ? COLORS.purpleDark : '#B77906'}
+                        />
+                      </View>
+                      <View style={styles.omegaStatsHistoryCopy}>
+                        <View style={styles.omegaStatsHistoryTitleRow}>
+                          <Text style={styles.omegaStatsHistoryTitle}>Omega Test · {dateLabel}</Text>
+                          <Text style={[
+                            styles.omegaStatsAttemptState,
+                            !isComplete && styles.omegaStatsAttemptStateIncomplete,
+                          ]}>
+                            {isComplete ? 'COMPLETE' : 'ENDED EARLY'}
+                          </Text>
+                        </View>
+                        <Text style={styles.omegaStatsHistoryText}>
+                          {isComplete
+                            ? `${attempt.score}/${attempt.total} correct · ${formatStudyTime(attempt.durationSeconds)}`
+                            : `${answeredQuestions}/${attempt.total} questions · ${formatStudyTime(attempt.durationSeconds)} · weekly reset started`}
+                        </Text>
+                        {!isComplete ? (
+                          <View style={styles.omegaStatsAttemptProgressTrack}>
+                            <View
+                              style={[
+                                styles.omegaStatsAttemptProgressFill,
+                                { width: `${Math.max(0, Math.min(100, completionPercent))}%` },
+                              ]}
+                            />
+                          </View>
+                        ) : null}
+                      </View>
+                      <Text style={styles.omegaStatsHistoryScore}>
+                        {isComplete ? `${attempt.total ? Math.round((attempt.score / attempt.total) * 100) : 0}%` : accuracyPercent === null ? '—' : `${accuracyPercent}%`}
                       </Text>
                     </View>
-                    <Text style={styles.omegaStatsHistoryScore}>{percent}%</Text>
-                  </View>
-                );
-              })}
-            </View>
+                  );
+                })}
+              </View>
+            ) : null}
           </>
         )}
       </DashboardSection>
@@ -2642,7 +2955,12 @@ export function DashboardScreen({
             );
             const quizKind = getQuizAttemptKind(attempt, analytics.quizHistory);
             const isPracticeQuiz = quizKind === 'practice';
-            const trendLabel = isPracticeQuiz ? 'Practice quiz' : 'Daily quiz';
+            const isOmegaTest = quizKind === 'omega-test';
+            const trendLabel = isOmegaTest
+              ? 'Omega Test'
+              : isPracticeQuiz
+                ? 'Practice quiz'
+                : 'Daily quiz';
             const status =
               percent >= 80 ? 'Strong' : percent >= 50 ? 'Building' : 'Needs review';
             const tone = getQuizTrendTone(percent);
@@ -2669,9 +2987,19 @@ export function DashboardScreen({
                   <View style={styles.trendLabelCopy}>
                     <View style={styles.trendTitleRow}>
                       <Ionicons
-                        name={isPracticeQuiz ? 'sparkles' : 'checkmark-circle'}
+                        name={
+                          isOmegaTest
+                            ? 'shield-checkmark'
+                            : isPracticeQuiz
+                              ? 'sparkles'
+                              : 'checkmark-circle'
+                        }
                         size={14}
-                        color={isPracticeQuiz ? COLORS.purple : COLORS.greenDark}
+                        color={
+                          isOmegaTest || isPracticeQuiz
+                            ? COLORS.purple
+                            : COLORS.greenDark
+                        }
                       />
                       <Text style={styles.trendTitle}>{trendLabel}</Text>
                     </View>
@@ -2931,6 +3259,25 @@ export function DashboardScreen({
         </Pressable>
       </View>
 
+      {isAdmin && onOpenAdmin ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Open admin center"
+          onPress={onOpenAdmin}
+          style={({ pressed }) => [styles.adminDashboardCard, pressed && styles.pressed]}
+        >
+          <View style={styles.adminDashboardIcon}>
+            <Ionicons name="shield-checkmark-outline" size={22} color={COLORS.purpleDark} />
+          </View>
+          <View style={styles.adminDashboardCopy}>
+            <Text style={styles.adminDashboardLabel}>PRIVATE OPERATIONS</Text>
+            <Text style={styles.adminDashboardTitle}>Open admin center</Text>
+            <Text style={styles.adminDashboardText}>User controls and product signals.</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={19} color={COLORS.purpleDark} />
+        </Pressable>
+      ) : null}
+
       <View
         style={[
           styles.passwordSecurityCard,
@@ -3064,6 +3411,14 @@ export function DashboardScreen({
         repeated reviews. It is not a scientific assessment.
       </Text>
     </ScrollView>
+    <WordMasteryOverviewModal
+      word={masteryOverviewWord}
+      analytics={analytics}
+      onDismiss={() => setMasteryOverviewWordId(null)}
+      onToggleFocus={onToggleWordFocus}
+      onToggleReviewNext={onToggleWordReviewNext}
+    />
+    </>
   );
 }
 
@@ -3169,9 +3524,44 @@ function FeedbackDistribution({
   );
 }
 
+function StudyPriorityBadge({ word }: { word?: Word }) {
+  const isFocused = word?.mastery?.focusMode === true;
+  const isQueued = word?.mastery?.reviewNext === true;
+
+  if (!isFocused && !isQueued) return null;
+
+  return (
+    <View
+      style={[
+        styles.studyPriorityBadge,
+        isFocused
+          ? styles.studyPriorityBadgeFocused
+          : styles.studyPriorityBadgeQueued,
+      ]}
+    >
+      <Ionicons
+        name={isFocused ? 'star' : 'arrow-forward-circle'}
+        size={11}
+        color={isFocused ? '#B78300' : COLORS.purpleDark}
+      />
+      <Text
+        style={[
+          styles.studyPriorityBadgeText,
+          isFocused
+            ? styles.studyPriorityBadgeTextFocused
+            : styles.studyPriorityBadgeTextQueued,
+        ]}
+      >
+        {isFocused ? 'Focus' : 'Next'}
+      </Text>
+    </View>
+  );
+}
+
 function RecallPaceList({
   items,
   view,
+  onStudyPriorityPress,
 }: {
   items: Array<{
     key: string;
@@ -3179,12 +3569,15 @@ function RecallPaceList({
     averageSeconds: number;
     term?: string;
     collectionName?: string;
+    isSaved?: boolean;
+    word?: Word;
     fluent?: number;
     successful?: number;
     reinforcement?: number;
     incorrect?: number;
   }>;
   view: 'types' | 'words';
+  onStudyPriorityPress: (wordId: string) => void;
 }) {
   return (
     <View style={styles.recallPaceList}>
@@ -3198,8 +3591,29 @@ function RecallPaceList({
           { id: 'reinforcement', label: 'Reinforce', value: item.reinforcement ?? 0, color: COLORS.orange },
           { id: 'incorrect', label: 'Missed', value: item.incorrect ?? 0, color: COLORS.red },
         ];
+        const isInteractive = view === 'words' && item.isSaved === true;
         return (
-          <View key={item.key} style={styles.recallPaceRow}>
+          <Pressable
+            key={item.key}
+            accessibilityRole={isInteractive ? 'button' : undefined}
+            accessibilityLabel={
+              isInteractive
+                ? `Set ${label} for your next quiz. Double-tap to focus it.`
+                : undefined
+            }
+            accessibilityState={{
+              disabled: !isInteractive,
+              selected: Boolean(item.word?.mastery?.reviewNext || item.word?.mastery?.focusMode),
+            }}
+            disabled={!isInteractive}
+            onPress={() => onStudyPriorityPress(item.key)}
+            style={({ pressed }) => [
+              styles.recallPaceRow,
+              item.word?.mastery?.reviewNext && styles.statsWordRowQueued,
+              item.word?.mastery?.focusMode && styles.statsWordRowFocused,
+              pressed && styles.pressed,
+            ]}
+          >
             <View style={styles.recallPaceHeader}>
               <View style={styles.recallPaceNameGroup}>
                 <Text numberOfLines={1} style={styles.recallPaceName}>{label}</Text>
@@ -3212,6 +3626,7 @@ function RecallPaceList({
                   </View>
                 ) : null}
               </View>
+              <StudyPriorityBadge word={item.word} />
               <View style={styles.recallPaceValuePill}>
                 <Ionicons name="time-outline" size={12} color={COLORS.blue} />
                 <Text style={styles.recallPaceValue}>{formatPace(item.averageSeconds)}</Text>
@@ -3248,7 +3663,7 @@ function RecallPaceList({
             <Text style={styles.recallPaceMeta}>
               {item.answerCount} {item.answerCount === 1 ? 'response' : 'responses'}
             </Text>
-          </View>
+          </Pressable>
         );
       })}
     </View>
@@ -3334,6 +3749,277 @@ function RetrievalEvidenceCard({
       ) : null}
     </View>
   );
+}
+
+function LongTermRetentionCard({
+  retention,
+}: {
+  retention: ReturnType<typeof getLongTermRetention>;
+}) {
+  const hasEvidence = retention.measuredWords > 0;
+  const progress = hasEvidence ? retention.percent : 0;
+  const detail = !hasEvidence
+    ? 'Complete correct reviews on two separate days to begin measuring lasting retention.'
+    : retention.retainedWords > 0
+      ? `${retention.retainedWords} of ${retention.measuredWords} measured words stayed correct after a 7-day review interval.`
+      : `${retention.measuredWords} words are building toward a first successful 7-day review.`;
+
+  return (
+    <View style={styles.longTermRetentionCard}>
+      <View style={styles.longTermRetentionTop}>
+        <View style={styles.longTermRetentionIcon}>
+          <Ionicons name="calendar-outline" size={19} color={COLORS.greenDark} />
+        </View>
+        <View style={styles.longTermRetentionCopy}>
+          <Text style={styles.longTermRetentionEyebrow}>LONG-TERM RETENTION</Text>
+          <Text style={styles.longTermRetentionTitle}>
+            {hasEvidence ? 'What has stayed with you' : 'Building lasting evidence'}
+          </Text>
+        </View>
+        <Text style={styles.longTermRetentionValue}>
+          {hasEvidence ? `${progress}%` : '—'}
+        </Text>
+      </View>
+      <Text style={styles.longTermRetentionText}>{detail}</Text>
+      <View style={styles.longTermRetentionTrack}>
+        <ProgressFill
+          color={COLORS.greenDark}
+          progress={Math.max(progress, hasEvidence ? 3 : 0)}
+          radius={5}
+          style={{ width: `${Math.max(progress, hasEvidence ? 3 : 0)}%` }}
+        />
+      </View>
+      <View style={styles.longTermRetentionFooter}>
+        <Ionicons name="shield-checkmark-outline" size={14} color={COLORS.greenDark} />
+        <Text style={styles.longTermRetentionFooterText}>
+          Counts spaced success, not same-day repeats or a word whose latest review was missed.
+        </Text>
+      </View>
+    </View>
+  );
+}
+
+function WordMasteryOverviewModal({
+  word,
+  analytics,
+  onDismiss,
+  onToggleFocus,
+  onToggleReviewNext,
+}: {
+  word: Word | null;
+  analytics: AnalyticsData;
+  onDismiss: () => void;
+  onToggleFocus: (wordId: string) => void;
+  onToggleReviewNext: (wordId: string) => void;
+}) {
+  if (!word) return null;
+
+  const progress = getWordMasteryProgress(word, analytics);
+  const score = getWordMastery(word, analytics);
+  const category = getWordMasteryCategoryForWord(word, analytics);
+  const totalAnswers = progress.totalCorrect + progress.totalIncorrect;
+  const accuracy = totalAnswers
+    ? Math.round((progress.totalCorrect / totalAnswers) * 100)
+    : null;
+  const stage = Math.max(0, Math.min(7, progress.reviewStage ?? 0));
+  const nextReview = formatWordOverviewDate(progress.nextReviewAt);
+  const lastReview = formatWordOverviewDate(progress.lastReviewedAt);
+  const hasLongTermRetention =
+    stage >= 5 &&
+    progress.successfulReviewDays.length >= 3 &&
+    progress.lastReviewResult !== 'wrong';
+  const learningSignalScores = getWordLearningSignalScores(progress);
+
+  return (
+    <Modal
+      visible
+      transparent
+      animationType="slide"
+      onRequestClose={onDismiss}
+      statusBarTranslucent
+    >
+      <View style={styles.wordOverviewBackdrop}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Close word overview"
+          onPress={onDismiss}
+          style={styles.wordOverviewDismiss}
+        />
+        <View style={styles.wordOverviewSheet}>
+          <View style={styles.wordOverviewHandle} />
+          <View style={styles.wordOverviewHeader}>
+            <View style={styles.wordOverviewHeaderCopy}>
+              <Text style={styles.wordOverviewEyebrow}>WORD LEARNING OVERVIEW</Text>
+              <Text style={styles.wordOverviewTerm}>{word.term}</Text>
+              {word.partOfSpeech ? (
+                <Text style={styles.wordOverviewPartOfSpeech}>{word.partOfSpeech}</Text>
+              ) : null}
+            </View>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Close word overview"
+              onPress={onDismiss}
+              style={({ pressed }) => [styles.wordOverviewClose, pressed && styles.pressed]}
+            >
+              <Ionicons name="close" size={20} color={COLORS.ink} />
+            </Pressable>
+          </View>
+
+          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.wordOverviewContent}>
+            <View style={[styles.wordOverviewMastery, { backgroundColor: category.pale }]}>
+              <View style={styles.wordOverviewMasteryCopy}>
+                <Text style={[styles.wordOverviewMasteryLabel, { color: category.color }]}>CURRENT MASTERY</Text>
+                <Text style={styles.wordOverviewMasteryTitle}>{category.label}</Text>
+                <Text style={styles.wordOverviewMasteryText}>
+                  {word.simpleDefinition ?? word.definition}
+                </Text>
+              </View>
+              <View style={[styles.wordOverviewScoreCircle, { borderColor: category.color }]}>
+                <Text style={[styles.wordOverviewScore, { color: category.color }]}>{score}%</Text>
+              </View>
+            </View>
+
+            <View style={styles.wordOverviewStatsGrid}>
+              <WordOverviewStat icon="checkmark-circle-outline" value={String(progress.totalCorrect)} label="CORRECT" color={COLORS.greenDark} />
+              <WordOverviewStat icon="close-circle-outline" value={String(progress.totalIncorrect)} label="MISSED" color={COLORS.red} />
+              <WordOverviewStat icon="flame-outline" value={String(progress.correctStreak)} label="STREAK" color={COLORS.orange} />
+              <WordOverviewStat icon="calendar-outline" value={String(progress.successfulReviewDays.length)} label="REVIEW DAYS" color={COLORS.purpleDark} />
+            </View>
+
+            <View style={styles.wordOverviewLearningCard}>
+              <View style={styles.wordOverviewEvidenceTop}>
+                <View>
+                  <Text style={styles.wordOverviewSectionLabel}>LEARNING SIGNALS</Text>
+                  <Text style={styles.wordOverviewSectionTitle}>{'Recall, retention & long-term retention'}</Text>
+                </View>
+                {accuracy !== null ? <Text style={styles.wordOverviewAccuracy}>{accuracy}% accurate</Text> : null}
+              </View>
+              <View style={styles.wordOverviewRetentionGrid}>
+                <WordRetentionPillar
+                  icon="key-outline"
+                  value={`${learningSignalScores.recall}%`}
+                  statusLabel={getLearningSignalStatus(learningSignalScores.recall)}
+                  label="RECALL"
+                  detail={`${progress.directRecallCorrect ?? 0} without choices`}
+                  color={COLORS.purpleDark}
+                />
+                <WordRetentionPillar
+                  icon="reload-outline"
+                  value={`${learningSignalScores.retention}%`}
+                  statusLabel={getLearningSignalStatus(learningSignalScores.retention)}
+                  label="RETENTION"
+                  detail={`${progress.delayedDirectRecallCorrect ?? 0} correct after 1+ day`}
+                  color={COLORS.blue}
+                />
+                <WordRetentionPillar
+                  icon="shield-checkmark-outline"
+                  value={`${learningSignalScores.longTermRetention}%`}
+                  statusLabel={getLearningSignalStatus(learningSignalScores.longTermRetention)}
+                  label={'LONG-TERM\nRETENTION'}
+                  detail={hasLongTermRetention ? '7-day review passed' : '7-day review ahead'}
+                  color={COLORS.greenDark}
+                />
+              </View>
+              <Text style={styles.wordOverviewRetentionNote}>
+                Scores reflect how consistently this word has been recalled over time. 100% means that signal is strongly established, not just answered once.
+              </Text>
+            </View>
+
+            <View style={styles.wordOverviewEvidenceCard}>
+              <View style={styles.wordOverviewEvidenceTop}>
+                <View><Text style={styles.wordOverviewSectionLabel}>REVIEW PATH</Text><Text style={styles.wordOverviewSectionTitle}>How this word is being reinforced</Text></View>
+              </View>
+              <WordOverviewEvidence icon="layers-outline" title={`Spacing stage ${stage} of 7`} detail={stage >= 5 ? 'A correct scheduled review here contributes to long-term retention.' : 'Each successful scheduled review increases the next gap.'} />
+              <WordOverviewEvidence icon="time-outline" title={nextReview ? `Next review ${nextReview}` : 'Review timing will appear after practice'} detail={lastReview ? `Last reviewed ${lastReview}` : 'No completed review yet'} />
+            </View>
+
+            <View style={styles.wordOverviewActions}>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => onToggleReviewNext(word.id)}
+                style={({ pressed }) => [styles.wordOverviewAction, word.mastery?.reviewNext && styles.wordOverviewActionActive, pressed && styles.pressed]}
+              >
+                <Ionicons name="play-forward-outline" size={18} color={COLORS.purpleDark} />
+                <Text style={styles.wordOverviewActionText}>{word.mastery?.reviewNext ? 'Queued next' : 'Next quiz'}</Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => onToggleFocus(word.id)}
+                style={({ pressed }) => [styles.wordOverviewAction, word.mastery?.focusMode && styles.wordOverviewActionFocused, pressed && styles.pressed]}
+              >
+                <Ionicons name="locate-outline" size={18} color={COLORS.purpleDark} />
+                <Text style={styles.wordOverviewActionText}>{word.mastery?.focusMode ? 'Focused' : 'Focus word'}</Text>
+              </Pressable>
+            </View>
+            <Text style={styles.wordOverviewActionNote}>Focus keeps this word prominent across practice. Next quiz is a one-time nudge.</Text>
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function WordOverviewStat({ icon, value, label, color }: { icon: keyof typeof Ionicons.glyphMap; value: string; label: string; color: string }) {
+  return <View style={styles.wordOverviewStat}><Ionicons name={icon} size={16} color={color} /><Text style={styles.wordOverviewStatValue}>{value}</Text><Text style={styles.wordOverviewStatLabel}>{label}</Text></View>;
+}
+
+function WordOverviewEvidence({ icon, title, detail }: { icon: keyof typeof Ionicons.glyphMap; title: string; detail: string }) {
+  return <View style={styles.wordOverviewEvidenceRow}><View style={styles.wordOverviewEvidenceIcon}><Ionicons name={icon} size={16} color={COLORS.purpleDark} /></View><View style={styles.wordOverviewEvidenceCopy}><Text style={styles.wordOverviewEvidenceTitle}>{title}</Text><Text style={styles.wordOverviewEvidenceDetail}>{detail}</Text></View></View>;
+}
+
+function WordRetentionPillar({
+  icon,
+  value,
+  statusLabel,
+  label,
+  detail,
+  color,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  value: string;
+  statusLabel: string;
+  label: string;
+  detail: string;
+  color: string;
+}) {
+  return (
+    <View style={styles.wordOverviewRetentionPillar}>
+      <View style={[styles.wordOverviewRetentionIcon, { backgroundColor: `${color}18` }]}>
+        <Ionicons name={icon} size={15} color={color} />
+      </View>
+      <Text style={[styles.wordOverviewRetentionValue, { color }]}>{value}</Text>
+      <Text style={[styles.wordOverviewRetentionProgress, { color }]}>{statusLabel}</Text>
+      <Text style={styles.wordOverviewRetentionLabel}>{label}</Text>
+      <Text style={styles.wordOverviewRetentionDetail}>{detail}</Text>
+    </View>
+  );
+}
+
+function getLearningSignalStatus(percent: number) {
+  if (percent >= 90) return 'Very strong';
+  if (percent >= 70) return 'Strong';
+  if (percent >= 40) return 'Developing';
+  return 'Emerging';
+}
+
+function formatWordOverviewDate(value: string | undefined) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  const days = Math.round((date.getTime() - Date.now()) / 86_400_000);
+  if (days === 0) return 'today';
+  if (days === 1) return 'tomorrow';
+  if (days === -1) return 'yesterday';
+  if (days > 1 && days <= 14) return `in ${days} days`;
+  if (days < -1 && days >= -14) return `${Math.abs(days)} days ago`;
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+function formatOmegaTimer(remainingMs: number) {
+  const totalHours = Math.max(1, Math.ceil(remainingMs / (60 * 60 * 1000)));
+  const days = Math.floor(totalHours / 24);
+  const hours = totalHours % 24;
+  return days > 0 ? `${days}d ${hours}h` : `${hours}h`;
 }
 
 function formatPace(seconds: number) {

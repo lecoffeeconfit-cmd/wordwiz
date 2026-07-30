@@ -1,6 +1,7 @@
 import type {
   Achievement,
   AnalyticsData,
+  DefinitionVariant,
   QuizAnswer,
   QuizAttempt,
   QuizQuestionDifficulty,
@@ -434,6 +435,11 @@ export function buildWordFromInput({
       cleanDefinition,
       cleanTerm,
     ),
+    definitionVariants: buildDefinitionVariants(
+      details.definitionOptions,
+      cleanDefinition,
+      existingWord?.definitionVariants,
+    ),
     example: example.trim(),
     contextExamples: buildWordContextExamples({
       term: cleanTerm,
@@ -465,6 +471,43 @@ export function buildWordFromInput({
     reviews: existingWord?.reviews ?? 0,
     mastery: existingWord ? existingWord.mastery : createWordMasteryProgress(createdAt),
   };
+}
+
+function buildDefinitionVariants(
+  options: WordDetails['definitionOptions'],
+  primaryDefinition: string,
+  existingVariants: DefinitionVariant[] | undefined,
+) {
+  const primaryKey = normalizeDefinitionVariant(primaryDefinition);
+  const variants = options?.length
+    ? options.map(({ text, source, partOfSpeech }) => ({ text, source, partOfSpeech }))
+    : existingVariants ?? [];
+
+  return variants
+    .map((variant) => ({
+      ...variant,
+      text: variant.text.replace(/\s+/g, ' ').trim(),
+      source: variant.source.trim(),
+      partOfSpeech: variant.partOfSpeech?.trim() || undefined,
+    }))
+    .filter(
+      (variant) =>
+        Boolean(variant.text) &&
+        normalizeDefinitionVariant(variant.text) !== primaryKey,
+    )
+    .filter(
+      (variant, index, allVariants) =>
+        allVariants.findIndex(
+          (candidate) =>
+            normalizeDefinitionVariant(candidate.text) ===
+            normalizeDefinitionVariant(variant.text),
+        ) === index,
+    )
+    .slice(0, 6);
+}
+
+function normalizeDefinitionVariant(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 }
 
 export function formatSavedWordTerm(term: string) {
@@ -600,6 +643,7 @@ export function buildQuizCompletion({
   completedAt,
   id,
   date = getDayKey(),
+  completed = true,
 }: {
   score: number;
   total: number;
@@ -608,6 +652,7 @@ export function buildQuizCompletion({
   completedAt: string;
   id: string;
   date?: string;
+  completed?: boolean;
 }) {
   const progress: QuizProgress = {
     date,
@@ -620,6 +665,7 @@ export function buildQuizCompletion({
     completedAt,
     durationSeconds,
     answers,
+    completed,
   };
 
   return { progress, attempt };
@@ -643,16 +689,25 @@ export function addQuizAttempt(analytics: AnalyticsData, attempt: QuizAttempt) {
 }
 
 /**
- * The first completed quiz for a calendar day is the day's daily quiz. Any
- * later attempts are optional practice rounds. This derives the label from
- * the history so it works for attempts saved before quiz types were shown.
+ * Omega Tests are assessments with their own history, but their completed
+ * answers also contribute to the learner's overall progress. Keep that
+ * distinction when labelling the shared quiz history. The first non-Omega
+ * quiz for a calendar day is the daily quiz; later ones are practice rounds.
  */
 export function getQuizAttemptKind(
   attempt: QuizAttempt,
   attempts: QuizAttempt[],
-): 'daily' | 'practice' {
+): 'daily' | 'practice' | 'omega-test' {
+  if (attempt.answers.some((answer) => answer.sessionMode === 'omega-test')) {
+    return 'omega-test';
+  }
+
   const firstAttemptOfDay = attempts
-    .filter((candidate) => candidate.date === attempt.date)
+    .filter(
+      (candidate) =>
+        candidate.date === attempt.date &&
+        !candidate.answers.some((answer) => answer.sessionMode === 'omega-test'),
+    )
     .sort(
       (first, second) =>
         first.completedAt.localeCompare(second.completedAt) ||
@@ -719,6 +774,86 @@ export function isWordMastered(progress: WordMasteryProgress) {
     recentResults.at(-1)?.correct === true &&
     recentIncorrect <= 2
   );
+}
+
+export type LongTermRetention = {
+  /** Words with enough separate-day evidence to make a fair comparison. */
+  measuredWords: number;
+  /** Correctly retained after advancing through WordWiz's seven-day stage. */
+  retainedWords: number;
+  developingWords: number;
+  percent: number;
+};
+
+/**
+ * Long-term retention is deliberately narrower than mastery or quiz score.
+ * A word qualifies only after a learner answers correctly on at least three
+ * separate days and has successfully advanced beyond the seven-day review
+ * interval. Same-day repeats and a word whose latest review was a miss do not
+ * count as retained evidence.
+ */
+export function getLongTermRetention(
+  words: Word[],
+  analytics: AnalyticsData,
+): LongTermRetention {
+  const measured = words
+    .filter((word) => Boolean(word.mastery))
+    .map((word) => getWordMasteryProgress(word, analytics))
+    .filter((progress) => progress.successfulReviewDays.length >= 2);
+  const retainedWords = measured.filter(
+    (progress) =>
+      (progress.reviewStage ?? 0) >= 5 &&
+      progress.successfulReviewDays.length >= 3 &&
+      progress.lastReviewResult !== 'wrong',
+  ).length;
+
+  return {
+    measuredWords: measured.length,
+    retainedWords,
+    developingWords: measured.length - retainedWords,
+    percent: measured.length ? Math.round((retainedWords / measured.length) * 100) : 0,
+  };
+}
+
+export type WordLearningSignalScores = {
+  recall: number;
+  retention: number;
+  longTermRetention: number;
+};
+
+/**
+ * Turns a word's evidence into three learner-facing strength scores. Each
+ * score reaches 100 only after repeated, successful evidence for that exact
+ * skill; a single correct answer is intentionally only an early signal.
+ */
+export function getWordLearningSignalScores(
+  progress: WordMasteryProgress,
+): WordLearningSignalScores {
+  const totalAnswers = Math.max(0, progress.totalCorrect) + Math.max(0, progress.totalIncorrect);
+  const accuracy = totalAnswers ? Math.max(0, progress.totalCorrect) / totalAnswers : 0;
+  const directRecall = Math.min(1, Math.max(0, progress.directRecallCorrect ?? 0) / 4);
+  const delayedRecall = Math.min(1, Math.max(0, progress.delayedDirectRecallCorrect ?? 0) / 2);
+  const reviewDays = Math.min(1, Math.max(0, progress.successfulReviewDays.length) / 3);
+  const spacing = Math.min(1, Math.max(0, progress.reviewStage ?? 0) / 5);
+  const latestResultMultiplier = progress.lastReviewResult === 'wrong' ? 0.6 : 1;
+  const longTermHeld =
+    (progress.reviewStage ?? 0) >= 5 &&
+    progress.successfulReviewDays.length >= 3 &&
+    progress.lastReviewResult !== 'wrong';
+
+  return {
+    recall: Math.round((accuracy * 25 + directRecall * 75) * latestResultMultiplier),
+    retention: Math.round(
+      (accuracy * 10 + directRecall * 15 + delayedRecall * 50 + reviewDays * 25) *
+        latestResultMultiplier,
+    ),
+    longTermRetention: longTermHeld
+      ? 100
+      : Math.round(
+          (accuracy * 10 + directRecall * 10 + delayedRecall * 20 + reviewDays * 25 + spacing * 35) *
+            latestResultMultiplier,
+        ),
+  };
 }
 
 export function applyQuizMastery(
@@ -1024,17 +1159,21 @@ function updateMasteryFromQuizAnswer(
   const retentionBonus = answer.correct && !sameSession
     ? getRetentionBonus(current.lastCorrectAt, reviewedAt)
     : 0;
-  const baseCorrectChange = getCorrectMasteryChange(difficulty);
+  const learningValue = getQuestionLearningValue(
+    answer.questionMode,
+    difficulty,
+  );
+  const baseCorrectChange = learningValue.correct;
   const baseChange = answer.correct
     ? reviewRating === 'hard'
       ? Math.max(1, Math.round(baseCorrectChange * 0.6))
       : reviewRating === 'easy'
         ? baseCorrectChange + 2
         : baseCorrectChange
-    : -getIncorrectMasteryChange(difficulty);
+    : -learningValue.incorrect;
   const earnedChange =
     answer.correct && sameSession && correctInSession >= 2
-      ? Math.min(1, getCorrectMasteryChange(difficulty))
+      ? Math.min(1, learningValue.correct)
       : baseChange + retentionBonus + (recallPace === 'fluent' ? 1 : 0);
   const recentResults = [
     ...current.recentResults,
@@ -1115,21 +1254,37 @@ function updateMasteryFromQuizAnswer(
   };
 }
 
-function getCorrectMasteryChange(difficulty: QuizQuestionDifficulty) {
-  return {
-    recognition: 3,
-    'multiple-choice': 5,
-    'fill-in-options': 7,
-    'typed-recall': 10,
-  }[difficulty];
-}
+/**
+ * A correct answer is evidence, not just a point. Recognition prompts make a
+ * small contribution, while contextual use and direct recall demonstrate more
+ * durable learning. Incorrect answers follow the same scale so the review
+ * schedule reacts most strongly when a demanding prompt exposes a real gap.
+ */
+export function getQuestionLearningValue(
+  mode: QuizAnswer['questionMode'],
+  difficulty: QuizQuestionDifficulty,
+) {
+  const byMode: Partial<Record<NonNullable<QuizAnswer['questionMode']>, {
+    correct: number;
+    incorrect: number;
+  }>> = {
+    'true-false': { correct: 2, incorrect: 4 },
+    'word-to-definition': { correct: 3, incorrect: 5 },
+    'closest-synonym': { correct: 4, incorrect: 6 },
+    'sentence-usage': { correct: 5, incorrect: 7 },
+    'definition-to-word': { correct: 7, incorrect: 9 },
+    'sentence-completion': { correct: 8, incorrect: 10 },
+    'typed-word': { correct: 10, incorrect: 12 },
+  };
 
-function getIncorrectMasteryChange(difficulty: QuizQuestionDifficulty) {
+  if (mode && byMode[mode]) return byMode[mode];
+
+  // Older saved attempts did not always record their exact prompt type.
   return {
-    recognition: 6,
-    'multiple-choice': 8,
-    'fill-in-options': 10,
-    'typed-recall': 12,
+    recognition: { correct: 3, incorrect: 6 },
+    'multiple-choice': { correct: 5, incorrect: 8 },
+    'fill-in-options': { correct: 7, incorrect: 10 },
+    'typed-recall': { correct: 10, incorrect: 12 },
   }[difficulty];
 }
 

@@ -6,6 +6,7 @@ create table if not exists public.words (
   term text not null,
   definition text not null,
   simple_definition text,
+  definition_variants jsonb not null default '[]'::jsonb,
   example text not null,
   context_examples jsonb not null default '[]'::jsonb,
   part_of_speech text,
@@ -25,6 +26,7 @@ create table if not exists public.words (
 );
 
 alter table public.words
+  add column if not exists definition_variants jsonb not null default '[]'::jsonb,
   add column if not exists antonyms text[] not null default '{}',
   add column if not exists mastery_data jsonb not null default '{}'::jsonb,
   add column if not exists context_examples jsonb not null default '[]'::jsonb;

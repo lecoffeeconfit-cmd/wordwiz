@@ -1,6 +1,7 @@
 import type {
   AnalyticsData,
   CardStudyEvent,
+  DefinitionVariant,
   QuizAnswer,
   QuizAttempt,
   QuizProgress,
@@ -15,6 +16,7 @@ type WordRow = {
   term: string;
   definition: string;
   simple_definition: string | null;
+  definition_variants?: DefinitionVariant[] | null;
   example: string;
   context_examples?: string[] | null;
   part_of_speech: string | null;
@@ -72,6 +74,7 @@ const WORD_COLUMNS = [
   'term',
   'definition',
   'simple_definition',
+  'definition_variants',
   'example',
   'context_examples',
   'part_of_speech',
@@ -167,8 +170,12 @@ export async function fetchUserLearningData(
     rows: reminderResult.data ? 1 : 0,
   });
 
-  const quizHistory = ((quizResult.data ?? []) as unknown as QuizAttemptRow[]).map(
+  const fetchedQuizHistory = ((quizResult.data ?? []) as unknown as QuizAttemptRow[]).map(
     mapQuizAttemptRow,
+  );
+  const incompleteOmegaTests = fetchedQuizHistory.filter(isIncompleteOmegaTestAttempt);
+  const quizHistory = fetchedQuizHistory.filter(
+    (attempt) => !isIncompleteOmegaTestAttempt(attempt),
   );
   const cardHistory = ((reviewsResult.data ?? []) as unknown as CardReviewRow[]).map(
     mapCardReviewRow,
@@ -188,6 +195,7 @@ export async function fetchUserLearningData(
     analytics: {
       quizHistory,
       cardHistory,
+      omegaTestHistory: incompleteOmegaTests,
     },
     reminderSettings: reminderResult.data
       ? mapReminderSettingsRow(reminderResult.data as ReminderSettingsRow)
@@ -211,7 +219,7 @@ export async function seedUserLearningData({
   );
 
   await Promise.all([
-    ...analytics.quizHistory.map((attempt) =>
+    ...[...analytics.quizHistory, ...(analytics.omegaTestHistory ?? [])].map((attempt) =>
       saveCloudQuizAttempt(userId, attempt),
     ),
     ...analytics.cardHistory.map((event) => saveCloudCardReview(userId, event)),
@@ -369,6 +377,23 @@ export async function saveCloudQuizAttempt(
   );
 }
 
+/** Records foreground screen time in a server-validated aggregate session. */
+export async function saveCloudScreenTime(
+  screen: 'home' | 'words' | 'cards' | 'quiz' | 'dashboard',
+  durationSeconds: number,
+  startedAt: string,
+) {
+  const { error } = await supabase.rpc('record_my_screen_time', {
+    p_screen: screen,
+    p_duration_seconds: durationSeconds,
+    p_started_at: startedAt,
+  });
+
+  if (error) {
+    throw getQueryError('screen_time_sessions', error);
+  }
+}
+
 export async function saveCloudReminderSettings(
   userId: string,
   settings: ReminderSettings,
@@ -459,6 +484,7 @@ function mapWordRow(row: WordRow): Word {
     term: row.term,
     definition: row.definition,
     simpleDefinition: row.simple_definition ?? undefined,
+    definitionVariants: row.definition_variants ?? [],
     example: row.example,
     contextExamples: row.context_examples ?? [],
     partOfSpeech: row.part_of_speech ?? undefined,
@@ -478,15 +504,23 @@ function mapWordRow(row: WordRow): Word {
 }
 
 function mapQuizAttemptRow(row: QuizAttemptRow): QuizAttempt {
+  const answers = parseQuizAnswers(row.answers);
   return {
     id: row.id,
     date: row.quiz_date,
     score: row.score,
     total: row.total,
     durationSeconds: row.duration_seconds,
-    answers: parseQuizAnswers(row.answers),
+    answers,
     completedAt: row.completed_at,
+    completed: !answers.some((answer) => answer.attemptStatus === 'incomplete'),
   };
+}
+
+function isIncompleteOmegaTestAttempt(attempt: QuizAttempt) {
+  return attempt.completed === false && attempt.answers.some(
+    (answer) => answer.sessionMode === 'omega-test',
+  );
 }
 
 function mapCardReviewRow(row: CardReviewRow): CardStudyEvent {
@@ -514,6 +548,7 @@ function toWordPayload(userId: string, word: Word) {
     term: word.term,
     definition: word.definition,
     simple_definition: word.simpleDefinition ?? null,
+    definition_variants: word.definitionVariants ?? [],
     example: word.example,
     context_examples: word.contextExamples ?? [],
     part_of_speech: word.partOfSpeech ?? null,
@@ -550,6 +585,10 @@ function omitContextExamplesColumn(columns: string) {
   return columns.replace('context_examples,', '');
 }
 
+function omitDefinitionVariantsColumn(columns: string) {
+  return columns.replace('definition_variants,', '');
+}
+
 function omitFlagFields<
   T extends { is_flagged?: unknown; flagged_at?: unknown },
 >(payload: T) {
@@ -567,6 +606,13 @@ function omitContextExamplesField<T extends { context_examples?: unknown }>(
   payload: T,
 ) {
   const { context_examples: _contextExamples, ...legacyPayload } = payload;
+  return legacyPayload;
+}
+
+function omitDefinitionVariantsField<T extends { definition_variants?: unknown }>(
+  payload: T,
+) {
+  const { definition_variants: _definitionVariants, ...legacyPayload } = payload;
   return legacyPayload;
 }
 
@@ -621,6 +667,10 @@ function omitUnsupportedWordColumns(
     compatibleColumns = omitContextExamplesColumn(compatibleColumns);
   }
 
+  if (isMissingDefinitionVariantsColumn(error)) {
+    compatibleColumns = omitDefinitionVariantsColumn(compatibleColumns);
+  }
+
   return compatibleColumns;
 }
 
@@ -635,6 +685,7 @@ async function writeCloudWordsWithCompatibility<
   let canOmitMasteryData = true;
   let canOmitAntonyms = true;
   let canOmitContextExamples = true;
+  let canOmitDefinitionVariants = true;
   let result = await write(compatiblePayload);
 
   for (let attempt = 0; result.error && attempt < 4; attempt += 1) {
@@ -646,8 +697,16 @@ async function writeCloudWordsWithCompatibility<
       canOmitAntonyms && isMissingAntonymColumn(result.error);
     const omitContextExamples =
       canOmitContextExamples && isMissingContextExamplesColumn(result.error);
+    const omitDefinitionVariants =
+      canOmitDefinitionVariants && isMissingDefinitionVariantsColumn(result.error);
 
-    if (!omitFlags && !omitMastery && !omitAntonyms && !omitContextExamples) {
+    if (
+      !omitFlags &&
+      !omitMastery &&
+      !omitAntonyms &&
+      !omitContextExamples &&
+      !omitDefinitionVariants
+    ) {
       break;
     }
 
@@ -669,6 +728,11 @@ async function writeCloudWordsWithCompatibility<
     if (omitContextExamples) {
       compatiblePayload = removeContextExamplesFields(compatiblePayload) as T;
       canOmitContextExamples = false;
+    }
+
+    if (omitDefinitionVariants) {
+      compatiblePayload = removeDefinitionVariantsFields(compatiblePayload) as T;
+      canOmitDefinitionVariants = false;
     }
 
     result = await write(compatiblePayload);
@@ -709,6 +773,14 @@ function removeContextExamplesFields(
     : omitContextExamplesField(payload);
 }
 
+function removeDefinitionVariantsFields(
+  payload: Record<string, unknown> | Record<string, unknown>[],
+) {
+  return Array.isArray(payload)
+    ? payload.map(omitDefinitionVariantsField)
+    : omitDefinitionVariantsField(payload);
+}
+
 function isMissingMasteryDataColumn(error: { message?: string } | null) {
   return Boolean(error?.message?.toLowerCase().includes('mastery_data'));
 }
@@ -724,6 +796,10 @@ function isMissingAntonymColumn(error: { message?: string } | null) {
 
 function isMissingContextExamplesColumn(error: { message?: string } | null) {
   return Boolean(error?.message?.toLowerCase().includes('context_examples'));
+}
+
+function isMissingDefinitionVariantsColumn(error: { message?: string } | null) {
+  return Boolean(error?.message?.toLowerCase().includes('definition_variants'));
 }
 
 function parseMasteryProgress(value: unknown): Word['mastery'] {
@@ -799,6 +875,22 @@ function parseQuizAnswers(value: unknown): QuizAnswer[] {
           answer.responseTimeSeconds >= 0
             ? answer.responseTimeSeconds
             : undefined;
+        const sessionMode =
+          'sessionMode' in answer &&
+          (answer.sessionMode === 'standard' ||
+            answer.sessionMode === 'quick' ||
+            answer.sessionMode === 'challenge' ||
+            answer.sessionMode === 'mistake-review' ||
+            answer.sessionMode === 'mastery-test' ||
+            answer.sessionMode === 'omega-test')
+            ? answer.sessionMode
+            : undefined;
+        const attemptStatus =
+          'attemptStatus' in answer && answer.attemptStatus === 'incomplete'
+            ? 'incomplete'
+            : undefined;
+        const isAttemptMarker =
+          'isAttemptMarker' in answer && answer.isAttemptMarker === true;
 
         return {
           wordId: answer.wordId,
@@ -810,6 +902,9 @@ function parseQuizAnswers(value: unknown): QuizAnswer[] {
           answeredAt,
           responseTimeSeconds,
           reviewRating,
+          sessionMode,
+          attemptStatus,
+          isAttemptMarker,
         };
       }
 

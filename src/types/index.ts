@@ -1,4 +1,4 @@
-export type Tab = 'home' | 'words' | 'cards' | 'quiz' | 'dashboard';
+export type Tab = 'home' | 'words' | 'cards' | 'quiz' | 'dashboard' | 'admin';
 export type SortMode = 'alphabetical' | 'recent';
 export type LegalPage = 'terms' | 'privacy';
 
@@ -101,6 +101,8 @@ export type Word = {
   term: string;
   definition: string;
   simpleDefinition?: string;
+  /** Vetted alternate phrasings from dictionary sources for higher-level recall. */
+  definitionVariants?: DefinitionVariant[];
   example: string;
   contextExamples?: string[];
   partOfSpeech?: string;
@@ -139,6 +141,11 @@ export type DefinitionOption = {
   partOfSpeech?: string;
   recommended: boolean;
 };
+
+export type DefinitionVariant = Pick<
+  DefinitionOption,
+  'text' | 'source' | 'partOfSpeech'
+>;
 
 export type WordDetails = Pick<
   Word,
@@ -210,6 +217,10 @@ export type QuizAnswer = {
   reviewRating?: ReviewRating;
   timedOut?: boolean;
   speedBonusXp?: number;
+  /** Metadata for an Omega attempt ended before its final question. */
+  attemptStatus?: 'incomplete';
+  /** Allows a zero-question Omega exit to retain its session metadata safely. */
+  isAttemptMarker?: boolean;
 };
 
 export type QuizRecallPaceSignal =
@@ -229,6 +240,8 @@ export type QuizAttempt = QuizProgress & {
   completedAt: string;
   durationSeconds: number;
   answers: QuizAnswer[];
+  /** Legacy attempts are completed unless explicitly recorded otherwise. */
+  completed?: boolean;
 };
 
 export type QuizQuestionMode =
@@ -258,6 +271,8 @@ export type QuizQuestion = {
   mode: QuizQuestionMode;
   difficulty: QuizQuestionDifficulty;
   helperText: string;
+  /** A non-revealing word-length cue for sentence-completion questions. */
+  answerLetterCount?: number;
   feedback: string;
   strictSpelling?: boolean;
 };
@@ -274,6 +289,8 @@ export type CardStudyEvent = {
 export type AnalyticsData = {
   quizHistory: QuizAttempt[];
   cardHistory: CardStudyEvent[];
+  /** Incomplete Omega Tests are shown in Omega stats only. */
+  omegaTestHistory?: QuizAttempt[];
 };
 
 export type ReminderSettings = {

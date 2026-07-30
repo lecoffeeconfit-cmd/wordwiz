@@ -5,7 +5,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import * as WebBrowser from 'expo-web-browser';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Platform, Pressable, Text, View } from 'react-native';
+import { Alert, AppState, Platform, Pressable, Text, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BottomTabs } from '../components';
 import {
@@ -25,6 +25,7 @@ import {
 } from '../modals';
 import {
   CardsScreen,
+  AdminScreen,
   DashboardScreen,
   HomeScreen,
   type PausedQuizSession,
@@ -50,6 +51,7 @@ import {
   validatePassword,
   cancelReminder,
   buildSmartReminderMessages,
+  getAdminAccess,
   deleteCloudWord,
   createCloudStarterCollection,
   createCloudWordWithFreeLimit,
@@ -63,6 +65,7 @@ import {
   reportError,
   saveCloudCardReview,
   saveCloudQuizAttempt,
+  saveCloudScreenTime,
   saveCloudReminderSettings,
   saveCloudWord,
   saveCloudWords,
@@ -160,6 +163,7 @@ export default function AppContent() {
   const [achievementWallet, setAchievementWallet] =
     useState<AchievementWallet>(EMPTY_ACHIEVEMENT_WALLET);
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [isPasswordRecovery, setIsPasswordRecovery] = useState(false);
   const [reminderSettings, setReminderSettings] =
     useState<ReminderSettings>(DEFAULT_REMINDER);
@@ -202,6 +206,12 @@ export default function AppContent() {
   const pauseActiveQuizRef = useRef<(() => void) | null>(null);
   const immediatelyActivatedPlusUserId = useRef<string | null>(null);
   const complimentaryWelcomeUserId = useRef<string | null>(null);
+  const activeScreenTimeSession = useRef<{
+    screen: 'home' | 'words' | 'cards' | 'quiz' | 'dashboard';
+    userId: string;
+    startedAt: number;
+  } | null>(null);
+  const activeTabRef = useRef<Tab>('home');
   const hasFullLearningAccess =
     subscription.hasPlusAccess ||
     justActivatedPlusUserId === currentUser?.id;
@@ -304,6 +314,70 @@ export default function AppContent() {
   useEffect(() => {
     latestWords.current = words;
   }, [words]);
+
+  const flushScreenTime = useCallback(() => {
+    const session = activeScreenTimeSession.current;
+    activeScreenTimeSession.current = null;
+    if (!session || session.userId !== currentUser?.id) return;
+
+    const durationSeconds = Math.round((Date.now() - session.startedAt) / 1000);
+    // Ignore accidental micro-sessions from a quick tab change or React refresh.
+    if (durationSeconds < 3 || durationSeconds > 4 * 60 * 60) return;
+
+    void saveCloudScreenTime(
+      session.screen,
+      durationSeconds,
+      new Date(session.startedAt).toISOString(),
+    ).catch((error) => {
+      reportError(error, { area: 'save_screen_time', screen: session.screen });
+    });
+  }, [currentUser?.id]);
+
+  const beginScreenTime = useCallback((tab: Tab) => {
+    if (!currentUser || !isReady || tab === 'admin') return;
+    activeScreenTimeSession.current = {
+      screen: tab,
+      userId: currentUser.id,
+      startedAt: Date.now(),
+    };
+  }, [currentUser, isReady]);
+
+  useEffect(() => {
+    activeTabRef.current = activeTab;
+    flushScreenTime();
+    beginScreenTime(activeTab);
+  }, [activeTab, beginScreenTime, flushScreenTime]);
+
+  useEffect(() => {
+    if (!currentUser || !isReady) return;
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        beginScreenTime(activeTabRef.current);
+      } else {
+        flushScreenTime();
+      }
+    });
+    return () => subscription.remove();
+  }, [beginScreenTime, currentUser?.id, flushScreenTime, isReady]);
+
+  useEffect(() => {
+    let isActive = true;
+    if (!currentUser || !env.isSupabaseConfigured) {
+      setIsAdmin(false);
+      return () => { isActive = false; };
+    }
+
+    void getAdminAccess()
+      .then((hasAccess) => {
+        if (isActive) setIsAdmin(hasAccess);
+      })
+      .catch((error) => {
+        reportError(error, { area: 'admin_access_check' });
+        if (isActive) setIsAdmin(false);
+      });
+
+    return () => { isActive = false; };
+  }, [currentUser?.id]);
 
   useEffect(() => {
     let isActive = true;
@@ -563,11 +637,12 @@ export default function AppContent() {
     try {
       achievementWalletLoadedUserId.current = null;
       setAchievementWallet(EMPTY_ACHIEVEMENT_WALLET);
-      const [savedWords, savedQuiz, savedAnalytics, savedReminder, savedDailyQuizGoal, savedTimedLearning, savedTimeBasedLearningSettings, savedQuizPreferences, savedAchievementWallet, savedOnboarding, legacyOnboarding] =
+      const [savedWords, savedQuiz, savedAnalytics, savedPausedQuizSession, savedReminder, savedDailyQuizGoal, savedTimedLearning, savedTimeBasedLearningSettings, savedQuizPreferences, savedAchievementWallet, savedOnboarding, legacyOnboarding] =
         await Promise.all([
           AsyncStorage.getItem(getUserCacheKey(userId, 'words')),
           AsyncStorage.getItem(getUserCacheKey(userId, 'quiz-progress')),
           AsyncStorage.getItem(getUserCacheKey(userId, 'analytics')),
+          AsyncStorage.getItem(getUserCacheKey(userId, 'paused-quiz-session')),
           AsyncStorage.getItem(getUserCacheKey(userId, 'reminder-settings')),
           AsyncStorage.getItem(getUserCacheKey(userId, 'daily-quiz-goal')),
           AsyncStorage.getItem(getUserCacheKey(userId, 'timed-learning-enabled')),
@@ -582,6 +657,9 @@ export default function AppContent() {
       setWords(cachedWords.filter(isUserCreatedWord));
       setQuizProgress(savedQuiz ? JSON.parse(savedQuiz) : null);
       setAnalytics(savedAnalytics ? JSON.parse(savedAnalytics) : EMPTY_ANALYTICS);
+      setPausedQuizSession(
+        savedPausedQuizSession ? JSON.parse(savedPausedQuizSession) as PausedQuizSession : null,
+      );
       setReminderSettings(
         savedReminder
           ? { ...DEFAULT_REMINDER, ...JSON.parse(savedReminder) }
@@ -913,12 +991,18 @@ export default function AppContent() {
 
     const wasFocused = previousWord.mastery?.focusMode === true;
     const focusedAt = wasFocused ? undefined : new Date().toISOString();
+    const currentMastery = getWordMasteryProgress(previousWord, analytics);
     const nextWord: Word = {
       ...previousWord,
       mastery: {
-        ...getWordMasteryProgress(previousWord, analytics),
+        ...currentMastery,
         focusMode: !wasFocused,
         focusedAt,
+        // “Next quiz” is intentionally a one-time nudge, while Focus is an
+        // ongoing learning choice. Keep them mutually exclusive so a word
+        // always has one clear priority no matter which stats list set it.
+        reviewNext: wasFocused ? currentMastery.reviewNext : false,
+        reviewNextAt: wasFocused ? currentMastery.reviewNextAt : undefined,
       },
     };
 
@@ -1112,12 +1196,17 @@ export default function AppContent() {
 
     const wasQueued = previousWord.mastery?.reviewNext === true;
     const reviewNextAt = wasQueued ? undefined : new Date().toISOString();
+    const currentMastery = getWordMasteryProgress(previousWord, analytics);
     const nextWord: Word = {
       ...previousWord,
       mastery: {
-        ...getWordMasteryProgress(previousWord, analytics),
+        ...currentMastery,
         reviewNext: !wasQueued,
         reviewNextAt,
+        // A single tap switches a focused word back to a one-time next quiz.
+        // This makes the action predictable across every stats surface.
+        focusMode: wasQueued ? currentMastery.focusMode : false,
+        focusedAt: wasQueued ? currentMastery.focusedAt : undefined,
       },
     };
 
@@ -1243,6 +1332,17 @@ export default function AppContent() {
       );
     }
   }, [analytics, currentUser, isReady]);
+
+  useEffect(() => {
+    if (!isReady || !currentUser) return;
+
+    const key = getUserCacheKey(currentUser.id, 'paused-quiz-session');
+    if (pausedQuizSession) {
+      void AsyncStorage.setItem(key, JSON.stringify(pausedQuizSession));
+      return;
+    }
+    void AsyncStorage.removeItem(key);
+  }, [currentUser, isReady, pausedQuizSession]);
 
   useEffect(() => {
     if (isReady && currentUser) {
@@ -1827,6 +1927,78 @@ export default function AppContent() {
     return savedCount;
   }
 
+  async function removeCollectionWordsFromMyWords(wordIds: string[]) {
+    const requestedIds = new Set(wordIds);
+    const existingWords = words.filter(
+      (word) =>
+        requestedIds.has(word.id) &&
+        word.mastery?.librarySource !== 'collection' &&
+        (word.mastery?.studySets ?? []).some(
+          (set) => set.kind === 'collection' || set.id.startsWith('wordwiz-collection:'),
+        ),
+    );
+    if (existingWords.length === 0) {
+      return 0;
+    }
+
+    const previousWordsById = new Map(
+      existingWords.map((word) => [word.id, word]),
+    );
+    const collectionWords = existingWords.map((word) => ({
+      ...word,
+      mastery: {
+        ...getWordMasteryProgress(word, analytics),
+        librarySource: 'collection' as const,
+      },
+    }));
+    const collectionWordsById = new Map(
+      collectionWords.map((word) => [word.id, word]),
+    );
+    setWords((currentWords) =>
+      currentWords.map((word) => collectionWordsById.get(word.id) ?? word),
+    );
+
+    if (!currentUser || cloudHydratedUserId.current !== currentUser.id) {
+      return collectionWords.length;
+    }
+
+    const results = await Promise.allSettled(
+      collectionWords.map((word) =>
+        saveCloudWord(
+          currentUser.id,
+          word,
+          getScreenContext('words', 'remove_collection_words_from_my_words'),
+        ),
+      ),
+    );
+    const failedWordIds = new Set(
+      results.flatMap((result, index) =>
+        result.status === 'rejected' ? [collectionWords[index].id] : [],
+      ),
+    );
+    if (failedWordIds.size > 0) {
+      const firstFailure = results.find(
+        (result): result is PromiseRejectedResult => result.status === 'rejected',
+      );
+      reportError(firstFailure?.reason, { area: 'remove_collection_words_from_my_words' });
+      trackEvent('cloud_sync_failed', { operation: 'remove_collection_words_from_my_words' });
+      setWords((currentWords) =>
+        currentWords.map((word) =>
+          failedWordIds.has(word.id)
+            ? previousWordsById.get(word.id) ?? word
+            : word,
+        ),
+      );
+    }
+
+    const savedCount = collectionWords.length - failedWordIds.size;
+    if (savedCount > 0) {
+      markCloudCacheFresh(currentUser.id);
+      trackEvent('word_saved', { updatedExisting: true, fromCollection: true });
+    }
+    return savedCount;
+  }
+
   async function enrichStarterCollectionWords(initialWords: Word[]) {
     if (!currentUser || initialWords.length === 0) {
       return;
@@ -2242,6 +2414,59 @@ export default function AppContent() {
     }
   }
 
+  function recordIncompleteOmegaTest(
+    score: number,
+    total: number,
+    durationSeconds: number,
+    answers: QuizAnswer[],
+  ) {
+    const recordedAnswers: QuizAnswer[] = answers.length
+      ? answers.map((answer) => ({ ...answer, attemptStatus: 'incomplete' }))
+      : [{
+          wordId: '__omega-session__',
+          correct: false,
+          sessionMode: 'omega-test',
+          attemptStatus: 'incomplete',
+          isAttemptMarker: true,
+        }];
+    const { attempt } = buildQuizCompletion({
+      score,
+      total,
+      durationSeconds,
+      answers: recordedAnswers,
+      id: createUuid(),
+      completedAt: new Date().toISOString(),
+      completed: false,
+    });
+
+    setAnalytics((currentAnalytics) => ({
+      ...currentAnalytics,
+      omegaTestHistory: [
+        attempt,
+        ...(currentAnalytics.omegaTestHistory ?? []),
+      ].slice(0, 30),
+    }));
+    trackEvent('omega_test_ended_early', {
+      questionsCompleted: answers.length,
+      totalQuestions: total,
+      durationSeconds,
+    });
+
+    if (currentUser && cloudHydratedUserId.current === currentUser.id) {
+      void saveCloudQuizAttempt(
+        currentUser.id,
+        attempt,
+        getScreenContext('quiz', 'record_incomplete_omega_test'),
+      )
+        .then(() => markCloudCacheFresh(currentUser.id))
+        .catch((error) => {
+          reportError(error, { area: 'save_incomplete_omega_test' });
+          trackEvent('cloud_sync_failed', { operation: 'save_incomplete_omega_test' });
+          deferCloudSync();
+        });
+    }
+  }
+
   function openDueReview(priorityWordIds: string[] = []) {
     if (!canUseFullLearningAccess()) {
       presentPlusPaywall('quiz', () => openDueReview(priorityWordIds));
@@ -2407,8 +2632,8 @@ export default function AppContent() {
           onToggleFlag={toggleWordFlag}
           onSelectWord={(word) => openCards(word.id)}
           onTogglePracticeExclusion={toggleWordPracticeExclusion}
-          onAddCollectionWordToMyWords={addCollectionWordToMyWords}
           onAddCollectionWordsToMyWords={addCollectionWordsToMyWords}
+          onRemoveCollectionWordsFromMyWords={removeCollectionWordsFromMyWords}
           onAddStarterCollection={addStarterCollection}
           onCreateStudySet={createStudySet}
           onDeleteStudySet={deleteStudySet}
@@ -2448,6 +2673,7 @@ export default function AppContent() {
           refreshTokens={achievementWallet.refreshTokens}
           onUseRefreshToken={useAchievementRefreshToken}
           onComplete={completeQuiz}
+          onAbandonOmegaTest={recordIncompleteOmegaTest}
           onToggleFlag={toggleWordFlag}
           onOpenStudySetBuilder={openStudySetBuilder}
           pausedSession={pausedQuizSession}
@@ -2460,10 +2686,17 @@ export default function AppContent() {
       );
     }
 
+    if (activeTab === 'admin' && isAdmin) {
+      return <AdminScreen onClose={() => setActiveTab('dashboard')} />;
+    }
+
     return (
       <DashboardScreen
         words={words}
         analytics={analytics}
+        pausedOmegaSession={
+          pausedQuizSession?.sessionMode === 'omega-test' ? pausedQuizSession : null
+        }
         timedLearningEnabled={timedLearningEnabled}
         timeBasedLearningSettings={timeBasedLearningSettings}
         quizPreferences={quizPreferences}
@@ -2486,6 +2719,8 @@ export default function AppContent() {
         onLogout={logout}
         onChangePassword={changePassword}
         onDeleteAccount={deleteAccount}
+        isAdmin={isAdmin}
+        onOpenAdmin={() => setActiveTab('admin')}
         onOpenOnboardingGuide={() => setShowOnboardingGuide(true)}
         onOpenPlus={() => presentPlusPaywall('premium-feature')}
       />
@@ -2823,6 +3058,7 @@ async function clearLocalLearningData(userId: string) {
     getUserCacheKey(userId, 'words'),
     getUserCacheKey(userId, 'quiz-progress'),
     getUserCacheKey(userId, 'analytics'),
+    getUserCacheKey(userId, 'paused-quiz-session'),
     getUserCacheKey(userId, 'reminder-settings'),
     getUserCacheKey(userId, 'daily-quiz-goal'),
     getUserCacheKey(userId, 'timed-learning-enabled'),

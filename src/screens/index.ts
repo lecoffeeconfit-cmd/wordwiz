@@ -4,3 +4,4 @@ export * from './WordsScreen';
 export * from './CardsScreen';
 export * from './QuizScreen';
 export * from './DashboardScreen';
+export * from './AdminScreen';

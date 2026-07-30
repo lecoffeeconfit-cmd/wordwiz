@@ -1,6 +1,7 @@
 export * from './auth';
 export * from './analytics';
 export * from './access';
+export * from './admin';
 export * from './cloudData';
 export * from './dictionary';
 export * from './errorReporting';

@@ -8,6 +8,7 @@ export const OMEGA_TEST_COOLDOWN_DAYS = 7;
 export const OMEGA_TEST_COOLDOWN_MS = OMEGA_TEST_COOLDOWN_DAYS * 24 * 60 * 60 * 1000;
 const RECENT_ATTEMPTS_TO_AVOID = 3;
 type QuestionChallenge = 'easy' | 'standard' | 'hard';
+type DefinitionVariationLevel = 'none' | 'light' | 'hard' | 'full';
 export const TIMED_LEARNING_SECONDS = 15;
 export const FLUENT_RECALL_SECONDS = 6;
 export const DEFAULT_TIME_BASED_LEARNING_SETTINGS: TimeBasedLearningSettings = {
@@ -400,6 +401,7 @@ export function buildQuiz(
       quizWords,
       masteryByWordId,
       options.questionTypePreferences,
+      recentAttempts,
     );
   }
 
@@ -411,6 +413,7 @@ export function buildQuiz(
     quizWords,
     masteryByWordId,
     options,
+    recentAttempts,
   );
   const difficulty = getEffectiveQuizDifficulty(
     options.sessionMode ?? 'standard',
@@ -433,7 +436,7 @@ export function buildQuiz(
         (difficulty === 'hard' ||
           difficulty === 'ultra' ||
           options.sessionMode === 'mastery-test') &&
-        mode === 'typed-word',
+        question.mode === 'typed-word',
     };
   });
 }
@@ -490,14 +493,47 @@ function buildOmegaQuestionsForWord(
   recentAttempts: QuizAttempt[],
   wordIndex: number,
 ): QuizQuestion[] {
-  const contextOffset = getContextOffset(word, recentAttempts, wordIndex);
+  // Use a word-stable seed rather than its shuffled position. Every completed
+  // Omega adds two answers for this word, so the next weekly test advances to
+  // a different prompt/source rotation even though the test order changes.
+  const contextOffset = getContextOffset(
+    word,
+    recentAttempts,
+    getTermHash(word.id) % 3,
+  );
   return [
     buildFastOmegaRecognitionQuestion(word, omegaWords, wordIndex, contextOffset),
-    {
-      ...buildTypedWordQuestion(word, contextOffset + 1, true),
-      strictSpelling: true,
-    },
+    buildOmegaDirectRecallQuestion(word, omegaWords, wordIndex, contextOffset + 1),
   ];
+}
+
+function buildOmegaDirectRecallQuestion(
+  word: Word,
+  words: Word[],
+  index: number,
+  contextOffset: number,
+): QuizQuestion {
+  if (canBuildTypedWordQuestion(word, words)) {
+    return {
+      ...buildTypedWordQuestion(word, words, contextOffset, 'full'),
+      strictSpelling: true,
+    };
+  }
+
+  // Never make a learner type an answer from a clue that could reasonably
+  // describe another saved word. Omega still tests direct recall here, but
+  // presents the saved terms as choices when the clue is not distinctive.
+  return words.length >= 2
+    ? buildDefinitionToWordQuestion(
+        word,
+        words,
+        index,
+        contextOffset,
+        true,
+        'hard',
+        'full',
+      )
+    : buildWordToDefinitionQuestion(word, words, index, true, 'hard', 'full');
 }
 
 function buildFastOmegaRecognitionQuestion(
@@ -507,7 +543,7 @@ function buildFastOmegaRecognitionQuestion(
   contextOffset: number,
 ): QuizQuestion {
   if (words.length < 2) {
-    const answer = getQuestionMeaning(word, true);
+    const answer = getQuestionMeaning(word, true, 'full', contextOffset);
     const distractors = FALLBACK_DEFINITIONS.filter(
       (definition) => definition !== answer,
     ).slice(0, 3);
@@ -524,40 +560,69 @@ function buildFastOmegaRecognitionQuestion(
     };
   }
 
-  const recallPrompt = getSafeRecallPrompt(word, contextOffset, index % 2 === 1, true);
-  const otherWords = words.filter((item) => item.id !== word.id);
-  const rotationStart = otherWords.length ? index % otherWords.length : 0;
-  const distractors = pickTopUnique(
-    [...otherWords.slice(rotationStart), ...otherWords.slice(0, rotationStart)].map(
-      (item) => item.term,
+  const recognitionBuilders: Array<() => QuizQuestion> = [
+    () => buildDefinitionToWordQuestion(
+      word,
+      words,
+      index,
+      contextOffset,
+      true,
+      'hard',
+      'full',
     ),
-    word.term,
-    3,
-  );
+  ];
 
-  return {
-    word,
-    prompt: recallPrompt.prompt,
-    displayText: recallPrompt.displayText,
-    answer: word.term,
-    options: shuffle([word.term, ...distractors]),
-    mode: 'definition-to-word',
-    difficulty: getQuestionDifficulty('definition-to-word'),
-    helperText: recallPrompt.chooseHelperText,
-    feedback: `The word is “${word.term}”.`,
-  };
+  if (canBuildSentenceUsageQuestion(word, words)) {
+    recognitionBuilders.push(() => buildSentenceUsageQuestion(
+      word,
+      words,
+      index,
+      contextOffset,
+      'hard',
+    ));
+  }
+  if (canBuildClosestSynonymQuestion(word, words)) {
+    recognitionBuilders.push(() => buildClosestSynonymQuestion(
+      word,
+      words,
+      index + contextOffset,
+      'hard',
+    ));
+  }
+
+  // A completed Omega contributes two answers per word. Advancing this
+  // offset on the next assessment rotates to another available recognition
+  // or context format before reusing the same one.
+  return recognitionBuilders[contextOffset % recognitionBuilders.length]();
 }
 
 export function getOmegaTestAttempts(analytics: AnalyticsData) {
-  return analytics.quizHistory.filter((attempt) =>
-    attempt.answers.some((answer) => answer.sessionMode === 'omega-test'),
+  return [
+    ...analytics.quizHistory,
+    ...(analytics.omegaTestHistory ?? []),
+  ]
+    .filter((attempt) =>
+      attempt.answers.some((answer) => answer.sessionMode === 'omega-test'),
+    )
+    .sort((first, second) =>
+      Date.parse(second.completedAt) - Date.parse(first.completedAt),
+    );
+}
+
+export function isCompletedOmegaTestAttempt(attempt: QuizAttempt) {
+  return attempt.completed !== false && !attempt.answers.some(
+    (answer) => answer.attemptStatus === 'incomplete',
   );
 }
 
 export function getOmegaTestStatus(
   analytics: AnalyticsData,
   now = Date.now(),
+  activeTestStartedAt?: string | null,
 ) {
+  // Starting an Omega Test is a weekly commitment. A saved in-progress test
+  // keeps its exact questions ready to resume, but still starts this week's
+  // reset so it cannot be bypassed by beginning another assessment.
   const attempts = getOmegaTestAttempts(analytics);
   const mostRecent = attempts.reduce<QuizAttempt | null>((latest, attempt) => {
     if (!latest) return attempt;
@@ -565,9 +630,15 @@ export function getOmegaTestStatus(
       ? attempt
       : latest;
   }, null);
-  const mostRecentTimestamp = mostRecent ? Date.parse(mostRecent.completedAt) : 0;
+  const attemptTimestamp = mostRecent ? Date.parse(mostRecent.completedAt) : 0;
+  const activeTimestamp = activeTestStartedAt ? Date.parse(activeTestStartedAt) : 0;
+  const mostRecentTimestamp = Math.max(
+    Number.isFinite(attemptTimestamp) ? attemptTimestamp : 0,
+    Number.isFinite(activeTimestamp) ? activeTimestamp : 0,
+  );
   const nextAvailableAt = mostRecentTimestamp + OMEGA_TEST_COOLDOWN_MS;
-  const remainingMs = mostRecent
+  const hasOmegaStart = mostRecentTimestamp > 0;
+  const remainingMs = hasOmegaStart
     ? Math.max(0, nextAvailableAt - now)
     : 0;
 
@@ -575,7 +646,7 @@ export function getOmegaTestStatus(
     attempts,
     mostRecent,
     available: remainingMs === 0,
-    nextAvailableAt: mostRecent ? new Date(nextAvailableAt).toISOString() : null,
+    nextAvailableAt: hasOmegaStart ? new Date(nextAvailableAt).toISOString() : null,
     remainingMs,
   };
 }
@@ -599,7 +670,7 @@ export function buildCategoryPracticeQuiz(
     return buildQuiz(words, recentAttempts, masteryByWordId, priorityWordIds, options);
   }
   if (words.length >= 4) {
-    return buildQuiz(words, recentAttempts, masteryByWordId, priorityWordIds);
+    return buildQuiz(words, recentAttempts, masteryByWordId, priorityWordIds, options);
   }
 
   const quizWords = pickQuizWords(words, recentAttempts, priorityWordIds);
@@ -607,6 +678,7 @@ export function buildCategoryPracticeQuiz(
     quizWords,
     masteryByWordId,
     options.questionTypePreferences,
+    recentAttempts,
   );
 }
 
@@ -614,6 +686,7 @@ function buildSmallCollectionQuiz(
   quizWords: Word[],
   masteryByWordId: Record<string, number>,
   questionTypePreferences: QuizQuestionTypePreferences | undefined,
+  recentAttempts: QuizAttempt[] = [],
 ) {
   const target = getCategoryPracticeQuizTarget(quizWords.length);
   const plan = getCategoryPracticeQuestionPlan(
@@ -621,11 +694,18 @@ function buildSmallCollectionQuiz(
     masteryByWordId,
     target,
     normalizeQuestionTypePreferences(questionTypePreferences),
+    recentAttempts,
   );
   const questionKeys = new Set<string>();
 
   return plan.flatMap(({ word, mode }, index) => {
-    const question = buildQuestionForMode(word, quizWords, index, mode, index);
+    const question = buildQuestionForMode(
+      word,
+      quizWords,
+      index,
+      mode,
+      getContextOffset(word, recentAttempts, index),
+    );
     const key = `${question.prompt}\u0000${question.displayText}\u0000${question.answer}`;
     if (questionKeys.has(key)) return [];
     questionKeys.add(key);
@@ -635,7 +715,9 @@ function buildSmallCollectionQuiz(
 
 export function getCategoryPracticeQuizTarget(wordCount: number) {
   if (wordCount <= 0) return 0;
-  if (wordCount === 1) return 3;
+  // A one-word set gets two fair recognition checks. Do not manufacture a
+  // third typed prompt from an underspecified clue just to fill the round.
+  if (wordCount === 1) return 2;
   if (wordCount === 2) return 4;
   if (wordCount === 3) return 6;
   return Math.min(wordCount, MAX_QUIZ_QUESTIONS);
@@ -660,6 +742,7 @@ function getQuestionModesForSession(
   quizWords: Word[],
   masteryByWordId: Record<string, number>,
   options: QuizBuildOptions,
+  recentAttempts: QuizAttempt[] = [],
 ) {
   const questionTypePreferences = normalizeQuestionTypePreferences(
     options.questionTypePreferences,
@@ -674,12 +757,14 @@ function getQuestionModesForSession(
       planWords,
       masteryByWordId,
       questionTypePreferences,
+      recentAttempts,
     );
   }
 
   const counts = new Map<QuizQuestionMode, number>();
   const modes: QuizQuestionMode[] = [];
   const usedModesByWordId = new Map<string, Set<QuizQuestionMode>>();
+  const mostRecentModesByWordId = getMostRecentQuestionModes(recentAttempts);
   planWords.forEach((word, index) => {
     const candidates = getEnabledModeCandidates(
       word,
@@ -689,7 +774,13 @@ function getQuestionModesForSession(
       questionTypePreferences,
     );
     const lastMode = modes.at(-1);
-    const nonRepeatingCandidates = candidates.filter((mode) => mode !== lastMode);
+    const mostRecentMode = mostRecentModesByWordId.get(word.id);
+    // When another fair format is available, do not lead with the same format
+    // this learner most recently saw for the word. The existing per-word set
+    // still prevents repeats within one longer session.
+    const nonRepeatingCandidates = candidates.filter(
+      (mode) => mode !== lastMode && mode !== mostRecentMode,
+    );
     const modeCandidates = nonRepeatingCandidates.length
       ? nonRepeatingCandidates
       : candidates;
@@ -701,9 +792,9 @@ function getQuestionModesForSession(
       : 0;
     const typedCount = counts.get('typed-word') ?? 0;
     const mode =
-      difficulty === 'ultra'
+      difficulty === 'ultra' && pool.includes('typed-word')
         ? 'typed-word'
-        : difficulty === 'hard' && pool.includes('typed-word') && typedCount < typedTarget
+      : difficulty === 'hard' && pool.includes('typed-word') && typedCount < typedTarget
           ? 'typed-word'
           : pickLeastUsedMode(pool, counts, lastMode, questionTypePreferences);
     modes.push(mode);
@@ -714,6 +805,27 @@ function getQuestionModesForSession(
   return modes;
 }
 
+function getMostRecentQuestionModes(recentAttempts: QuizAttempt[]) {
+  const latestByWordId = new Map<string, { mode: QuizQuestionMode; at: number }>();
+
+  recentAttempts.forEach((attempt) => {
+    const completedAt = Date.parse(attempt.completedAt) || 0;
+    attempt.answers.forEach((answer) => {
+      if (!answer.questionMode || answer.isAttemptMarker) return;
+      const answeredAt = answer.answeredAt ? Date.parse(answer.answeredAt) : completedAt;
+      const timestamp = Number.isFinite(answeredAt) ? answeredAt : completedAt;
+      const current = latestByWordId.get(answer.wordId);
+      if (!current || timestamp >= current.at) {
+        latestByWordId.set(answer.wordId, { mode: answer.questionMode, at: timestamp });
+      }
+    });
+  });
+
+  return new Map(
+    Array.from(latestByWordId.entries()).map(([wordId, value]) => [wordId, value.mode]),
+  );
+}
+
 function getDifficultyModeCandidates(
   word: Word,
   words: Word[],
@@ -722,7 +834,15 @@ function getDifficultyModeCandidates(
 ): QuizQuestionMode[] {
   const adaptive = getModeCandidates(word, masteryScore, words);
   if (difficulty === 'automatic' || difficulty === 'standard') return adaptive;
-  if (difficulty === 'ultra') return ['typed-word' as const];
+  if (difficulty === 'ultra') {
+    return adaptive.includes('typed-word')
+      ? ['typed-word' as const]
+      : adaptive.length
+        ? adaptive
+        : words.length >= 2
+          ? ['definition-to-word' as const]
+          : ['word-to-definition' as const];
+  }
   if (difficulty === 'easy') {
     const easy = adaptive.filter(
       (mode) => mode === 'word-to-definition' || mode === 'true-false' || mode === 'definition-to-word',
@@ -742,9 +862,15 @@ function getDifficultyModeCandidates(
   // most meaningful contextual prompts available so it measures knowledge
   // rather than simply repeating the same clue.
   const contextualHard = hard.filter((mode) => mode !== 'typed-word');
-  return contextualHard.length
-    ? ['typed-word', ...contextualHard]
-    : ['typed-word'];
+  return adaptive.includes('typed-word')
+    ? contextualHard.length
+      ? ['typed-word', ...contextualHard]
+      : ['typed-word']
+    : contextualHard.length
+      ? contextualHard
+      : words.length >= 2
+        ? ['definition-to-word']
+        : ['word-to-definition'];
 }
 
 function getEnabledModeCandidates(
@@ -802,6 +928,7 @@ function getCategoryPracticeQuestionPlan(
   masteryByWordId: Record<string, number>,
   target: number,
   preferences = normalizeQuestionTypePreferences(undefined),
+  recentAttempts: QuizAttempt[] = [],
 ) {
   const supportedModes = getSupportedCategoryPracticeModes(words)
     .filter((mode) => preferences[mode].enabled);
@@ -811,6 +938,7 @@ function getCategoryPracticeQuestionPlan(
   const maxTypedRecall = Math.max(1, Math.round(target * 0.35));
   const usedModesByWordId = new Map<string, Set<QuizQuestionMode>>();
   const modeCounts = new Map<QuizQuestionMode, number>();
+  const mostRecentModesByWordId = getMostRecentQuestionModes(recentAttempts);
   const plan: { word: Word; mode: QuizQuestionMode }[] = [];
   let lastMode: QuizQuestionMode | undefined;
 
@@ -835,9 +963,16 @@ function getCategoryPracticeQuestionPlan(
           (modeCounts.get('typed-word') ?? 0) < maxTypedRecall,
       );
       const eligibleCandidates = candidates.length ? candidates : availableCandidates;
-      if (eligibleCandidates.length === 0) continue;
+      const mostRecentMode = mostRecentModesByWordId.get(word.id);
+      const differentFromRecent = eligibleCandidates.filter(
+        (mode) => mode !== mostRecentMode,
+      );
+      const variedCandidates = differentFromRecent.length
+        ? differentFromRecent
+        : eligibleCandidates;
+      if (variedCandidates.length === 0) continue;
 
-      const mode = pickLeastUsedMode(eligibleCandidates, modeCounts, lastMode, preferences);
+      const mode = pickLeastUsedMode(variedCandidates, modeCounts, lastMode, preferences);
       usedModes.add(mode);
       usedModesByWordId.set(word.id, usedModes);
       modeCounts.set(mode, (modeCounts.get(mode) ?? 0) + 1);
@@ -856,8 +991,11 @@ function getSupportedCategoryPracticeModes(words: Word[]) {
   // A definition-to-word question needs at least one saved word as a genuine
   // alternative. With one word, use the other three existing formats instead.
   const baseModes = words.length < 2
-    ? (['word-to-definition', 'true-false', 'typed-word'] as QuizQuestionMode[])
-    : (['word-to-definition', 'definition-to-word', 'true-false', 'typed-word'] as QuizQuestionMode[]);
+    ? (['word-to-definition', 'true-false'] as QuizQuestionMode[])
+    : (['word-to-definition', 'definition-to-word', 'true-false'] as QuizQuestionMode[]);
+  if (words.some((word) => canBuildTypedWordQuestion(word, words))) {
+    baseModes.push('typed-word');
+  }
   const contextualModes: QuizQuestionMode[] = [];
 
   if (words.some((word) => canBuildSentenceUsageQuestion(word, words))) {
@@ -878,7 +1016,7 @@ function getSupportedQuestionModesForWord(word: Word, words: Word[]) {
     'word-to-definition',
     ...(words.length >= 2 ? ['definition-to-word' as const] : []),
     'true-false',
-    'typed-word',
+    ...(canBuildTypedWordQuestion(word, words) ? ['typed-word' as const] : []),
     ...(canBuildSentenceUsageQuestion(word, words) ? ['sentence-usage' as const] : []),
     ...(canBuildSentenceCompletionQuestion(word, words) ? ['sentence-completion' as const] : []),
     ...(canBuildClosestSynonymQuestion(word, words) ? ['closest-synonym' as const] : []),
@@ -897,7 +1035,11 @@ function getCategoryPracticeModeCandidates(
     ...supportedModes.filter(
       (mode) => !preferred.includes(mode) && !isContextualMode(mode),
     ),
-  ].filter((mode) => supportedModes.includes(mode));
+  ].filter(
+    (mode) =>
+      supportedModes.includes(mode) &&
+      (mode !== 'typed-word' || canBuildTypedWordQuestion(word, words)),
+  );
 }
 
 function isContextualMode(mode: QuizQuestionMode) {
@@ -940,6 +1082,7 @@ function buildQuestionForMode(
 ) {
   const useDetailedClues = selectedDifficulty === 'hard' || selectedDifficulty === 'ultra';
   const questionChallenge = getQuestionChallenge(selectedDifficulty);
+  const definitionVariation = getDefinitionVariationLevel(selectedDifficulty);
   if (mode === 'definition-to-word') {
     return buildDefinitionToWordQuestion(
       word,
@@ -948,6 +1091,7 @@ function buildQuestionForMode(
       contextOffset,
       useDetailedClues,
       questionChallenge,
+      definitionVariation,
     );
   }
 
@@ -958,11 +1102,22 @@ function buildQuestionForMode(
       index,
       useDetailedClues,
       questionChallenge,
+      definitionVariation,
     );
   }
 
   if (mode === 'typed-word') {
-    return buildTypedWordQuestion(word, contextOffset, useDetailedClues);
+    return canBuildTypedWordQuestion(word, words)
+      ? buildTypedWordQuestion(word, words, contextOffset, definitionVariation)
+      : buildDefinitionToWordQuestion(
+          word,
+          words,
+          index,
+          contextOffset,
+          useDetailedClues,
+          questionChallenge,
+          definitionVariation,
+        );
   }
 
   if (mode === 'sentence-usage') {
@@ -995,6 +1150,7 @@ function buildQuestionForMode(
     index,
     useDetailedClues,
     questionChallenge,
+    definitionVariation,
   );
 }
 
@@ -1006,10 +1162,21 @@ function getQuestionChallenge(
   return 'standard';
 }
 
+function getDefinitionVariationLevel(
+  selectedDifficulty: QuizDifficultyPreference,
+): DefinitionVariationLevel {
+  if (selectedDifficulty === 'automatic') return 'full';
+  if (selectedDifficulty === 'standard') return 'light';
+  if (selectedDifficulty === 'hard') return 'hard';
+  if (selectedDifficulty === 'ultra') return 'full';
+  return 'none';
+}
+
 function getBalancedQuestionModes(
   words: Word[],
   masteryByWordId: Record<string, number>,
   preferences = normalizeQuestionTypePreferences(undefined),
+  recentAttempts: QuizAttempt[] = [],
 ) {
   const maxTypedRecall = Math.max(1, Math.round(words.length * 0.35));
   const includesEarlyLearningWord = words.some(
@@ -1017,6 +1184,7 @@ function getBalancedQuestionModes(
   );
   const counts = new Map<QuizQuestionMode, number>();
   const modes: QuizQuestionMode[] = [];
+  const mostRecentModesByWordId = getMostRecentQuestionModes(recentAttempts);
 
   words.forEach((word) => {
     const masteryScore = masteryByWordId[word.id] ?? word.reviews * 12;
@@ -1034,8 +1202,15 @@ function getBalancedQuestionModes(
         (counts.get('typed-word') ?? 0) < maxTypedRecall,
     );
     const available = typedLimited.length ? typedLimited : candidates;
-    const nonRepeating = available.filter((candidate) => candidate !== lastMode);
-    const pool = nonRepeating.length ? nonRepeating : available;
+    const mostRecentMode = mostRecentModesByWordId.get(word.id);
+    const differentFromRecent = available.filter(
+      (candidate) => candidate !== mostRecentMode,
+    );
+    const variedAvailable = differentFromRecent.length
+      ? differentFromRecent
+      : available;
+    const nonRepeating = variedAvailable.filter((candidate) => candidate !== lastMode);
+    const pool = nonRepeating.length ? nonRepeating : variedAvailable;
     const mode = pickLeastUsedMode(pool, counts, lastMode, preferences);
 
     modes.push(mode);
@@ -1100,6 +1275,7 @@ function getModeCandidates(
   const canUseSentence = canBuildSentenceUsageQuestion(word, words);
   const canUseSentenceCompletion = canBuildSentenceCompletionQuestion(word, words);
   const canUseSynonym = canBuildClosestSynonymQuestion(word, words);
+  const canUseTypedRecall = canBuildTypedWordQuestion(word, words);
   const directRecallCorrect = word.mastery?.directRecallCorrect ?? 0;
   const delayedDirectRecallCorrect = word.mastery?.delayedDirectRecallCorrect ?? 0;
   const contextualModes: QuizQuestionMode[] = [
@@ -1128,7 +1304,7 @@ function getModeCandidates(
   }
   if (directRecallCorrect < 2) {
     return [
-      'typed-word',
+      ...(canUseTypedRecall ? ['typed-word' as const] : []),
       ...(canUseSentenceCompletion ? ['sentence-completion' as const] : []),
       'definition-to-word',
       ...contextualModes,
@@ -1137,14 +1313,19 @@ function getModeCandidates(
   }
   if (delayedDirectRecallCorrect < 1) {
     return [
-      'typed-word',
+      ...(canUseTypedRecall ? ['typed-word' as const] : []),
       ...(canUseSynonym ? ['closest-synonym' as const] : []),
       ...(canUseSentenceCompletion ? ['sentence-completion' as const] : []),
       ...contextualModes,
       'definition-to-word',
     ];
   }
-  return ['typed-word', ...contextualModes, 'definition-to-word', 'true-false'];
+  return [
+    ...(canUseTypedRecall ? ['typed-word' as const] : []),
+    ...contextualModes,
+    'definition-to-word',
+    'true-false',
+  ];
 }
 
 function pickQuizWords(
@@ -1157,9 +1338,22 @@ function pickQuizWords(
     (word) => !word.mastery?.excludedFromPractice,
   );
   const wordsById = new Map(practiceWords.map((word) => [word.id, word]));
-  const scheduledPriorityWords = Array.from(new Set(priorityWordIds))
+  const queuedWords = practiceWords
+    .filter((word) => word.mastery?.reviewNext === true)
+    .sort(
+      (first, second) =>
+        (first.mastery?.reviewNextAt ?? '').localeCompare(
+          second.mastery?.reviewNextAt ?? '',
+        ),
+    );
+  const queuedWordIds = new Set(queuedWords.map((word) => word.id));
+  const requestedPriorityWords = Array.from(new Set(priorityWordIds))
     .map((wordId) => wordsById.get(wordId))
-    .filter((word): word is Word => Boolean(word));
+    .filter((word): word is Word => Boolean(word))
+    .filter((word) => !queuedWordIds.has(word.id));
+  // A saved Next choice is a one-time learner request, so it always leads a
+  // quiz—even when that quiz was opened from another part of the app.
+  const scheduledPriorityWords = [...queuedWords, ...requestedPriorityWords];
   const priorityWordIdsSet = new Set(
     scheduledPriorityWords.map((word) => word.id),
   );
@@ -1238,7 +1432,7 @@ export function evaluateQuizAnswer(
   if (response === null) {
     return { correct: false, hasSpellingNote: false };
   }
-  if (mode !== 'typed-word') {
+  if (mode !== 'typed-word' && mode !== 'sentence-completion') {
     return { correct: response === answer, hasSpellingNote: false };
   }
 
@@ -1288,14 +1482,21 @@ function buildWordToDefinitionQuestion(
   index: number,
   useDetailedClues = false,
   questionChallenge: QuestionChallenge = 'standard',
+  definitionVariation: DefinitionVariationLevel = 'none',
 ): QuizQuestion {
-  const answer = getQuestionMeaning(word, useDetailedClues);
+  const answer = getQuestionMeaning(
+    word,
+    useDetailedClues,
+    definitionVariation,
+    index,
+  );
   const distractors = getDefinitionDistractors(
     word,
     words,
     index,
     useDetailedClues,
     questionChallenge,
+    definitionVariation,
   );
 
   return {
@@ -1318,6 +1519,7 @@ function buildDefinitionToWordQuestion(
   contextOffset = index,
   useDetailedClues = false,
   questionChallenge: QuestionChallenge = 'standard',
+  definitionVariation: DefinitionVariationLevel = 'none',
 ): QuizQuestion {
   const distractors = getWordDistractors(word, words, index, questionChallenge);
   const recallPrompt = getSafeRecallPrompt(
@@ -1325,6 +1527,7 @@ function buildDefinitionToWordQuestion(
     contextOffset,
     contextOffset % 2 === 1,
     useDetailedClues,
+    definitionVariation,
   );
 
   return {
@@ -1346,12 +1549,18 @@ function buildTrueFalseQuestion(
   index: number,
   useDetailedClues = false,
   questionChallenge: QuestionChallenge = 'standard',
+  definitionVariation: DefinitionVariationLevel = 'none',
 ): QuizQuestion {
-  const shouldBeTrue = words.length < 2 || getTermHash(word.term) % 2 === 0;
+  const shouldBeTrue = words.length < 2 || getTermHash(`${word.term}:${index}`) % 2 === 0;
   const pairedWord = shouldBeTrue
     ? word
     : getAlternateWord(word, words, questionChallenge) ?? word;
-  const displayedMeaning = getQuestionMeaning(pairedWord, useDetailedClues);
+  const displayedMeaning = getQuestionMeaning(
+    pairedWord,
+    useDetailedClues,
+    definitionVariation,
+    index,
+  );
 
   return {
     word,
@@ -1368,18 +1577,31 @@ function buildTrueFalseQuestion(
 
 function buildTypedWordQuestion(
   word: Word,
+  words: Word[],
   contextOffset = 0,
-  useDetailedClues = false,
+  definitionVariation: DefinitionVariationLevel = 'none',
 ): QuizQuestion {
   // Direct recall is the strictest question type. When there is a genuine
   // saved example, alternating it with the definition avoids repeating the
   // exact same cue in longer hard and Ultra practice rounds.
-  const recallPrompt = getSafeRecallPrompt(
+  const recallPrompt = getTypedRecallPrompt(
     word,
+    words,
     contextOffset,
-    contextOffset % 2 === 1,
-    useDetailedClues,
+    definitionVariation,
   );
+
+  if (!recallPrompt) {
+    return buildDefinitionToWordQuestion(
+      word,
+      words,
+      contextOffset,
+      contextOffset,
+      false,
+      'standard',
+      definitionVariation,
+    );
+  }
 
   return {
     word,
@@ -1390,6 +1612,7 @@ function buildTypedWordQuestion(
     mode: 'typed-word',
     difficulty: getQuestionDifficulty('typed-word'),
     helperText: recallPrompt.typedHelperText,
+    answerLetterCount: getLetterCount(word.term),
     feedback: `The word is "${word.term}".`,
   };
 }
@@ -1432,7 +1655,7 @@ function buildSentenceCompletionQuestion(
 ): QuizQuestion {
   const context = getCorrectExample(word, contextOffset);
   const blankedContext = hideWordInExample(context, word.term) ?? context;
-  const distractors = getWordDistractors(word, words, index, questionChallenge);
+  const distractors = getUnambiguousCompletionDistractors(word, words, index);
 
   return {
     word,
@@ -1442,7 +1665,8 @@ function buildSentenceCompletionQuestion(
     options: shuffle([word.term, ...distractors]),
     mode: 'sentence-completion',
     difficulty: getQuestionDifficulty('sentence-completion'),
-    helperText: 'Choose the saved word that makes the context make sense.',
+    helperText: 'Choose the one saved word that completes this context.',
+    answerLetterCount: getLetterCount(word.term),
     feedback: `“${word.term}” fits because it means ${getMeaning(word).toLowerCase()}`,
   };
 }
@@ -1453,7 +1677,8 @@ function buildClosestSynonymQuestion(
   index: number,
   questionChallenge: QuestionChallenge = 'standard',
 ): QuizQuestion {
-  const answer = getSynonymCandidates(word)[0];
+  const synonymCandidates = getSynonymCandidates(word);
+  const answer = synonymCandidates[index % synonymCandidates.length];
   const distractors = getSynonymDistractors(
     word,
     words,
@@ -1479,11 +1704,74 @@ function getMeaning(word: Word) {
   return getCompleteFlashcardDefinition(word.definition, word.simpleDefinition);
 }
 
-function getQuestionMeaning(word: Word, useDetailedClues = false) {
+function getQuestionMeaning(
+  word: Word,
+  useDetailedClues = false,
+  definitionVariation: DefinitionVariationLevel = 'none',
+  variationOffset = 0,
+) {
   const detailedDefinition = word.definition.replace(/\s+/g, ' ').trim();
-  return useDetailedClues && detailedDefinition
+  const primaryDefinition = useDetailedClues && detailedDefinition
     ? detailedDefinition
     : getMeaning(word);
+  return getDefinitionVariantForQuiz(word, definitionVariation, variationOffset) ??
+    primaryDefinition;
+}
+
+/**
+ * Advanced prompts can vary a definition's wording, but only when a saved
+ * alternative agrees with the primary meaning and part of speech. This avoids
+ * treating a separate dictionary sense as a harder version of the same quiz.
+ */
+export function getDefinitionVariantForQuiz(
+  word: Word,
+  level: DefinitionVariationLevel,
+  offset = 0,
+) {
+  if (level === 'none') return null;
+
+  const rotation = getTermHash(`${word.id}:${offset}`);
+  if (level === 'light' && rotation % 5 !== 0) return null;
+  if (level === 'hard' && rotation % 2 !== 0) return null;
+
+  const primaryTokens = new Set(
+    getMeaningfulTokens(`${word.definition} ${word.simpleDefinition ?? ''}`),
+  );
+  const expectedPartOfSpeech = word.partOfSpeech?.trim().toLowerCase();
+  const variants = (word.definitionVariants ?? [])
+    .map((variant) => ({
+      ...variant,
+      text: variant.text.replace(/\s+/g, ' ').trim(),
+      partOfSpeech: variant.partOfSpeech?.trim().toLowerCase(),
+    }))
+    .filter((variant) => variant.text.length >= 16)
+    .filter((variant) => !containsAnswerFamily(variant.text, word.term))
+    .filter(
+      (variant) =>
+        !expectedPartOfSpeech ||
+        !variant.partOfSpeech ||
+        variant.partOfSpeech === expectedPartOfSpeech,
+    )
+    .filter((variant) => {
+      const variantTokens = getMeaningfulTokens(variant.text);
+      const sharedTokens = variantTokens.filter((token) => primaryTokens.has(token));
+      return sharedTokens.length >= 2;
+    });
+
+  // Prefer rotating between independent dictionary sources first. If a word
+  // has only one vetted source, additional safe phrasings still add variety
+  // without treating a separate sense as interchangeable.
+  const sourceVariants = Array.from(
+    new Map(
+      variants
+        .filter((variant) => Boolean(variant.source?.trim()))
+        .map((variant) => [variant.source.trim().toLocaleLowerCase(), variant]),
+    ).values(),
+  );
+  const rotationPool = sourceVariants.length >= 2 ? sourceVariants : variants;
+  return rotationPool.length
+    ? rotationPool[rotation % rotationPool.length].text
+    : null;
 }
 
 type RecallPrompt = {
@@ -1504,10 +1792,17 @@ function getSafeRecallPrompt(
   contextOffset = 0,
   preferContext = false,
   useDetailedClues = false,
+  definitionVariation: DefinitionVariationLevel = 'none',
 ): RecallPrompt {
   const definitions = Array.from(
     new Set(
       [
+        getQuestionMeaning(
+          word,
+          useDetailedClues,
+          definitionVariation,
+          contextOffset,
+        ),
         ...(useDetailedClues ? [word.definition] : []),
         getMeaning(word),
         word.definition,
@@ -1560,6 +1855,93 @@ function getSafeRecallPrompt(
     typedHelperText: 'Use the clue to recall the word, then check your answer.',
     chooseHelperText: 'Choose the word that best fits this clue.',
   };
+}
+
+/**
+ * Typed recall should never depend on a short, generic gloss. It is only
+ * offered when WordWiz can show a detailed, non-leaking definition that is
+ * clearly different from every other saved word. A real masked example is
+ * added when available, giving the learner both meaning and usage rather than
+ * asking them to guess between near-synonyms.
+ */
+function getTypedRecallPrompt(
+  word: Word,
+  words: Word[],
+  contextOffset = 0,
+  definitionVariation: DefinitionVariationLevel = 'none',
+): RecallPrompt | null {
+  const detailedDefinition = word.definition.replace(/\s+/g, ' ').trim();
+  const completeDefinition = getMeaning(word).replace(/\s+/g, ' ').trim();
+  const context = getSafeRecallContext(word, contextOffset);
+  const definition = [
+    getQuestionMeaning(
+      word,
+      true,
+      definitionVariation,
+      contextOffset,
+    ),
+    detailedDefinition,
+    completeDefinition,
+  ]
+    .find(
+      (candidate) =>
+        Boolean(candidate) &&
+        !containsAnswerFamily(candidate, word.term) &&
+        isSpecificTypedRecallClue(`${candidate} ${context ?? ''}`) &&
+        isTypedRecallClueDistinct(word, `${candidate} ${context ?? ''}`, words),
+    );
+
+  if (!definition) return null;
+
+  const partOfSpeech = word.partOfSpeech?.trim();
+  const details = [
+    partOfSpeech ? `Part of speech: ${partOfSpeech}` : null,
+    `Meaning: ${definition}`,
+    context ? `Context: ${context}` : null,
+  ].filter((detail): detail is string => Boolean(detail));
+
+  return {
+    prompt: 'TYPE THE EXACT SAVED WORD',
+    displayText: details.join('\n\n'),
+    typedHelperText: context
+      ? 'Use the precise meaning and context to type the one saved word that fits.'
+      : 'Use the precise meaning to type the one saved word that fits.',
+    chooseHelperText: 'Choose the saved word that exactly matches this clue.',
+  };
+}
+
+function canBuildTypedWordQuestion(word: Word, words: Word[]) {
+  return Boolean(getTypedRecallPrompt(word, words));
+}
+
+function isSpecificTypedRecallClue(clue: string) {
+  const meaningfulTokens = getMeaningfulTokens(clue);
+  return clue.length >= 52 && meaningfulTokens.length >= 7;
+}
+
+function isTypedRecallClueDistinct(
+  word: Word,
+  clue: string,
+  words: Word[],
+) {
+  const clueTokens = getMeaningfulTokens(clue);
+  if (clueTokens.length < 7) return false;
+  const clueTokenSet = new Set(clueTokens);
+
+  return words
+    .filter((candidate) => candidate.id !== word.id)
+    .every((candidate) => {
+      const candidateTokens = getMeaningfulTokens(
+        `${candidate.definition} ${candidate.simpleDefinition ?? ''}`,
+      );
+      if (candidateTokens.length === 0) return true;
+
+      const sharedTokenCount = candidateTokens.filter((token) =>
+        clueTokenSet.has(token),
+      ).length;
+      const overlap = sharedTokenCount / Math.min(clueTokens.length, candidateTokens.length);
+      return overlap < 0.45;
+    });
 }
 
 function getSafeRecallContext(word: Word, contextOffset = 0) {
@@ -1643,10 +2025,23 @@ function getDefinitionDistractors(
   index: number,
   useDetailedClues = false,
   questionChallenge: QuestionChallenge = 'standard',
+  definitionVariation: DefinitionVariationLevel = 'none',
 ) {
-  const answer = getQuestionMeaning(word, useDetailedClues);
+  const answer = getQuestionMeaning(
+    word,
+    useDetailedClues,
+    definitionVariation,
+    index,
+  );
   const otherDefinitions = getRankedDistractorWords(word, words, questionChallenge)
-    .map((item) => getQuestionMeaning(item, useDetailedClues));
+    .map((item, distractorIndex) =>
+      getQuestionMeaning(
+        item,
+        useDetailedClues,
+        definitionVariation,
+        index + distractorIndex + 1,
+      ),
+    );
   const fallbacks = FALLBACK_DEFINITIONS.filter(
     (definition) => definition !== answer,
   );
@@ -1674,6 +2069,68 @@ function getWordDistractors(
     getRankedDistractorWords(word, words, questionChallenge).map((item) => item.term),
     word.term,
     3,
+  );
+}
+
+// A completion prompt is only fair when the choices cannot be swapped for a
+// near-synonym and still sound reasonable. Unlike definition questions, this
+// deliberately uses semantically distant saved words as alternatives.
+function getUnambiguousCompletionDistractors(
+  word: Word,
+  words: Word[],
+  index: number,
+) {
+  const relatedTerms = new Set(
+    [word.term, ...(word.synonyms ?? []), ...(word.commonWords ?? [])]
+      .map((term) => term.trim().toLocaleLowerCase())
+      .filter(Boolean),
+  );
+  const targetTokens = new Set(
+    getMeaningfulTokens(`${word.definition} ${word.simpleDefinition ?? ''}`),
+  );
+
+  const candidates = words
+    .filter(
+      (candidate) =>
+        candidate.id !== word.id &&
+        !containsAnswerFamily(candidate.term, word.term) &&
+        !relatedTerms.has(candidate.term.trim().toLocaleLowerCase()) &&
+        !isSemanticallyInterchangeableForCompletion(word, candidate, targetTokens),
+    )
+    .sort(
+      (first, second) =>
+        getDistractorRelevance(word, first) - getDistractorRelevance(word, second) ||
+        first.term.localeCompare(second.term),
+    )
+    .map((candidate) => candidate.term);
+
+  return rotateAndPickUnique(candidates, word.term, index, 3);
+}
+
+function isSemanticallyInterchangeableForCompletion(
+  word: Word,
+  candidate: Word,
+  targetTokens: Set<string>,
+) {
+  const candidateTerms = [
+    candidate.term,
+    ...(candidate.synonyms ?? []),
+    ...(candidate.commonWords ?? []),
+  ].map((term) => term.trim().toLocaleLowerCase());
+  const wordTerms = new Set(
+    [word.term, ...(word.synonyms ?? []), ...(word.commonWords ?? [])]
+      .map((term) => term.trim().toLocaleLowerCase()),
+  );
+  if (candidateTerms.some((term) => wordTerms.has(term))) return true;
+
+  const candidateTokens = getMeaningfulTokens(
+    `${candidate.definition} ${candidate.simpleDefinition ?? ''}`,
+  );
+  const sharedTokens = candidateTokens.filter((token) => targetTokens.has(token));
+  return (
+    sharedTokens.length >= 2 ||
+    (sharedTokens.length === 1 &&
+      Math.min(candidateTokens.length, targetTokens.size) <= 3)
   );
 }
 
@@ -1736,7 +2193,10 @@ function canBuildSentenceUsageQuestion(word: Word, words: Word[]) {
 }
 
 function canBuildSentenceCompletionQuestion(word: Word, words: Word[]) {
-  return Boolean(getCorrectExample(word)) && getWordDistractors(word, words, 0).length >= 2;
+  return (
+    Boolean(getCorrectExample(word)) &&
+    getUnambiguousCompletionDistractors(word, words, 0).length >= 2
+  );
 }
 
 function getCorrectExample(word: Word, contextOffset = 0) {
@@ -1801,7 +2261,7 @@ function getSentenceDistractors(
     return replacement && replacement !== answer ? [replacement] : [];
   });
 
-  return pickTopUnique(candidates, answer, 3);
+  return rotateAndPickUnique(candidates, answer, index, 3);
 }
 
 function canBuildClosestSynonymQuestion(word: Word, words: Word[]) {
@@ -1912,6 +2372,10 @@ function getHintPattern(answer: string) {
       return revealIndexes.has(index) ? character : '_';
     })
     .join(' ');
+}
+
+function getLetterCount(value: string) {
+  return Array.from(value).filter((character) => /\p{L}/u.test(character)).length;
 }
 
 function hideWordInExample(example: string, term: string) {
