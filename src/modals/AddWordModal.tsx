@@ -24,6 +24,7 @@ type SpeechRecognitionModule = {
     lang: string;
     interimResults: boolean;
     maxAlternatives: number;
+    continuous: boolean;
     iosTaskHint: 'confirmation';
     androidIntentOptions: { EXTRA_LANGUAGE_MODEL: 'web_search' };
   }) => void;
@@ -38,6 +39,7 @@ type SpeechRecognitionModule = {
 type SpeechPermissionResponse = {
   granted: boolean;
   canAskAgain?: boolean;
+  restricted?: boolean;
   status?: 'granted' | 'denied' | 'undetermined';
 };
 
@@ -111,11 +113,14 @@ export function AddWordModal({
   const [timePeriodDraft, setTimePeriodDraft] = useState('');
   const [historyDraft, setHistoryDraft] = useState('');
   const synonymsInputRef = useRef<TextInput>(null);
+  const termInputRef = useRef<TextInput>(null);
   const basicInfoInputRef = useRef<TextInput>(null);
   const timePeriodInputRef = useRef<TextInput>(null);
   const historyInputRef = useRef<TextInput>(null);
   const speechRecognitionModuleRef = useRef<SpeechRecognitionModule | null>(null);
   const speechRecognitionListenersRef = useRef<Array<{ remove: () => void }>>([]);
+  const dictationAttemptRef = useRef(0);
+  const finalDictationHandledRef = useRef(false);
   const duplicateWord = words.find(
     (word) =>
       word.id !== wordToEdit?.id &&
@@ -215,6 +220,7 @@ export function AddWordModal({
     discard?: boolean;
     updateState?: boolean;
   } = {}) {
+    dictationAttemptRef.current += 1;
     const speechRecognition = speechRecognitionModuleRef.current;
     if (updateState) {
       finishDictation();
@@ -243,12 +249,16 @@ export function AddWordModal({
 
   function listenForDictation(speechRecognition: SpeechRecognitionModule) {
     clearSpeechRecognitionListeners();
+    finalDictationHandledRef.current = false;
     speechRecognitionListenersRef.current = [
       speechRecognition.addListener('start', () => {
         setIsStartingDictation(false);
         setIsDictating(true);
       }),
-      speechRecognition.addListener('end', finishDictation),
+      speechRecognition.addListener('end', () => {
+        finishDictation();
+        clearSpeechRecognitionListeners();
+      }),
       speechRecognition.addListener('result', (event) => {
         const result = event as {
           isFinal?: boolean;
@@ -257,15 +267,22 @@ export function AddWordModal({
         const transcript = result?.results?.[0]?.transcript?.trim();
         if (transcript) {
           updateTermFromDictation(transcript);
-          if (result?.isFinal) {
-            setLookupStatus('Word heard. Tap Auto define when you’re ready.');
+          if (result?.isFinal && !finalDictationHandledRef.current) {
+            finalDictationHandledRef.current = true;
+            setLookupStatus('Word heard. Finding its definition…');
+            void autoDefine(transcript);
           }
         }
       }),
       speechRecognition.addListener('error', (event) => {
         const error = event as { error?: string; message?: string } | undefined;
         finishDictation();
-        if (!['aborted', 'no-speech', 'speech-timeout'].includes(error?.error ?? '')) {
+        clearSpeechRecognitionListeners();
+        if (['no-speech', 'speech-timeout'].includes(error?.error ?? '')) {
+          setLookupStatus('No word heard. Try once more or type the word.');
+          return;
+        }
+        if (error?.error !== 'aborted') {
           Alert.alert('Dictation unavailable', error?.message || 'Please try again.');
         }
       }),
@@ -288,15 +305,19 @@ export function AddWordModal({
 
   async function toggleDictation() {
     if (isDictationActive) {
-      if (isDictating) {
-        stopDictation();
-      }
+      stopDictation({ discard: isStartingDictation });
+      clearSpeechRecognitionListeners();
       return;
     }
 
+    const attemptId = dictationAttemptRef.current + 1;
+    dictationAttemptRef.current = attemptId;
+    termInputRef.current?.blur();
+    Keyboard.dismiss();
     setIsStartingDictation(true);
     try {
       const speechRecognition = await loadSpeechRecognitionModule();
+      if (attemptId !== dictationAttemptRef.current) return;
       if (!speechRecognition) {
         Alert.alert(
           'Dictation needs a new build',
@@ -315,11 +336,13 @@ export function AddWordModal({
       }
 
       let permission = await speechRecognition.getPermissionsAsync();
+      if (attemptId !== dictationAttemptRef.current) return;
       if (!permission.granted && permission.canAskAgain !== false) {
         permission = await speechRecognition.requestPermissionsAsync();
       }
+      if (attemptId !== dictationAttemptRef.current) return;
       if (!permission.granted) {
-        if (permission.canAskAgain === false) {
+        if (permission.canAskAgain === false || permission.restricted) {
           showDictationPermissionHelp();
         } else {
           Alert.alert(
@@ -330,25 +353,29 @@ export function AddWordModal({
         return;
       }
 
-      Keyboard.dismiss();
       listenForDictation(speechRecognition);
       setIsDictating(true);
       speechRecognition.start({
         lang: 'en-US',
         interimResults: true,
         maxAlternatives: 1,
+        continuous: false,
         iosTaskHint: 'confirmation',
         androidIntentOptions: {
           EXTRA_LANGUAGE_MODEL: 'web_search',
         },
       });
     } catch {
+      stopDictation({ discard: true });
+      clearSpeechRecognitionListeners();
       Alert.alert(
         'Dictation unavailable',
         'WordWiz could not start dictation. Please try again or type the word instead.',
       );
     } finally {
-      setIsStartingDictation(false);
+      if (attemptId === dictationAttemptRef.current) {
+        setIsStartingDictation(false);
+      }
     }
   }
 
@@ -640,11 +667,13 @@ export function AddWordModal({
               label="THE WORD"
               icon="text-outline"
               value={term}
+              inputRef={termInputRef}
               onChangeText={(value) => {
                 updateTermFromDictation(value);
               }}
               placeholder="e.g. Serendipity"
               autoCapitalize="words"
+              editable={!isDictationActive}
               returnKeyType="search"
               onSubmitEditing={() => autoDefine()}
               rightAccessory={
@@ -669,7 +698,7 @@ export function AddWordModal({
                     color={COLORS.purpleDark}
                   />
                   <Text style={styles.voiceEntryButtonText}>
-                    {isDictationActive ? 'LISTENING…' : 'DICTATE'}
+                    {isStartingDictation ? 'STARTING…' : isDictating ? 'LISTENING…' : 'DICTATE'}
                   </Text>
                 </Pressable>
               }
@@ -1382,6 +1411,7 @@ function InputGroup({
   returnKeyType,
   onSubmitEditing,
   inputRef,
+  editable = true,
   rightAccessory,
 }: {
   label: string;
@@ -1394,6 +1424,7 @@ function InputGroup({
   returnKeyType?: 'done' | 'go' | 'next' | 'search' | 'send';
   onSubmitEditing?: () => void;
   inputRef?: RefObject<TextInput | null>;
+  editable?: boolean;
   rightAccessory?: ReactNode;
 }) {
   const hasRightAccessory = rightAccessory !== undefined && rightAccessory !== null;
@@ -1412,6 +1443,7 @@ function InputGroup({
           placeholder={placeholder}
           placeholderTextColor="#B5ABC9"
           multiline={multiline}
+          editable={editable}
           autoCapitalize={autoCapitalize}
           returnKeyType={returnKeyType}
           onSubmitEditing={onSubmitEditing}

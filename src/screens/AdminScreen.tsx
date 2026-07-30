@@ -14,10 +14,14 @@ import {
 import { COLORS, SOFT_SHADOW } from '../constants/theme';
 import {
   type AdminDashboardData,
+  type AdminFlashcardUsage,
   type AdminOpportunity,
   type AdminReportingRange,
+  type AdminCollectionAdoption,
   type AdminUser,
   type AdminUserAction,
+  type AdminUsageLeader,
+  type AdminStatsSectionEngagement,
   fetchAdminDashboard,
   runAdminUserAction,
 } from '../services';
@@ -28,6 +32,21 @@ const REPORTING_RANGES: Array<{ id: AdminReportingRange; label: string; shortLab
   { id: '30d', label: '30 days', shortLabel: '30 DAYS' },
   { id: 'all', label: 'All time', shortLabel: 'ALL TIME' },
 ];
+const LEADERBOARD_PAGE_SIZE = 5;
+
+const STATS_SECTION_LABELS: Record<string, string> = {
+  practice_estimate: 'Practice estimate',
+  mastery_progress: 'Word mastery',
+  retrieval_path: 'Retrieval path',
+  recall_feedback: 'Recall feedback',
+  recall_pace: 'Recall pace',
+  due_reviews: 'Due reviews',
+  achievements: 'Achievements',
+  question_mix: 'Question types',
+  time_based_learning: 'Time-based learning',
+  omega_history: 'Omega Test history',
+  quiz_history: 'Quiz history',
+};
 
 export function AdminScreen({ onClose }: { onClose: () => void }) {
   const [dashboard, setDashboard] = useState<AdminDashboardData | null>(null);
@@ -36,6 +55,7 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [directoryPage, setDirectoryPage] = useState(1);
+  const [leaderboardPage, setLeaderboardPage] = useState(1);
   const [reportingRange, setReportingRange] = useState<AdminReportingRange>('30d');
   const [expandedUserId, setExpandedUserId] = useState<string | null>(null);
   const [busyUserId, setBusyUserId] = useState<string | null>(null);
@@ -64,6 +84,15 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
     );
   }, [dashboard?.users, query]);
 
+  const leaderboardTotalPages = Math.max(
+    1,
+    Math.ceil((dashboard?.topLearners.length ?? 0) / LEADERBOARD_PAGE_SIZE),
+  );
+  const visibleLeaders = useMemo(() => {
+    const start = (leaderboardPage - 1) * LEADERBOARD_PAGE_SIZE;
+    return (dashboard?.topLearners ?? []).slice(start, start + LEADERBOARD_PAGE_SIZE);
+  }, [dashboard?.topLearners, leaderboardPage]);
+
   useEffect(() => {
     const totalPages = dashboard?.directory.totalPages ?? 1;
     if (directoryPage > totalPages) {
@@ -71,6 +100,10 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
       setExpandedUserId(null);
     }
   }, [dashboard?.directory.totalPages, directoryPage]);
+
+  useEffect(() => {
+    if (leaderboardPage > leaderboardTotalPages) setLeaderboardPage(leaderboardTotalPages);
+  }, [leaderboardPage, leaderboardTotalPages]);
 
   function changeDirectoryPage(nextPage: number) {
     const totalPages = dashboard?.directory.totalPages ?? 1;
@@ -165,6 +198,7 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
                 onPress={() => {
                   setExpandedUserId(null);
                   setDirectoryPage(1);
+                  setLeaderboardPage(1);
                   setReportingRange(range.id);
                 }}
                 style={({ pressed }) => [
@@ -221,15 +255,79 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
               <View style={styles.learningTimeIcon}><Ionicons name="time-outline" size={21} color={COLORS.blue} /></View>
               <View style={styles.learningTimeCopy}><Text style={styles.learningTimeLabel}>COMPLETED LEARNING TIME</Text><Text style={styles.learningTimeValue}>{formatDuration(dashboard.timeInsights.completedLearningSeconds)}</Text><Text style={styles.learningTimeText}>Quiz and flashcard time from completed learning activity.</Text></View>
             </View>
-            <Text style={styles.timeGroupLabel}>FOREGROUND SCREEN TIME</Text>
+            <FlashcardUsageCard usage={dashboard.flashcardUsage} rangeLabel={reportingRangeLabel} />
+            <Text style={styles.timeGroupLabel}>TIME ON EACH PAGE · LONGEST FIRST</Text>
             {dashboard.timeInsights.screens.length ? dashboard.timeInsights.screens.map((insight) => (
               <TimeRow key={insight.id} label={insight.label} detail={`${formatNumber(insight.sessions)} sessions`} value={formatDuration(insight.seconds)} icon="phone-portrait-outline" color={COLORS.purpleDark} />
             )) : <View style={styles.timeEmpty}><Ionicons name="hourglass-outline" size={18} color={COLORS.muted} /><Text style={styles.timeEmptyText}>Screen time begins collecting after learners update to this version.</Text></View>}
-            <Text style={styles.timeGroupLabel}>QUESTION TYPES</Text>
-            {dashboard.timeInsights.questionTypes.length ? dashboard.timeInsights.questionTypes.slice(0, 5).map((insight) => (
+            <Text style={styles.timeGroupLabel}>MOST-USED QUESTION FORMATS</Text>
+            {dashboard.timeInsights.questionTypes.length ? [...dashboard.timeInsights.questionTypes].sort((first, second) => second.answers - first.answers || second.seconds - first.seconds).slice(0, 5).map((insight) => (
               <TimeRow key={insight.id} label={insight.label} detail={`${formatNumber(insight.answers)} answers · ${Math.round(insight.accuracy)}% correct`} value={formatDuration(insight.seconds)} icon="help-circle-outline" color={COLORS.orange} />
-            )) : <View style={styles.timeEmpty}><Ionicons name="hourglass-outline" size={18} color={COLORS.muted} /><Text style={styles.timeEmptyText}>Question timing appears after completed quizzes with answer data.</Text></View>}
+            )) : <View style={styles.timeEmpty}><Ionicons name="hourglass-outline" size={18} color={COLORS.muted} /><Text style={styles.timeEmptyText}>Question-format activity appears after completed quizzes with answer data.</Text></View>}
             <Text style={styles.timePrivacyNote}>Aggregate only: this view shows product patterns, not an individual learner’s browsing history.</Text>
+
+            <View style={styles.sectionHeading}>
+              <View><Text style={styles.sectionEyebrow}>STATS ENGAGEMENT · {reportingRangeLabel}</Text><Text style={styles.sectionTitle}>Most-opened Stats areas</Text></View>
+              <Text style={styles.generatedText}>Aggregate opens</Text>
+            </View>
+            {dashboard.statsSectionEngagement.length ? dashboard.statsSectionEngagement.slice(0, 5).map((section) => (
+              <StatsEngagementRow key={section.id} section={section} />
+            )) : <View style={styles.timeEmpty}><Ionicons name="analytics-outline" size={18} color={COLORS.muted} /><Text style={styles.timeEmptyText}>Panel activity will appear after learners open Stats details in this version.</Text></View>}
+
+            <View style={styles.sectionHeading}>
+              <View><Text style={styles.sectionEyebrow}>LEARNING ACTIVITY · {reportingRangeLabel}</Text><Text style={styles.sectionTitle}>Most active learners</Text></View>
+              <Text style={styles.generatedText}>Top 20</Text>
+            </View>
+            {dashboard.topLearners.length ? (
+              <View style={styles.usageLeadersCard}>
+                <Text style={styles.usageLeadersNote}>Ranked by words saved, completed quizzes, and flashcard reviews. Counts only—never learner content.</Text>
+                {visibleLeaders.map((learner, index) => (
+                  <UsageLeaderRow key={learner.userId} learner={learner} rank={(leaderboardPage - 1) * LEADERBOARD_PAGE_SIZE + index + 1} />
+                ))}
+                {leaderboardTotalPages > 1 ? (
+                  <View style={styles.pagination}>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Previous learner leaderboard page"
+                      disabled={leaderboardPage === 1}
+                      onPress={() => setLeaderboardPage((page) => Math.max(1, page - 1))}
+                      style={({ pressed }) => [styles.pageButton, leaderboardPage === 1 && styles.pageButtonDisabled, pressed && styles.pressed]}
+                    >
+                      <Ionicons name="chevron-back" size={17} color={COLORS.purpleDark} />
+                      <Text style={styles.pageButtonText}>Previous</Text>
+                    </Pressable>
+                    <Text style={styles.pageStatus}>Page {leaderboardPage} of {leaderboardTotalPages}</Text>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Next learner leaderboard page"
+                      disabled={leaderboardPage === leaderboardTotalPages}
+                      onPress={() => setLeaderboardPage((page) => Math.min(leaderboardTotalPages, page + 1))}
+                      style={({ pressed }) => [styles.pageButton, leaderboardPage === leaderboardTotalPages && styles.pageButtonDisabled, pressed && styles.pressed]}
+                    >
+                      <Text style={styles.pageButtonText}>Next</Text>
+                      <Ionicons name="chevron-forward" size={17} color={COLORS.purpleDark} />
+                    </Pressable>
+                  </View>
+                ) : null}
+              </View>
+            ) : (
+              <View style={styles.timeEmpty}><Ionicons name="bar-chart-outline" size={18} color={COLORS.muted} /><Text style={styles.timeEmptyText}>No learning activity has been recorded for this range yet.</Text></View>
+            )}
+
+            <View style={styles.sectionHeading}>
+              <View><Text style={styles.sectionEyebrow}>CURATED COLLECTIONS</Text><Text style={styles.sectionTitle}>Most saved collections</Text></View>
+              <Text style={styles.generatedText}>Live adoption</Text>
+            </View>
+            {dashboard.topCollections.length ? (
+              <View style={styles.usageLeadersCard}>
+                <Text style={styles.usageLeadersNote}>Collections currently saved in the most learner libraries. This is adoption, not a download-event count.</Text>
+                {dashboard.topCollections.map((collection, index) => (
+                  <CollectionAdoptionRow key={collection.collectionId} collection={collection} rank={index + 1} />
+                ))}
+              </View>
+            ) : (
+              <View style={styles.timeEmpty}><Ionicons name="library-outline" size={18} color={COLORS.muted} /><Text style={styles.timeEmptyText}>Collection adoption will appear after learners save curated sets.</Text></View>
+            )}
 
             <View style={styles.sectionHeading}>
               <View><Text style={styles.sectionEyebrow}>USER CONTROLS</Text><Text style={styles.sectionTitle}>Recent user directory</Text></View>
@@ -286,6 +384,50 @@ function TimeRow({ label, detail, value, icon, color }: { label: string; detail:
   return <View style={styles.timeRow}><View style={[styles.timeRowIcon, { backgroundColor: `${color}18` }]}><Ionicons name={icon} size={17} color={color} /></View><View style={styles.timeRowCopy}><Text style={styles.timeRowLabel}>{label}</Text><Text style={styles.timeRowDetail}>{detail}</Text></View><Text style={[styles.timeRowValue, { color }]}>{value}</Text></View>;
 }
 
+function FlashcardUsageCard({ usage, rangeLabel }: { usage: AdminFlashcardUsage; rangeLabel: string }) {
+  return <View style={styles.flashcardUsageCard}>
+    <View style={styles.flashcardUsageIcon}><Ionicons name="albums-outline" size={21} color={COLORS.teal} /></View>
+    <View style={styles.flashcardUsageCopy}>
+      <Text style={styles.flashcardUsageLabel}>FLASHCARD PRACTICE · {rangeLabel}</Text>
+      <Text style={styles.flashcardUsageValue}>{formatNumber(usage.reviews)} reviews</Text>
+      <Text style={styles.flashcardUsageText}>{formatNumber(usage.learners)} learners · {formatDuration(usage.seconds)} studying</Text>
+    </View>
+  </View>;
+}
+
+function StatsEngagementRow({ section }: { section: AdminStatsSectionEngagement }) {
+  return <TimeRow
+    label={STATS_SECTION_LABELS[section.id] ?? section.id}
+    detail="panel opens"
+    value={formatNumber(section.interactions)}
+    icon="pulse-outline"
+    color={COLORS.teal}
+  />;
+}
+
+function UsageLeaderRow({ learner, rank }: { learner: AdminUsageLeader; rank: number }) {
+  const name = learner.name?.trim() || learner.email || 'Learner';
+  return <View style={styles.usageLeaderRow}>
+    <View style={styles.usageLeaderRank}><Text style={styles.usageLeaderRankText}>{rank}</Text></View>
+    <View style={styles.usageLeaderCopy}>
+      <Text numberOfLines={1} style={styles.usageLeaderName}>{name}</Text>
+      <Text style={styles.usageLeaderDetail}>{learner.wordsSaved} words · {learner.quizCount} quizzes · {learner.cardReviewCount} reviews</Text>
+    </View>
+    <View style={styles.usageLeaderTotal}><Text style={styles.usageLeaderTotalValue}>{formatNumber(learner.learningActions)}</Text><Text style={styles.usageLeaderTotalLabel}>ACTIONS</Text></View>
+  </View>;
+}
+
+function CollectionAdoptionRow({ collection, rank }: { collection: AdminCollectionAdoption; rank: number }) {
+  return <View style={styles.usageLeaderRow}>
+    <View style={styles.usageLeaderRank}><Text style={styles.usageLeaderRankText}>{rank}</Text></View>
+    <View style={styles.usageLeaderCopy}>
+      <Text numberOfLines={1} style={styles.usageLeaderName}>{collection.name}</Text>
+      <Text style={styles.usageLeaderDetail}>{formatNumber(collection.memberWordCount)} collection words currently saved</Text>
+    </View>
+    <View style={styles.usageLeaderTotal}><Text style={styles.usageLeaderTotalValue}>{formatNumber(collection.learnerCount)}</Text><Text style={styles.usageLeaderTotalLabel}>LEARNERS</Text></View>
+  </View>;
+}
+
 function Opportunity({ opportunity }: { opportunity: AdminOpportunity }) {
   const tone = { purple: [COLORS.purplePale, COLORS.purpleDark, 'flag-outline'], blue: [COLORS.bluePale, COLORS.blue, 'rocket-outline'], orange: [COLORS.orangePale, COLORS.orange, 'flash-outline'], red: [COLORS.redPale, COLORS.red, 'heart-outline'] } as const;
   const [backgroundColor, color, icon] = tone[opportunity.tone];
@@ -331,6 +473,8 @@ const styles = StyleSheet.create({
   opportunity: { minHeight: 79, marginBottom: 9, padding: 12, borderRadius: 18, flexDirection: 'row', alignItems: 'center', gap: 10 }, opportunityIcon: { width: 37, height: 37, borderRadius: 12, alignItems: 'center', justifyContent: 'center' }, opportunityCopy: { flex: 1 }, opportunityTitle: { color: COLORS.ink, fontSize: 12, lineHeight: 16, fontWeight: '900' }, opportunityText: { marginTop: 2, color: COLORS.muted, fontSize: 10, lineHeight: 14, fontWeight: '700' }, opportunityMetric: { minWidth: 25, textAlign: 'right', fontSize: 20, fontWeight: '900' }, emptySignals: { padding: 16, borderRadius: 18, flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: COLORS.tealPale }, emptySignalsText: { flex: 1, color: COLORS.muted, fontSize: 11, lineHeight: 15, fontWeight: '700' },
   overviewCard: { marginTop: 8, paddingVertical: 14, borderRadius: 18, flexDirection: 'row', backgroundColor: COLORS.white, ...SOFT_SHADOW }, miniMetric: { flex: 1, alignItems: 'center', paddingHorizontal: 4 }, miniMetricValue: { color: COLORS.ink, fontSize: 16, fontWeight: '900' }, miniMetricLabel: { marginTop: 4, color: COLORS.muted, textAlign: 'center', fontSize: 7, lineHeight: 9, letterSpacing: 0.4, fontWeight: '900' },
   learningTimeCard: { padding: 14, borderRadius: 18, flexDirection: 'row', alignItems: 'center', gap: 11, backgroundColor: COLORS.bluePale }, learningTimeIcon: { width: 42, height: 42, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.white }, learningTimeCopy: { flex: 1 }, learningTimeLabel: { color: COLORS.blue, fontSize: 9, letterSpacing: 0.8, fontWeight: '900' }, learningTimeValue: { marginTop: 1, color: COLORS.ink, fontSize: 23, letterSpacing: -0.4, fontWeight: '900' }, learningTimeText: { marginTop: 2, color: COLORS.muted, fontSize: 10, lineHeight: 14, fontWeight: '700' }, timeGroupLabel: { marginTop: 16, marginBottom: 7, color: COLORS.muted, fontSize: 9, letterSpacing: 0.8, fontWeight: '900' }, timeRow: { minHeight: 58, marginBottom: 7, paddingHorizontal: 12, borderWidth: 1, borderColor: COLORS.border, borderRadius: 16, flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: COLORS.white }, timeRowIcon: { width: 32, height: 32, borderRadius: 11, alignItems: 'center', justifyContent: 'center' }, timeRowCopy: { flex: 1 }, timeRowLabel: { color: COLORS.ink, fontSize: 12, fontWeight: '900' }, timeRowDetail: { marginTop: 2, color: COLORS.muted, fontSize: 9, fontWeight: '700' }, timeRowValue: { fontSize: 14, fontWeight: '900' }, timeEmpty: { padding: 12, borderRadius: 14, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: COLORS.white }, timeEmptyText: { flex: 1, color: COLORS.muted, fontSize: 10, lineHeight: 14, fontWeight: '700' }, timePrivacyNote: { marginTop: 10, color: COLORS.muted, fontSize: 9, lineHeight: 13, fontStyle: 'italic', fontWeight: '700' },
+  flashcardUsageCard: { marginTop: 9, padding: 14, borderRadius: 18, flexDirection: 'row', alignItems: 'center', gap: 11, backgroundColor: COLORS.tealPale }, flashcardUsageIcon: { width: 42, height: 42, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.white }, flashcardUsageCopy: { flex: 1 }, flashcardUsageLabel: { color: COLORS.teal, fontSize: 9, letterSpacing: 0.8, fontWeight: '900' }, flashcardUsageValue: { marginTop: 1, color: COLORS.ink, fontSize: 20, letterSpacing: -0.3, fontWeight: '900' }, flashcardUsageText: { marginTop: 2, color: COLORS.muted, fontSize: 10, lineHeight: 14, fontWeight: '700' },
+  usageLeadersCard: { padding: 12, borderRadius: 18, backgroundColor: COLORS.white, ...SOFT_SHADOW }, usageLeadersNote: { marginBottom: 8, color: COLORS.muted, fontSize: 9, lineHeight: 13, fontWeight: '700' }, usageLeaderRow: { minHeight: 60, paddingVertical: 8, borderTopWidth: 1, borderTopColor: COLORS.border, flexDirection: 'row', alignItems: 'center', gap: 9 }, usageLeaderRank: { width: 25, height: 25, borderRadius: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.purplePale }, usageLeaderRankText: { color: COLORS.purpleDark, fontSize: 11, fontWeight: '900' }, usageLeaderCopy: { flex: 1 }, usageLeaderName: { color: COLORS.ink, fontSize: 12, fontWeight: '900' }, usageLeaderDetail: { marginTop: 2, color: COLORS.muted, fontSize: 9, fontWeight: '700' }, usageLeaderTotal: { minWidth: 46, alignItems: 'flex-end' }, usageLeaderTotalValue: { color: COLORS.teal, fontSize: 16, fontWeight: '900' }, usageLeaderTotalLabel: { marginTop: 1, color: COLORS.muted, fontSize: 7, letterSpacing: 0.5, fontWeight: '900' },
   safetyNote: { padding: 12, borderRadius: 14, flexDirection: 'row', gap: 8, backgroundColor: COLORS.purplePale }, safetyText: { flex: 1, color: COLORS.purpleDark, fontSize: 10, lineHeight: 14, fontWeight: '800' }, searchWrap: { height: 48, marginTop: 11, marginBottom: 10, paddingHorizontal: 13, borderWidth: 1, borderColor: COLORS.border, borderRadius: 15, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: COLORS.white }, searchInput: { flex: 1, color: COLORS.ink, fontSize: 13, fontWeight: '700' },
   userCard: { marginBottom: 9, borderWidth: 1, borderColor: COLORS.border, borderRadius: 18, backgroundColor: COLORS.white, overflow: 'hidden' }, userCardExpanded: { borderColor: '#D9D0FF' }, userTop: { minHeight: 76, padding: 12, flexDirection: 'row', alignItems: 'center', gap: 10 }, userAvatar: { width: 36, height: 36, borderRadius: 13, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.bluePale }, userAvatarText: { color: COLORS.blue, fontSize: 15, fontWeight: '900' }, userCopy: { flex: 1 }, userName: { color: COLORS.ink, fontSize: 13, fontWeight: '900' }, userEmail: { marginTop: 1, color: COLORS.muted, fontSize: 10, fontWeight: '700' }, userActivity: { marginTop: 4, color: COLORS.muted, fontSize: 9, fontWeight: '700' }, userStatus: { alignItems: 'flex-end', gap: 5 }, accessPill: { paddingHorizontal: 6, paddingVertical: 3, borderRadius: 7, borderWidth: 1, overflow: 'hidden', fontSize: 7, fontWeight: '900', letterSpacing: 0.35 }, userControls: { padding: 12, paddingTop: 0, borderTopWidth: 1, borderTopColor: COLORS.border }, userStats: { paddingVertical: 10, flexDirection: 'row', flexWrap: 'wrap', gap: 7 }, userStat: { paddingHorizontal: 7, paddingVertical: 4, borderRadius: 8, color: COLORS.muted, backgroundColor: COLORS.background, fontSize: 9, fontWeight: '800' }, controlRow: { flexDirection: 'row', gap: 7 }, control: { flex: 1, minHeight: 36, borderWidth: 1, borderColor: '#DCD4FF', borderRadius: 11, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, backgroundColor: COLORS.purplePale }, controlDanger: { borderColor: '#FFC8D6', backgroundColor: COLORS.redPale }, controlText: { color: COLORS.purpleDark, fontSize: 9, fontWeight: '900' }, controlDangerText: { color: COLORS.red }, busyLine: { marginTop: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 }, busyText: { color: COLORS.purpleDark, fontSize: 10, fontWeight: '800' }, noUsers: { paddingVertical: 25, textAlign: 'center', color: COLORS.muted, fontSize: 12, fontWeight: '700' }, pagination: { marginTop: 8, marginBottom: 4, minHeight: 42, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }, pageButton: { minHeight: 38, paddingHorizontal: 10, borderWidth: 1, borderColor: '#DCD4FF', borderRadius: 12, flexDirection: 'row', alignItems: 'center', gap: 2, backgroundColor: COLORS.purplePale }, pageButtonDisabled: { opacity: 0.4 }, pageButtonText: { color: COLORS.purpleDark, fontSize: 9, fontWeight: '900' }, pageStatus: { flex: 1, color: COLORS.muted, fontSize: 9, textAlign: 'center', fontWeight: '800' },
 });

@@ -394,6 +394,30 @@ export async function saveCloudScreenTime(
   }
 }
 
+export type StatsSectionInteraction =
+  | 'practice_estimate'
+  | 'mastery_progress'
+  | 'retrieval_path'
+  | 'recall_feedback'
+  | 'recall_pace'
+  | 'due_reviews'
+  | 'achievements'
+  | 'question_mix'
+  | 'time_based_learning'
+  | 'omega_history'
+  | 'quiz_history';
+
+/** Records an aggregate Stats-panel open without sending learner content. */
+export async function saveCloudStatsSectionInteraction(section: StatsSectionInteraction) {
+  const { error } = await supabase.rpc('record_my_stats_section_interaction', {
+    p_section: section,
+  });
+
+  if (error) {
+    throw getQueryError('stats_section_daily', error);
+  }
+}
+
 export async function saveCloudReminderSettings(
   userId: string,
   settings: ReminderSettings,

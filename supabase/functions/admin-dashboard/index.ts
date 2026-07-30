@@ -170,8 +170,13 @@ async function buildDashboard(
   page: number,
   reportingRange: ReportingRange,
 ) {
-  const [metricsResult, directoryResult] = await Promise.all([
+  const [metricsResult, screenTimeResult, flashcardUsageResult, statsSectionEngagementResult, topLearnersResult, topCollectionsResult, directoryResult] = await Promise.all([
     adminClient.rpc('admin_dashboard_metrics', { p_range: reportingRange }),
+    adminClient.rpc('admin_dashboard_screen_time', { p_range: reportingRange }),
+    adminClient.rpc('admin_dashboard_flashcard_usage', { p_range: reportingRange }),
+    adminClient.rpc('admin_dashboard_stats_section_engagement', { p_range: reportingRange }),
+    adminClient.rpc('admin_dashboard_top_learners', { p_range: reportingRange }),
+    adminClient.rpc('admin_dashboard_top_collections'),
     adminClient.auth.admin.listUsers({ page, perPage: USER_DIRECTORY_PAGE_SIZE }),
   ]);
   if (directoryResult.error) throw directoryResult.error;
@@ -182,11 +187,36 @@ async function buildDashboard(
     1,
     Number(directoryResult.data.lastPage ?? Math.ceil(directoryTotal / USER_DIRECTORY_PAGE_SIZE)),
   );
-  const metrics = metricsResult.error
+  const baselineMetrics = metricsResult.error
     ? await buildFallbackMetrics(adminClient, directory.length, reportingRange)
     : metricsResult.data as Record<string, any>;
   if (metricsResult.error) {
     console.error('admin metrics RPC failed; using baseline metrics', metricsResult.error);
+  }
+  if (screenTimeResult.error) {
+    // Preserve the original metrics response if a project has not received
+    // the transparent retention migration yet.
+    console.error('admin screen time RPC failed', screenTimeResult.error);
+  }
+  const metrics = {
+    ...baselineMetrics,
+    screenTime30d: screenTimeResult.error || !isRecord(screenTimeResult.data)
+      ? baselineMetrics.screenTime30d
+      : screenTimeResult.data,
+  };
+  if (topLearnersResult.error) {
+    // The core Admin Center remains available if the optional leaderboard
+    // migration has not reached a project yet.
+    console.error('admin usage leaders RPC failed', topLearnersResult.error);
+  }
+  if (topCollectionsResult.error) {
+    console.error('admin collection adoption RPC failed', topCollectionsResult.error);
+  }
+  if (flashcardUsageResult.error) {
+    console.error('admin flashcard usage RPC failed', flashcardUsageResult.error);
+  }
+  if (statsSectionEngagementResult.error) {
+    console.error('admin Stats engagement RPC failed', statsSectionEngagementResult.error);
   }
   const userIds = directory.map((user) => user.id);
   const monthKey = new Date().toISOString().slice(0, 7);
@@ -247,6 +277,22 @@ async function buildDashboard(
     metrics,
     opportunities: buildOpportunities(metrics),
     timeInsights: buildTimeInsights(metrics),
+    topLearners: topLearnersResult.error || !Array.isArray(topLearnersResult.data)
+      ? []
+      : topLearnersResult.data,
+    topCollections: topCollectionsResult.error || !Array.isArray(topCollectionsResult.data)
+      ? []
+      : topCollectionsResult.data,
+    flashcardUsage: flashcardUsageResult.error || !isRecord(flashcardUsageResult.data)
+      ? { reviews: 0, learners: 0, seconds: 0 }
+      : {
+        reviews: Number(flashcardUsageResult.data.reviews ?? 0),
+        learners: Number(flashcardUsageResult.data.learners ?? 0),
+        seconds: Number(flashcardUsageResult.data.seconds ?? 0),
+      },
+    statsSectionEngagement: statsSectionEngagementResult.error || !Array.isArray(statsSectionEngagementResult.data)
+      ? []
+      : statsSectionEngagementResult.data,
     users,
     directory: {
       page,
@@ -323,6 +369,10 @@ async function countRows(
 
 function emptyResult() {
   return { data: [], error: null };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 function groupRows(rows: Array<{ user_id: string }>) {

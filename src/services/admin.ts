@@ -65,11 +65,43 @@ export type AdminTimeInsights = {
   }>;
 };
 
+export type AdminUsageLeader = {
+  userId: string;
+  name: string | null;
+  email: string | null;
+  wordsSaved: number;
+  quizCount: number;
+  cardReviewCount: number;
+  learningActions: number;
+};
+
+export type AdminCollectionAdoption = {
+  collectionId: string;
+  name: string;
+  learnerCount: number;
+  memberWordCount: number;
+};
+
+export type AdminFlashcardUsage = {
+  reviews: number;
+  learners: number;
+  seconds: number;
+};
+
+export type AdminStatsSectionEngagement = {
+  id: string;
+  interactions: number;
+};
+
 export type AdminDashboardData = {
   generatedAt: string;
   metrics: AdminDashboardMetrics;
   opportunities: AdminOpportunity[];
   timeInsights: AdminTimeInsights;
+  topLearners: AdminUsageLeader[];
+  topCollections: AdminCollectionAdoption[];
+  flashcardUsage: AdminFlashcardUsage;
+  statsSectionEngagement: AdminStatsSectionEngagement[];
   users: AdminUser[];
   directory: {
     page: number;

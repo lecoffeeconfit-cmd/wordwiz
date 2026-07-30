@@ -420,16 +420,47 @@ export function buildQuiz(
     options.difficulty ?? 'automatic',
   );
 
+  const usedQuestionSignatures = new Set<string>();
+
   return planWords.map((word, index) => {
-    const mode = modes[index];
-    const question = buildQuestionForMode(
+    const contextOffset = getContextOffset(word, recentAttempts, index);
+    const requestedMode = modes[index];
+    const alternativeModes = getEnabledModeCandidates(
+      word,
+      quizWords,
+      masteryByWordId[word.id] ?? word.reviews * 12,
+      difficulty,
+      normalizeQuestionTypePreferences(options.questionTypePreferences),
+    ).filter((mode) => mode !== requestedMode);
+    const candidateModes = [requestedMode, ...alternativeModes];
+    let question = buildQuestionForMode(
       word,
       quizWords,
       index,
-      mode,
-      getContextOffset(word, recentAttempts, index),
+      requestedMode,
+      contextOffset,
       difficulty,
     );
+
+    // Repeated words in a longer quiz should earn a fresh clue, format, or
+    // answer set whenever the word's saved data gives us a fair alternative.
+    for (const [candidateIndex, mode] of candidateModes.entries()) {
+      const candidate = candidateIndex === 0
+        ? question
+        : buildQuestionForMode(
+            word,
+            quizWords,
+            index + candidateIndex,
+            mode,
+            contextOffset + candidateIndex,
+            difficulty,
+          );
+      if (!usedQuestionSignatures.has(getQuestionSignature(candidate))) {
+        question = candidate;
+        break;
+      }
+    }
+    usedQuestionSignatures.add(getQuestionSignature(question));
     return {
       ...question,
       strictSpelling:
@@ -451,9 +482,10 @@ export function buildOmegaTest(
   recentAttempts: QuizAttempt[] = [],
 ): QuizQuestion[] {
   const omegaWords = words.filter((word) => !word.mastery?.excludedFromPractice);
+  const preparation = createOmegaPreparation(omegaWords, recentAttempts);
 
   return shuffle(omegaWords).flatMap((word, wordIndex) =>
-    buildOmegaQuestionsForWord(word, omegaWords, recentAttempts, wordIndex),
+    buildOmegaQuestionsForWord(word, omegaWords, preparation, wordIndex),
   );
 }
 
@@ -468,17 +500,19 @@ export async function buildOmegaTestAsync(
 ): Promise<QuizQuestion[]> {
   const omegaWords = words.filter((word) => !word.mastery?.excludedFromPractice);
   const shuffledWords = shuffle(omegaWords);
+  const preparation = createOmegaPreparation(omegaWords, recentAttempts);
   const questions: QuizQuestion[] = [];
 
   for (const [wordIndex, word] of shuffledWords.entries()) {
     questions.push(
-      ...buildOmegaQuestionsForWord(word, omegaWords, recentAttempts, wordIndex),
+      ...buildOmegaQuestionsForWord(word, omegaWords, preparation, wordIndex),
     );
 
-    // Keep long libraries responsive without adding a timer delay per word.
+    // A full-library test can still involve hundreds of words. Yield often so
+    // the loading state and elapsed-time counter remain responsive.
     if (
       wordIndex < shuffledWords.length - 1 &&
-      (wordIndex + 1) % 8 === 0
+      (wordIndex + 1) % 2 === 0
     ) {
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
     }
@@ -487,24 +521,198 @@ export async function buildOmegaTestAsync(
   return questions;
 }
 
+type OmegaPreparation = {
+  priorAnswerCountByWordId: Map<string, number>;
+  definitionTokensByWordId: Map<string, string[]>;
+  recentModesByWordId: Map<string, QuizQuestionMode[]>;
+};
+
+function createOmegaPreparation(
+  words: Word[],
+  recentAttempts: QuizAttempt[],
+): OmegaPreparation {
+  const priorAnswerCountByWordId = new Map<string, number>();
+  const recentModesByWordId = new Map<string, QuizQuestionMode[]>();
+  recentAttempts.forEach((attempt) => {
+    attempt.answers.forEach((answer) => {
+      priorAnswerCountByWordId.set(
+        answer.wordId,
+        (priorAnswerCountByWordId.get(answer.wordId) ?? 0) + 1,
+      );
+      if (!answer.questionMode || answer.isAttemptMarker) return;
+      const recentModes = recentModesByWordId.get(answer.wordId) ?? [];
+      if (recentModes.length < 6 && !recentModes.includes(answer.questionMode)) {
+        recentModes.push(answer.questionMode);
+        recentModesByWordId.set(answer.wordId, recentModes);
+      }
+    });
+  });
+
+  return {
+    priorAnswerCountByWordId,
+    recentModesByWordId,
+    definitionTokensByWordId: new Map(
+      words.map((word) => [
+        word.id,
+        getMeaningfulTokens(`${word.definition} ${word.simpleDefinition ?? ''}`),
+      ]),
+    ),
+  };
+}
+
 function buildOmegaQuestionsForWord(
   word: Word,
   omegaWords: Word[],
-  recentAttempts: QuizAttempt[],
+  preparation: OmegaPreparation,
   wordIndex: number,
 ): QuizQuestion[] {
   // Use a word-stable seed rather than its shuffled position. Every completed
   // Omega adds two answers for this word, so the next weekly test advances to
   // a different prompt/source rotation even though the test order changes.
-  const contextOffset = getContextOffset(
+  const contextOffset =
+    (preparation.priorAnswerCountByWordId.get(word.id) ?? 0) +
+    (getTermHash(word.id) % 3);
+  return buildOmegaQuestionPair(
     word,
-    recentAttempts,
-    getTermHash(word.id) % 3,
+    omegaWords,
+    wordIndex,
+    contextOffset,
+    preparation,
   );
-  return [
-    buildFastOmegaRecognitionQuestion(word, omegaWords, wordIndex, contextOffset),
-    buildOmegaDirectRecallQuestion(word, omegaWords, wordIndex, contextOffset + 1),
+}
+
+function buildOmegaQuestionPair(
+  word: Word,
+  words: Word[],
+  wordIndex: number,
+  contextOffset: number,
+  preparation: OmegaPreparation,
+) {
+  const cycleStart =
+    (getTermHash(word.id) + contextOffset) % QUIZ_QUESTION_MODES.length;
+  const rotatedModes = [
+    ...QUIZ_QUESTION_MODES.slice(cycleStart),
+    ...QUIZ_QUESTION_MODES.slice(0, cycleStart),
   ];
+  const recentModes = new Set(preparation.recentModesByWordId.get(word.id) ?? []);
+  const typedRecall = buildOmegaTypedRecallQuestion(
+    word,
+    words,
+    contextOffset + 1,
+    preparation.definitionTokensByWordId,
+  );
+  const strongRecognitionModes = new Set<QuizQuestionMode>([
+    'definition-to-word',
+    'sentence-usage',
+    'sentence-completion',
+    'closest-synonym',
+  ]);
+  const nonTypedModes = rotatedModes.filter((mode) => mode !== 'typed-word');
+  const preferredModes = [
+    ...nonTypedModes.filter(
+      (mode) => strongRecognitionModes.has(mode) && !recentModes.has(mode),
+    ),
+    ...nonTypedModes.filter(
+      (mode) => !strongRecognitionModes.has(mode) && !recentModes.has(mode),
+    ),
+    ...nonTypedModes.filter(
+      (mode) => strongRecognitionModes.has(mode) && recentModes.has(mode),
+    ),
+    ...nonTypedModes.filter(
+      (mode) => !strongRecognitionModes.has(mode) && recentModes.has(mode),
+    ),
+  ];
+  const questions: QuizQuestion[] = [];
+  const signatures = new Set<string>();
+
+  // When the saved information supports unambiguous direct recall, Omega
+  // always includes it. The companion prompt then rotates through the other
+  // six formats, which gives the assessment breadth without making it easier.
+  if (typedRecall) {
+    questions.push(typedRecall);
+    signatures.add(getQuestionSignature(typedRecall));
+  }
+
+  for (const mode of preferredModes) {
+    if (questions.length === 2) break;
+    const question = buildOmegaQuestionForMode(
+      mode,
+      word,
+      words,
+      wordIndex + questions.length,
+      contextOffset + questions.length,
+      preparation.definitionTokensByWordId,
+    );
+    if (!question) continue;
+
+    const signature = getQuestionSignature(question);
+    if (signatures.has(signature)) continue;
+    signatures.add(signature);
+    questions.push(question);
+  }
+
+  // Meaning match and true/false are available even for a one-word library,
+  // so every eligible word still receives two distinct assessments.
+  if (questions.length < 2) {
+    const fallback = buildOmegaTrueFalseQuestion(
+      word,
+      words,
+      wordIndex,
+      contextOffset + questions.length,
+    );
+    if (!signatures.has(getQuestionSignature(fallback))) questions.push(fallback);
+  }
+
+  return questions;
+}
+
+function buildOmegaQuestionForMode(
+  mode: QuizQuestionMode,
+  word: Word,
+  words: Word[],
+  index: number,
+  contextOffset: number,
+  definitionTokensByWordId: ReadonlyMap<string, string[]>,
+): QuizQuestion | null {
+  switch (mode) {
+    case 'word-to-definition':
+      return buildOmegaWordToDefinitionQuestion(word, words, index, contextOffset);
+    case 'definition-to-word':
+      return words.length >= 2
+        ? buildOmegaDefinitionToWordQuestion(word, words, index, contextOffset)
+        : null;
+    case 'true-false':
+      return buildOmegaTrueFalseQuestion(word, words, index, contextOffset);
+    case 'typed-word':
+      return buildOmegaTypedRecallQuestion(
+        word,
+        words,
+        contextOffset,
+        definitionTokensByWordId,
+      );
+    case 'sentence-usage':
+      return buildOmegaSentenceUsageQuestion(word, words, index, contextOffset);
+    case 'sentence-completion':
+      return buildOmegaSentenceCompletionQuestion(
+        word,
+        words,
+        index,
+        contextOffset,
+        definitionTokensByWordId,
+      );
+    case 'closest-synonym':
+      return buildOmegaClosestSynonymQuestion(word, words, index + contextOffset);
+  }
+}
+
+function getQuestionSignature(question: QuizQuestion) {
+  return [
+    question.mode,
+    question.prompt,
+    question.displayText,
+    question.answer,
+    ...[...question.options].sort(),
+  ].join('\u0000');
 }
 
 function buildOmegaDirectRecallQuestion(
@@ -512,10 +720,27 @@ function buildOmegaDirectRecallQuestion(
   words: Word[],
   index: number,
   contextOffset: number,
+  definitionTokensByWordId: ReadonlyMap<string, string[]>,
 ): QuizQuestion {
-  if (canBuildTypedWordQuestion(word, words)) {
+  const recallPrompt = getTypedRecallPrompt(
+    word,
+    words,
+    contextOffset,
+    'full',
+    definitionTokensByWordId,
+  );
+  if (recallPrompt) {
     return {
-      ...buildTypedWordQuestion(word, words, contextOffset, 'full'),
+      word,
+      prompt: recallPrompt.prompt,
+      displayText: recallPrompt.displayText,
+      answer: word.term,
+      options: [],
+      mode: 'typed-word',
+      difficulty: getQuestionDifficulty('typed-word'),
+      helperText: recallPrompt.typedHelperText,
+      answerLetterCount: getLetterCount(word.term),
+      feedback: `The word is "${word.term}".`,
       strictSpelling: true,
     };
   }
@@ -524,16 +749,43 @@ function buildOmegaDirectRecallQuestion(
   // describe another saved word. Omega still tests direct recall here, but
   // presents the saved terms as choices when the clue is not distinctive.
   return words.length >= 2
-    ? buildDefinitionToWordQuestion(
+    ? buildOmegaDefinitionToWordQuestion(
         word,
         words,
         index,
         contextOffset,
-        true,
-        'hard',
-        'full',
       )
     : buildWordToDefinitionQuestion(word, words, index, true, 'hard', 'full');
+}
+
+function buildOmegaTypedRecallQuestion(
+  word: Word,
+  words: Word[],
+  contextOffset: number,
+  definitionTokensByWordId: ReadonlyMap<string, string[]>,
+): QuizQuestion | null {
+  const recallPrompt = getTypedRecallPrompt(
+    word,
+    words,
+    contextOffset,
+    'full',
+    definitionTokensByWordId,
+  );
+  if (!recallPrompt) return null;
+
+  return {
+    word,
+    prompt: recallPrompt.prompt,
+    displayText: recallPrompt.displayText,
+    answer: word.term,
+    options: [],
+    mode: 'typed-word',
+    difficulty: getQuestionDifficulty('typed-word'),
+    helperText: recallPrompt.typedHelperText,
+    answerLetterCount: getLetterCount(word.term),
+    feedback: `The word is "${word.term}".`,
+    strictSpelling: true,
+  };
 }
 
 function buildFastOmegaRecognitionQuestion(
@@ -560,40 +812,242 @@ function buildFastOmegaRecognitionQuestion(
     };
   }
 
-  const recognitionBuilders: Array<() => QuizQuestion> = [
-    () => buildDefinitionToWordQuestion(
+  // Rotate through meaning, usage, and synonym prompts without performing
+  // expensive preflight ranking for every possible format. If a selected
+  // format cannot make a fair set of choices, use the always-safe meaning
+  // prompt for that word.
+  if (contextOffset % 3 === 1) {
+    const sentenceQuestion = buildOmegaSentenceUsageQuestion(
       word,
       words,
       index,
       contextOffset,
-      true,
-      'hard',
-      'full',
-    ),
-  ];
-
-  if (canBuildSentenceUsageQuestion(word, words)) {
-    recognitionBuilders.push(() => buildSentenceUsageQuestion(
-      word,
-      words,
-      index,
-      contextOffset,
-      'hard',
-    ));
+    );
+    if (sentenceQuestion) return sentenceQuestion;
   }
-  if (canBuildClosestSynonymQuestion(word, words)) {
-    recognitionBuilders.push(() => buildClosestSynonymQuestion(
+  if (contextOffset % 3 === 2) {
+    const synonymQuestion = buildOmegaClosestSynonymQuestion(
       word,
       words,
       index + contextOffset,
-      'hard',
-    ));
+    );
+    if (synonymQuestion) return synonymQuestion;
   }
 
-  // A completed Omega contributes two answers per word. Advancing this
-  // offset on the next assessment rotates to another available recognition
-  // or context format before reusing the same one.
-  return recognitionBuilders[contextOffset % recognitionBuilders.length]();
+  return buildOmegaDefinitionToWordQuestion(
+    word,
+    words,
+    index,
+    contextOffset,
+  );
+}
+
+function buildOmegaDefinitionToWordQuestion(
+  word: Word,
+  words: Word[],
+  index: number,
+  contextOffset: number,
+): QuizQuestion {
+  const recallPrompt = getSafeRecallPrompt(
+    word,
+    contextOffset,
+    contextOffset % 2 === 1,
+    true,
+    'full',
+  );
+
+  return {
+    word,
+    prompt: recallPrompt.prompt,
+    displayText: recallPrompt.displayText,
+    answer: word.term,
+    options: shuffle([
+      word.term,
+      ...getOmegaWordDistractors(word, words, index),
+    ]),
+    mode: 'definition-to-word',
+    difficulty: getQuestionDifficulty('definition-to-word'),
+    helperText: recallPrompt.chooseHelperText,
+    feedback: `The word is "${word.term}".`,
+  };
+}
+
+function buildOmegaWordToDefinitionQuestion(
+  word: Word,
+  words: Word[],
+  index: number,
+  contextOffset: number,
+): QuizQuestion {
+  const answer = getQuestionMeaning(word, true, 'full', contextOffset);
+  const distractors = getOmegaCandidateWords(word, words, index)
+    .map((candidate, candidateIndex) =>
+      getQuestionMeaning(candidate, true, 'full', contextOffset + candidateIndex + 1),
+    );
+  const options = rotateAndPickUnique(
+    [...distractors, ...FALLBACK_DEFINITIONS],
+    answer,
+    contextOffset,
+    3,
+  );
+
+  return {
+    word,
+    prompt: 'WHAT DOES THIS WORD MEAN?',
+    displayText: word.term,
+    answer,
+    options: shuffle([answer, ...options]),
+    mode: 'word-to-definition',
+    difficulty: getQuestionDifficulty('word-to-definition'),
+    helperText: 'Choose the meaning that matches this word.',
+    feedback: `“${word.term}” means ${answer.toLowerCase()}`,
+  };
+}
+
+function buildOmegaTrueFalseQuestion(
+  word: Word,
+  words: Word[],
+  index: number,
+  contextOffset: number,
+): QuizQuestion {
+  const shouldBeTrue = getTermHash(`${word.id}:${contextOffset}`) % 2 === 0;
+  const alternate = getOmegaCandidateWords(word, words, index)[0] ?? word;
+  const pairedWord = shouldBeTrue ? word : alternate;
+  const meaning = getQuestionMeaning(pairedWord, true, 'full', contextOffset);
+
+  return {
+    word,
+    prompt: 'IS THIS MATCH CORRECT?',
+    displayText: `“${word.term}” means ${meaning.toLowerCase()}`,
+    answer: shouldBeTrue ? 'True' : 'False',
+    options: ['True', 'False'],
+    mode: 'true-false',
+    difficulty: getQuestionDifficulty('true-false'),
+    helperText: 'Choose True if the word and meaning match.',
+    feedback: `“${word.term}” means ${getMeaning(word).toLowerCase()}`,
+  };
+}
+
+function buildOmegaSentenceUsageQuestion(
+  word: Word,
+  words: Word[],
+  index: number,
+  contextOffset: number,
+): QuizQuestion | null {
+  const answer = getCorrectExample(word, contextOffset);
+  if (!answer) return null;
+
+  const distractors = getOmegaCandidateWords(word, words, index)
+    .flatMap((candidate) => {
+      const source = getCorrectExample(candidate, contextOffset);
+      const replacement = replaceWholeTerm(source, candidate.term, word.term);
+      return replacement && replacement !== answer ? [replacement] : [];
+    });
+  if (pickTopUnique(distractors, answer, 2).length < 2) return null;
+
+  return {
+    word,
+    prompt: 'CHOOSE THE SENTENCE',
+    displayText: `Which sentence uses “${word.term}” correctly?`,
+    answer,
+    options: shuffle([answer, ...pickTopUnique(distractors, answer, 3)]),
+    mode: 'sentence-usage',
+    difficulty: getQuestionDifficulty('sentence-usage'),
+    helperText: 'Look for the context that best matches the word’s meaning.',
+    feedback: `“${word.term}” means ${getMeaning(word).toLowerCase()}`,
+  };
+}
+
+function buildOmegaSentenceCompletionQuestion(
+  word: Word,
+  words: Word[],
+  index: number,
+  contextOffset: number,
+  definitionTokensByWordId: ReadonlyMap<string, string[]>,
+): QuizQuestion | null {
+  const context = getCorrectExample(word, contextOffset);
+  const displayText = hideWordInExample(context, word.term);
+  if (!displayText) return null;
+
+  const targetTokens = new Set(definitionTokensByWordId.get(word.id) ?? []);
+  const distractors = getOmegaCandidateWords(word, words, index)
+    .filter((candidate) => {
+      const candidateTokens = definitionTokensByWordId.get(candidate.id) ?? [];
+      const sharedMeaningTokens = candidateTokens.filter((token) => targetTokens.has(token));
+      return sharedMeaningTokens.length < 2;
+    })
+    .map((candidate) => candidate.term)
+    .slice(0, 3);
+  if (distractors.length < 2) return null;
+
+  return {
+    word,
+    prompt: 'COMPLETE THE CONTEXT',
+    displayText,
+    answer: word.term,
+    options: shuffle([word.term, ...distractors]),
+    mode: 'sentence-completion',
+    difficulty: getQuestionDifficulty('sentence-completion'),
+    helperText: 'Choose the word that best completes this context.',
+    answerLetterCount: getLetterCount(word.term),
+    feedback: `“${word.term}” fits because it means ${getMeaning(word).toLowerCase()}`,
+  };
+}
+
+function buildOmegaClosestSynonymQuestion(
+  word: Word,
+  words: Word[],
+  index: number,
+): QuizQuestion | null {
+  const synonymCandidates = getSynonymCandidates(word);
+  const answer = synonymCandidates[index % synonymCandidates.length];
+  if (!answer) return null;
+
+  const distractors = getOmegaCandidateWords(word, words, index)
+    .flatMap((candidate) => [...getSynonymCandidates(candidate), candidate.term]);
+  const options = pickTopUnique(distractors, answer, 3);
+  if (options.length < 2) return null;
+
+  return {
+    word,
+    prompt: 'CHOOSE THE CLOSEST SYNONYM',
+    displayText: `Which word is closest in meaning to “${word.term}”?`,
+    answer,
+    options: shuffle([answer, ...options]),
+    mode: 'closest-synonym',
+    difficulty: getQuestionDifficulty('closest-synonym'),
+    helperText: 'Choose the word with the most similar meaning.',
+    feedback: `“${answer}” is a close synonym of “${word.term}”.`,
+  };
+}
+
+function getOmegaWordDistractors(word: Word, words: Word[], index: number) {
+  return getOmegaCandidateWords(word, words, index)
+    .map((candidate) => candidate.term)
+    .slice(0, 3);
+}
+
+function getOmegaCandidateWords(word: Word, words: Word[], index: number) {
+  const samePartOfSpeech: Word[] = [];
+  const otherWords: Word[] = [];
+
+  words.forEach((candidate) => {
+    if (
+      candidate.id === word.id ||
+      containsAnswerFamily(candidate.term, word.term)
+    ) {
+      return;
+    }
+    if (word.partOfSpeech && candidate.partOfSpeech === word.partOfSpeech) {
+      samePartOfSpeech.push(candidate);
+    } else {
+      otherWords.push(candidate);
+    }
+  });
+
+  const candidates = [...samePartOfSpeech, ...otherWords];
+  if (candidates.length === 0) return [];
+  const start = index % candidates.length;
+  return [...candidates.slice(start), ...candidates.slice(0, start)];
 }
 
 export function getOmegaTestAttempts(analytics: AnalyticsData) {
@@ -1869,6 +2323,7 @@ function getTypedRecallPrompt(
   words: Word[],
   contextOffset = 0,
   definitionVariation: DefinitionVariationLevel = 'none',
+  definitionTokensByWordId?: ReadonlyMap<string, string[]>,
 ): RecallPrompt | null {
   const detailedDefinition = word.definition.replace(/\s+/g, ' ').trim();
   const completeDefinition = getMeaning(word).replace(/\s+/g, ' ').trim();
@@ -1888,7 +2343,12 @@ function getTypedRecallPrompt(
         Boolean(candidate) &&
         !containsAnswerFamily(candidate, word.term) &&
         isSpecificTypedRecallClue(`${candidate} ${context ?? ''}`) &&
-        isTypedRecallClueDistinct(word, `${candidate} ${context ?? ''}`, words),
+        isTypedRecallClueDistinct(
+          word,
+          `${candidate} ${context ?? ''}`,
+          words,
+          definitionTokensByWordId,
+        ),
     );
 
   if (!definition) return null;
@@ -1923,6 +2383,7 @@ function isTypedRecallClueDistinct(
   word: Word,
   clue: string,
   words: Word[],
+  definitionTokensByWordId?: ReadonlyMap<string, string[]>,
 ) {
   const clueTokens = getMeaningfulTokens(clue);
   if (clueTokens.length < 7) return false;
@@ -1931,9 +2392,10 @@ function isTypedRecallClueDistinct(
   return words
     .filter((candidate) => candidate.id !== word.id)
     .every((candidate) => {
-      const candidateTokens = getMeaningfulTokens(
-        `${candidate.definition} ${candidate.simpleDefinition ?? ''}`,
-      );
+      const candidateTokens = definitionTokensByWordId?.get(candidate.id) ??
+        getMeaningfulTokens(
+          `${candidate.definition} ${candidate.simpleDefinition ?? ''}`,
+        );
       if (candidateTokens.length === 0) return true;
 
       const sharedTokenCount = candidateTokens.filter((token) =>
@@ -2046,7 +2508,7 @@ function getDefinitionDistractors(
     (definition) => definition !== answer,
   );
 
-  return pickTopUnique(
+  return pickTopUniqueWithRotation(
     Array.from(
       new Set([
         ...otherDefinitions,
@@ -2055,6 +2517,7 @@ function getDefinitionDistractors(
       ]),
     ),
     answer,
+    index,
     3,
   );
 }
@@ -2065,9 +2528,10 @@ function getWordDistractors(
   index: number,
   questionChallenge: QuestionChallenge = 'standard',
 ) {
-  return pickTopUnique(
+  return pickTopUniqueWithRotation(
     getRankedDistractorWords(word, words, questionChallenge).map((item) => item.term),
     word.term,
+    index,
     3,
   );
 }
@@ -2261,7 +2725,7 @@ function getSentenceDistractors(
     return replacement && replacement !== answer ? [replacement] : [];
   });
 
-  return rotateAndPickUnique(candidates, answer, index, 3);
+  return pickTopUniqueWithRotation(candidates, answer, index, 3);
 }
 
 function canBuildClosestSynonymQuestion(word: Word, words: Word[]) {
@@ -2294,7 +2758,7 @@ function getSynonymDistractors(
   const candidates = getRankedDistractorWords(word, words, questionChallenge)
     .flatMap((item) => [...getSynonymCandidates(item), item.term]);
 
-  return pickTopUnique(candidates, answer, 3);
+  return rotateAndPickUnique(candidates, answer, index, 3);
 }
 
 function pickTopUnique(
@@ -2303,6 +2767,33 @@ function pickTopUnique(
   count: number,
 ) {
   return getUniqueDistractorCandidates(candidates, answer).slice(0, count);
+}
+
+/**
+ * Keep the closest plausible distractor in every attempt, then rotate the
+ * remaining choices. This preserves question quality while avoiding the same
+ * three-option set each time a growing library offers more alternatives.
+ */
+function pickTopUniqueWithRotation(
+  candidates: string[],
+  answer: string,
+  index: number,
+  count: number,
+) {
+  const unique = getUniqueDistractorCandidates(candidates, answer);
+  if (unique.length <= count) return unique;
+
+  const strongest = unique.slice(0, Math.min(2, count));
+  const remaining = unique.slice(strongest.length);
+  if (remaining.length === 0) return strongest;
+  const start = index % remaining.length;
+  return [
+    ...strongest,
+    ...[...remaining.slice(start), ...remaining.slice(0, start)].slice(
+      0,
+      count - strongest.length,
+    ),
+  ];
 }
 
 function rotateAndPickUnique(

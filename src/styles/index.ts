@@ -4130,19 +4130,19 @@ export const styles = StyleSheet.create({
   },
   questionDetailLabel: {
     color: COLORS.muted,
-    fontSize: 8,
+    fontSize: 9,
     fontWeight: '900',
     letterSpacing: 0.9,
   },
   questionPartOfSpeechPill: {
     paddingHorizontal: 10,
-    paddingVertical: 4,
+    paddingVertical: 5,
     borderRadius: 10,
     backgroundColor: 'rgba(255,255,255,0.56)',
   },
   questionPartOfSpeechText: {
     color: COLORS.orange,
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: '900',
   },
   questionDetailMeaning: {
@@ -4282,7 +4282,7 @@ export const styles = StyleSheet.create({
   quizLetterCountValueRow: {
     flexDirection: 'row',
     alignItems: 'baseline',
-    gap: 4,
+    gap: 1,
   },
   quizLetterCountValue: {
     color: COLORS.ink,
@@ -4290,11 +4290,17 @@ export const styles = StyleSheet.create({
     fontWeight: '900',
     lineHeight: 23,
   },
-  quizLetterCountUnit: {
+  quizLetterCountDivider: {
     color: COLORS.muted,
-    fontSize: 9,
+    fontSize: 15,
     fontWeight: '900',
-    letterSpacing: 0.65,
+    lineHeight: 20,
+  },
+  quizLetterCountTotal: {
+    color: COLORS.muted,
+    fontSize: 16,
+    fontWeight: '900',
+    lineHeight: 20,
   },
   quizLetterCountStatus: {
     color: COLORS.muted,
@@ -9135,6 +9141,22 @@ export const styles = StyleSheet.create({
     color: COLORS.muted,
     fontSize: 9,
     lineHeight: 12,
+    fontWeight: '700',
+  },
+  wordOverviewQuizCard: {
+    marginTop: 12,
+    padding: 13,
+    borderWidth: 1,
+    borderColor: '#F0DDF2',
+    borderRadius: 18,
+    backgroundColor: '#FFF9FE',
+  },
+  wordOverviewReadOnlyNote: {
+    marginTop: 10,
+    color: COLORS.muted,
+    textAlign: 'center',
+    fontSize: 9,
+    lineHeight: 13,
     fontWeight: '700',
   },
   wordOverviewActions: {

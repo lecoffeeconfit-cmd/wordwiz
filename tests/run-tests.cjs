@@ -3039,6 +3039,26 @@ test('admin dashboard keeps privileged user controls behind server-side access c
     path.join(projectRoot, 'supabase/admin_dashboard_reporting_range.sql'),
     'utf8',
   );
+  const adminUsageLeaders = fs.readFileSync(
+    path.join(projectRoot, 'supabase/migrations/20260730000000_admin_dashboard_usage_leaders.sql'),
+    'utf8',
+  );
+  const adminCollectionAdoption = fs.readFileSync(
+    path.join(projectRoot, 'supabase/migrations/20260730000001_admin_dashboard_collection_adoption.sql'),
+    'utf8',
+  );
+  const screenTimeRetention = fs.readFileSync(
+    path.join(projectRoot, 'supabase/migrations/20260730000002_screen_time_retention.sql'),
+    'utf8',
+  );
+  const adminTopTwenty = fs.readFileSync(
+    path.join(projectRoot, 'supabase/migrations/20260730000003_admin_dashboard_top_twenty.sql'),
+    'utf8',
+  );
+  const adminProductEngagement = fs.readFileSync(
+    path.join(projectRoot, 'supabase/migrations/20260730000004_admin_product_engagement.sql'),
+    'utf8',
+  );
 
   assert.match(migration, /create table if not exists public\.app_admins/i);
   assert.match(migration, /enable row level security/i);
@@ -3059,4 +3079,22 @@ test('admin dashboard keeps privileged user controls behind server-side access c
   assert.match(adminReportingRange, /admin_dashboard_metrics\(p_range text default '30d'\)/i);
   assert.match(adminReportingRange, /when 'today'/i);
   assert.match(adminReportingRange, /when 'all'/i);
+  assert.match(adminUsageLeaders, /admin_dashboard_top_learners/i);
+  assert.match(adminUsageLeaders, /grant execute on function public\.admin_dashboard_top_learners\(text\) to service_role/i);
+  assert.match(adminCollectionAdoption, /admin_dashboard_top_collections/i);
+  assert.match(adminCollectionAdoption, /mastery_data->'studySets'/i);
+  assert.match(screenTimeRetention, /screen_time_daily/i);
+  assert.match(screenTimeRetention, /interval '90 days'/i);
+  assert.match(screenTimeRetention, /admin_dashboard_screen_time/i);
+  assert.match(adminTopTwenty, /admin_dashboard_top_learners/i);
+  assert.match(adminTopTwenty, /limit 20/i);
+  assert.match(adminProductEngagement, /stats_section_daily/i);
+  assert.match(adminProductEngagement, /record_my_stats_section_interaction/i);
+  assert.match(adminProductEngagement, /admin_dashboard_flashcard_usage/i);
+  assert.match(adminProductEngagement, /admin_dashboard_stats_section_engagement/i);
+  assert.match(adminFunction, /admin_dashboard_top_learners/i);
+  assert.match(adminFunction, /admin_dashboard_top_collections/i);
+  assert.match(adminFunction, /admin_dashboard_screen_time/i);
+  assert.match(adminFunction, /admin_dashboard_flashcard_usage/i);
+  assert.match(adminFunction, /admin_dashboard_stats_section_engagement/i);
 });

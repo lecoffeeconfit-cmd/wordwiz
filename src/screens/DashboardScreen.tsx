@@ -13,7 +13,7 @@ import { DEFAULT_TIME_BASED_LEARNING_SETTINGS, MASTERY_LEVELS, buildAchievements
 import { CompactPagination, DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, ProgressFill, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 import { LessonProgressRing } from '../components/dashboard/LessonProgressRing';
 import { useSubscription } from '../subscription/SubscriptionProvider';
-import { validatePassword } from '../services';
+import { type StatsSectionInteraction, validatePassword } from '../services';
 
 const EXPANDED_LIST_PAGE_SIZE = 8;
 const FEEDBACK_BY_WORD_PAGE_SIZE = 6;
@@ -191,6 +191,7 @@ export function DashboardScreen({
   onOpenAdmin,
   onOpenOnboardingGuide,
   onOpenPlus,
+  onTrackStatsSectionInteraction,
 }: {
   words: Word[];
   analytics: AnalyticsData;
@@ -221,6 +222,7 @@ export function DashboardScreen({
   onOpenAdmin?: () => void;
   onOpenOnboardingGuide: () => void;
   onOpenPlus: () => void;
+  onTrackStatsSectionInteraction: (section: StatsSectionInteraction) => void;
 }) {
   const subscription = useSubscription();
   const [isPasswordEditorOpen, setIsPasswordEditorOpen] = useState(false);
@@ -270,6 +272,10 @@ export function DashboardScreen({
   const [dueReviewsExpanded, setDueReviewsExpanded] = useState(false);
   const [dueReviewPage, setDueReviewPage] = useState(0);
   const pendingStudyPriorityTap = useRef<{
+    wordId: string;
+    timeout: ReturnType<typeof setTimeout>;
+  } | null>(null);
+  const pendingMasteryOverviewTap = useRef<{
     wordId: string;
     timeout: ReturnType<typeof setTimeout>;
   } | null>(null);
@@ -662,24 +668,24 @@ export function DashboardScreen({
   }
 
   function handleMasteryWordPress(wordId: string) {
-    const pendingTap = pendingStudyPriorityTap.current;
+    const pendingTap = pendingMasteryOverviewTap.current;
     if (pendingTap?.wordId === wordId) {
       clearTimeout(pendingTap.timeout);
-      pendingStudyPriorityTap.current = null;
+      pendingMasteryOverviewTap.current = null;
       setMasteryOverviewWordId(wordId);
       return;
     }
 
     if (pendingTap) {
       clearTimeout(pendingTap.timeout);
-      onToggleWordReviewNext(pendingTap.wordId);
     }
 
-    pendingStudyPriorityTap.current = {
+    pendingMasteryOverviewTap.current = {
       wordId,
       timeout: setTimeout(() => {
-        onToggleWordReviewNext(wordId);
-        pendingStudyPriorityTap.current = null;
+        if (pendingMasteryOverviewTap.current?.wordId === wordId) {
+          pendingMasteryOverviewTap.current = null;
+        }
       }, 250),
     };
   }
@@ -688,6 +694,9 @@ export function DashboardScreen({
     () => () => {
       if (pendingStudyPriorityTap.current) {
         clearTimeout(pendingStudyPriorityTap.current.timeout);
+      }
+      if (pendingMasteryOverviewTap.current) {
+        clearTimeout(pendingMasteryOverviewTap.current.timeout);
       }
     },
     [],
@@ -927,7 +936,10 @@ export function DashboardScreen({
       accessibilityLabel="Practice estimate details"
       accessibilityHint="Shows the reviews, quizzes, and study time behind this estimate"
       accessibilityState={{ expanded: practiceEstimateExpanded }}
-      onPress={() => setPracticeEstimateExpanded((expanded) => !expanded)}
+      onPress={() => {
+        if (!practiceEstimateExpanded) onTrackStatsSectionInteraction('practice_estimate');
+        setPracticeEstimateExpanded((expanded) => !expanded);
+      }}
       style={({ pressed }) => [styles.insightCard, pressed && styles.pressed]}
     >
       <View style={styles.insightHeader}>
@@ -990,7 +1002,7 @@ export function DashboardScreen({
       ) : (
         <>
           <Text style={styles.studyPriorityHint}>
-            Tap a word for your next quiz · Double-tap for its learning overview
+            Double-tap a word to see its learning overview
           </Text>
           {masteryPreview.map((item) => {
             const wordCategory = item.category;
@@ -1000,8 +1012,7 @@ export function DashboardScreen({
               <Pressable
                 key={item.word.id}
                 accessibilityRole="button"
-                accessibilityLabel={`Set ${item.word.term} for your next quiz. Double-tap to open its learning overview.`}
-                accessibilityState={{ selected: item.word.mastery?.reviewNext || item.word.mastery?.focusMode }}
+                accessibilityLabel={`Double-tap ${item.word.term} to open its learning overview.`}
                 onPress={() => handleMasteryWordPress(item.word.id)}
                 style={({ pressed }) => [
                   styles.masteryRow,
@@ -1019,7 +1030,6 @@ export function DashboardScreen({
                     </Text>
                   </View>
                   <View style={styles.masteryPercentRow}>
-                    <StudyPriorityBadge word={item.word} />
                     {isMasterWord ? (
                       <Animated.View
                         style={[
@@ -1081,6 +1091,7 @@ export function DashboardScreen({
                 return;
               }
 
+              onTrackStatsSectionInteraction('mastery_progress');
               setMasteryPage(0);
               setMasteryExpanded(true);
             }}
@@ -1496,7 +1507,10 @@ export function DashboardScreen({
               : 'Shows the six-step retrieval path.'
           }
           accessibilityState={{ expanded: isRetrievalProgressionExpanded }}
-          onPress={() => setIsRetrievalProgressionExpanded((current) => !current)}
+          onPress={() => {
+            if (!isRetrievalProgressionExpanded) onTrackStatsSectionInteraction('retrieval_path');
+            setIsRetrievalProgressionExpanded((current) => !current);
+          }}
           style={({ pressed }) => [
             styles.retrievalProgression,
             pressed && styles.pressed,
@@ -1557,6 +1571,7 @@ export function DashboardScreen({
               accessibilityRole="button"
               accessibilityState={{ selected: feedbackView === view }}
               onPress={() => {
+                if (view !== feedbackView) onTrackStatsSectionInteraction('recall_feedback');
                 setFeedbackView(view);
                 if (view === 'words') {
                   setFeedbackWordPage(0);
@@ -1682,6 +1697,7 @@ export function DashboardScreen({
               accessibilityRole="button"
               accessibilityState={{ selected: recallPaceView === view }}
               onPress={() => {
+                if (view !== recallPaceView) onTrackStatsSectionInteraction('recall_pace');
                 setRecallPaceView(view);
                 if (view === 'words') {
                   setRecallPaceWordPage(0);
@@ -1860,6 +1876,7 @@ export function DashboardScreen({
                       return;
                     }
 
+                    onTrackStatsSectionInteraction('due_reviews');
                     setDueReviewPage(0);
                     setDueReviewsExpanded(true);
                   }}
@@ -2063,6 +2080,7 @@ export function DashboardScreen({
               setAchievementsExpanded(false);
               return;
             }
+            onTrackStatsSectionInteraction('achievements');
             setAchievementPage(0);
             setAchievementsExpanded(true);
           }}
@@ -2456,7 +2474,10 @@ export function DashboardScreen({
             accessibilityRole="button"
             accessibilityHint="Opens controls for the question types WordWiz uses in quizzes"
             accessibilityState={{ expanded: isQuestionMixExpanded }}
-            onPress={() => setIsQuestionMixExpanded((expanded) => !expanded)}
+            onPress={() => {
+              if (!isQuestionMixExpanded) onTrackStatsSectionInteraction('question_mix');
+              setIsQuestionMixExpanded((expanded) => !expanded);
+            }}
             style={({ pressed }) => [styles.questionMixHeader, pressed && styles.pressed]}
           >
             <View style={styles.questionMixHeaderContent}>
@@ -2690,7 +2711,10 @@ export function DashboardScreen({
             <Pressable
               accessibilityRole="button"
               accessibilityState={{ expanded: isTimeSettingsExpanded }}
-              onPress={() => setIsTimeSettingsExpanded((expanded) => !expanded)}
+              onPress={() => {
+                if (!isTimeSettingsExpanded) onTrackStatsSectionInteraction('time_based_learning');
+                setIsTimeSettingsExpanded((expanded) => !expanded);
+              }}
               style={({ pressed }) => [styles.timeBasedSettingsHeader, pressed && styles.pressed]}
             >
               <View style={styles.timeBasedSettingsHeaderCopy}>
@@ -2782,7 +2806,10 @@ export function DashboardScreen({
               accessibilityRole="button"
               accessibilityLabel="Show Omega Test attempt history"
               accessibilityState={{ expanded: omegaStatsExpanded }}
-              onPress={() => setOmegaStatsExpanded((expanded) => !expanded)}
+              onPress={() => {
+                if (!omegaStatsExpanded) onTrackStatsSectionInteraction('omega_history');
+                setOmegaStatsExpanded((expanded) => !expanded);
+              }}
               style={({ pressed }) => [
                 styles.omegaStatsSummaryRow,
                 pressed && styles.pressed,
@@ -3077,6 +3104,7 @@ export function DashboardScreen({
                     return;
                   }
 
+                  onTrackStatsSectionInteraction('quiz_history');
                   setQuizTrendPage(0);
                   setQuizTrendExpanded(true);
                 }}
@@ -3415,8 +3443,6 @@ export function DashboardScreen({
       word={masteryOverviewWord}
       analytics={analytics}
       onDismiss={() => setMasteryOverviewWordId(null)}
-      onToggleFocus={onToggleWordFocus}
-      onToggleReviewNext={onToggleWordReviewNext}
     />
     </>
   );
@@ -3803,14 +3829,10 @@ function WordMasteryOverviewModal({
   word,
   analytics,
   onDismiss,
-  onToggleFocus,
-  onToggleReviewNext,
 }: {
   word: Word | null;
   analytics: AnalyticsData;
   onDismiss: () => void;
-  onToggleFocus: (wordId: string) => void;
-  onToggleReviewNext: (wordId: string) => void;
 }) {
   if (!word) return null;
 
@@ -3829,6 +3851,32 @@ function WordMasteryOverviewModal({
     progress.successfulReviewDays.length >= 3 &&
     progress.lastReviewResult !== 'wrong';
   const learningSignalScores = getWordLearningSignalScores(progress);
+  const wordFeedback = getQuizFeedbackByWord(analytics).find(
+    (feedback) => feedback.wordId === word.id,
+  );
+  const wordRecallPace = getQuizRecallPaceByWord(analytics).find(
+    (pace) => pace.key === word.id,
+  );
+  const studyStatus = progress.focusMode
+    ? {
+        title: 'Focus practice is on',
+        detail: 'This word stays prominent across practice until you turn focus off elsewhere.',
+      }
+    : progress.reviewNext
+      ? {
+          title: 'Queued for the next quiz',
+          detail: 'This one-time nudge is cleared after the word is reviewed.',
+        }
+      : {
+          title: 'Following its normal review plan',
+          detail: 'WordWiz schedules this word from its results and spacing stage.',
+        };
+  const feedbackDetail = wordFeedback
+    ? `${wordFeedback.easy} easy · ${wordFeedback.correct} got it · ${wordFeedback.hard} hard`
+    : 'Choose Hard, Got it, or Easy after quiz answers to add a confidence signal.';
+  const paceDetail = wordRecallPace
+    ? `${wordRecallPace.fluent} fluent · ${wordRecallPace.successful} recalled · ${wordRecallPace.reinforcement} reinforce · ${wordRecallPace.incorrect} missed`
+    : 'Answer a timed quiz question to see recall pace for this word.';
 
   return (
     <Modal
@@ -3931,27 +3979,30 @@ function WordMasteryOverviewModal({
               </View>
               <WordOverviewEvidence icon="layers-outline" title={`Spacing stage ${stage} of 7`} detail={stage >= 5 ? 'A correct scheduled review here contributes to long-term retention.' : 'Each successful scheduled review increases the next gap.'} />
               <WordOverviewEvidence icon="time-outline" title={nextReview ? `Next review ${nextReview}` : 'Review timing will appear after practice'} detail={lastReview ? `Last reviewed ${lastReview}` : 'No completed review yet'} />
+              <WordOverviewEvidence icon="sparkles-outline" title={studyStatus.title} detail={studyStatus.detail} />
             </View>
 
-            <View style={styles.wordOverviewActions}>
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => onToggleReviewNext(word.id)}
-                style={({ pressed }) => [styles.wordOverviewAction, word.mastery?.reviewNext && styles.wordOverviewActionActive, pressed && styles.pressed]}
-              >
-                <Ionicons name="play-forward-outline" size={18} color={COLORS.purpleDark} />
-                <Text style={styles.wordOverviewActionText}>{word.mastery?.reviewNext ? 'Queued next' : 'Next quiz'}</Text>
-              </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => onToggleFocus(word.id)}
-                style={({ pressed }) => [styles.wordOverviewAction, word.mastery?.focusMode && styles.wordOverviewActionFocused, pressed && styles.pressed]}
-              >
-                <Ionicons name="locate-outline" size={18} color={COLORS.purpleDark} />
-                <Text style={styles.wordOverviewActionText}>{word.mastery?.focusMode ? 'Focused' : 'Focus word'}</Text>
-              </Pressable>
+            <View style={styles.wordOverviewQuizCard}>
+              <View style={styles.wordOverviewEvidenceTop}>
+                <View>
+                  <Text style={styles.wordOverviewSectionLabel}>QUIZ EXPERIENCE</Text>
+                  <Text style={styles.wordOverviewSectionTitle}>Pace & confidence</Text>
+                </View>
+              </View>
+              <WordOverviewEvidence
+                icon="speedometer-outline"
+                title={wordRecallPace ? `${wordRecallPace.averageSeconds}s average response` : 'Recall pace is still gathering'}
+                detail={paceDetail}
+              />
+              <WordOverviewEvidence
+                icon="chatbubble-ellipses-outline"
+                title={wordFeedback ? `${wordFeedback.total} confidence check-in${wordFeedback.total === 1 ? '' : 's'}` : 'No confidence check-ins yet'}
+                detail={feedbackDetail}
+              />
             </View>
-            <Text style={styles.wordOverviewActionNote}>Focus keeps this word prominent across practice. Next quiz is a one-time nudge.</Text>
+            <Text style={styles.wordOverviewReadOnlyNote}>
+              This overview is read-only so Word Mastery stays focused on learning evidence.
+            </Text>
           </ScrollView>
         </View>
       </View>

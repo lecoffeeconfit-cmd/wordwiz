@@ -235,6 +235,7 @@ export function QuizScreen({
   const omegaMagicTwinkle = useRef(new Animated.Value(0.35)).current;
   const omegaPreparationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const omegaPreparationRequest = useRef(0);
+  const omegaPreparationStartedAt = useRef<number | null>(null);
   const [finishedTotal, setFinishedTotal] = useState<number | null>(null);
   const [finishedWasDailyRetry, setFinishedWasDailyRetry] = useState(false);
   const [selectedCategory, setSelectedCategory] =
@@ -284,18 +285,20 @@ export function QuizScreen({
 
   useEffect(() => {
     if (!isPreparingOmegaTest) {
+      omegaPreparationStartedAt.current = null;
       setOmegaPreparationElapsedSeconds(0);
       return;
     }
 
-    const startedAt = Date.now();
+    const startedAt = omegaPreparationStartedAt.current ?? Date.now();
+    omegaPreparationStartedAt.current = startedAt;
     const updateElapsedTime = () => {
       setOmegaPreparationElapsedSeconds(
         Math.floor((Date.now() - startedAt) / 1_000),
       );
     };
     updateElapsedTime();
-    const interval = setInterval(updateElapsedTime, 1_000);
+    const interval = setInterval(updateElapsedTime, 250);
     return () => clearInterval(interval);
   }, [isPreparingOmegaTest]);
   const wordMastery = useMemo(
@@ -387,9 +390,11 @@ export function QuizScreen({
     () => words.filter((word) => !word.mastery?.excludedFromPractice),
     [words],
   );
+  const pausedOmegaStartedAt =
+    pausedSession?.sessionMode === 'omega-test' ? pausedSession.startedAt : null;
   const omegaTestStatus = useMemo(
-    () => getOmegaTestStatus(analytics, omegaStatusNow),
-    [analytics, omegaStatusNow],
+    () => getOmegaTestStatus(analytics, omegaStatusNow, pausedOmegaStartedAt),
+    [analytics, omegaStatusNow, pausedOmegaStartedAt],
   );
   const omegaTestAvailable = omegaTestStatus.available || omegaRefreshActive;
   const omegaAvailabilityScale = omegaMagicTwinkle.interpolate({
@@ -589,6 +594,25 @@ export function QuizScreen({
     setChallengeCorrectStreak(0);
   }
 
+  function endActiveOmegaTest() {
+    if (
+      sessionMode !== 'omega-test' ||
+      quiz.length === 0 ||
+      finishedScore !== null
+    ) {
+      return;
+    }
+
+    onAbandonOmegaTest(
+      score,
+      quiz.length,
+      Math.max(1, Math.round((Date.now() - quizStartedAt) / 1000)),
+      answers,
+    );
+    onDiscardPausedSession();
+    resetActiveQuiz();
+  }
+
   function resumePausedQuiz() {
     if (!pausedSession) return;
 
@@ -653,11 +677,26 @@ export function QuizScreen({
 
   function confirmExitQuiz() {
     const isOmegaTest = sessionMode === 'omega-test';
+
+    if (isOmegaTest) {
+      Alert.alert(
+        'End Omega Test?',
+        'Leaving records your progress in Omega stats as an ended-early attempt and starts the 7-day reset.',
+        [
+          { text: 'Keep learning', style: 'cancel' },
+          {
+            text: 'End & save progress',
+            style: 'destructive',
+            onPress: endActiveOmegaTest,
+          },
+        ],
+      );
+      return;
+    }
+
     Alert.alert(
-      isOmegaTest ? 'End Omega Test?' : 'Leave this quiz?',
-      isOmegaTest
-        ? 'Saving your place keeps this exact test ready to resume and starts this week’s Omega timer. Ending it records your progress as an ended-early attempt.'
-        : 'Save your place and come back whenever you are ready, or end this attempt now.',
+      'Leave this quiz?',
+      'Save your place and come back whenever you are ready, or end this attempt now.',
       [
         { text: 'Keep learning', style: 'cancel' },
         {
@@ -668,17 +707,9 @@ export function QuizScreen({
           },
         },
         {
-          text: isOmegaTest ? 'End & start reset' : 'End quiz',
+          text: 'End quiz',
           style: 'destructive',
           onPress: () => {
-            if (isOmegaTest) {
-              onAbandonOmegaTest(
-                score,
-                quiz.length,
-                Math.max(1, Math.round((Date.now() - quizStartedAt) / 1000)),
-                answers,
-              );
-            }
             onDiscardPausedSession();
             resetActiveQuiz();
           },
@@ -687,8 +718,19 @@ export function QuizScreen({
     );
   }
 
+  function handleQuizTabExit() {
+    // An Omega Test is a weekly commitment. Unlike normal quizzes, changing
+    // screens ends the attempt so progress is retained in the dedicated stats
+    // history and the weekly cooldown cannot be bypassed by saving/restarting.
+    if (sessionMode === 'omega-test') {
+      endActiveOmegaTest();
+      return;
+    }
+    saveQuizForLater();
+  }
+
   useEffect(() => {
-    onRegisterPauseHandler(saveQuizForLater);
+    onRegisterPauseHandler(handleQuizTabExit);
     return () => onRegisterPauseHandler(null);
   }, [
     answers,
@@ -698,6 +740,8 @@ export function QuizScreen({
     finishedScore,
     hintStep,
     isPracticeRound,
+    onAbandonOmegaTest,
+    onDiscardPausedSession,
     onRegisterPauseHandler,
     omegaRefreshActive,
     questionIndex,
@@ -904,6 +948,7 @@ export function QuizScreen({
 
       // Yield once so React Native can paint the button's loading indicator
       // before the full-library assessment builds its two questions per word.
+      omegaPreparationStartedAt.current = Date.now();
       setIsPreparingOmegaTest(true);
       const requestId = omegaPreparationRequest.current + 1;
       omegaPreparationRequest.current = requestId;
@@ -1908,7 +1953,9 @@ export function QuizScreen({
       ? 'LENGTH MATCHED'
       : typedLetterCount > (answerLetterCount ?? 0)
         ? `${typedLetterCount - (answerLetterCount ?? 0)} OVER`
-        : `${typedLetterCount}/${answerLetterCount} TYPED`;
+        : `${(answerLetterCount ?? 0) - typedLetterCount} ${
+            (answerLetterCount ?? 0) - typedLetterCount === 1 ? 'LETTER' : 'LETTERS'
+          } TO GO`;
   const typedHint =
     question.mode === 'typed-word'
       ? getTypedRecallHint(getLiveQuestionWord(question), hintStep)
@@ -2113,10 +2160,9 @@ export function QuizScreen({
             <View style={styles.quizLetterCountCopy}>
               <Text style={styles.quizLetterCountLabel}>WORD LENGTH</Text>
               <View style={styles.quizLetterCountValueRow}>
-                <Text style={styles.quizLetterCountValue}>{answerLetterCount}</Text>
-                <Text style={styles.quizLetterCountUnit}>
-                  {answerLetterCount === 1 ? 'LETTER' : 'LETTERS'}
-                </Text>
+                <Text style={styles.quizLetterCountValue}>{typedLetterCount}</Text>
+                <Text style={styles.quizLetterCountDivider}>/</Text>
+                <Text style={styles.quizLetterCountTotal}>{answerLetterCount}</Text>
               </View>
               <Text
                 style={[

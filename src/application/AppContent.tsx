@@ -66,6 +66,7 @@ import {
   saveCloudCardReview,
   saveCloudQuizAttempt,
   saveCloudScreenTime,
+  saveCloudStatsSectionInteraction,
   saveCloudReminderSettings,
   saveCloudWord,
   saveCloudWords,
@@ -73,6 +74,7 @@ import {
   scheduleDailyReminder,
   setSentryUser,
   trackEvent,
+  type StatsSectionInteraction,
   getStartupFailureCode,
   reportStartupFailure,
   reportStartupStage,
@@ -340,6 +342,13 @@ export default function AppContent() {
       userId: currentUser.id,
       startedAt: Date.now(),
     };
+  }, [currentUser, isReady]);
+
+  const trackStatsSectionInteraction = useCallback((section: StatsSectionInteraction) => {
+    if (!currentUser || !isReady) return;
+    void saveCloudStatsSectionInteraction(section).catch((error) => {
+      reportError(error, { area: 'save_stats_section_interaction', section });
+    });
   }, [currentUser, isReady]);
 
   useEffect(() => {
@@ -2723,6 +2732,7 @@ export default function AppContent() {
         onOpenAdmin={() => setActiveTab('admin')}
         onOpenOnboardingGuide={() => setShowOnboardingGuide(true)}
         onOpenPlus={() => presentPlusPaywall('premium-feature')}
+        onTrackStatsSectionInteraction={trackStatsSectionInteraction}
       />
     );
   }
