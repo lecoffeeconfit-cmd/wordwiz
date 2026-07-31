@@ -3,6 +3,7 @@ export * from './analytics';
 export * from './access';
 export * from './admin';
 export * from './cloudData';
+export * from './community';
 export * from './dictionary';
 export * from './errorReporting';
 export * from './freeWordUsage';

@@ -1302,15 +1302,31 @@ export const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: COLORS.teal,
-    ...FLOATING_SHADOW,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 225, 139, 0.82)',
+    // A restrained warm halo makes this discovery action feel special without
+    // blurring the label or competing with the rest of the Words screen.
+    boxShadow: '0 0 12px rgba(255, 220, 120, 0.24), 0 18px 42px rgba(80, 91, 184, 0.18)',
+    elevation: FLOATING_SHADOW.elevation,
   },
   addIcon: {
+    position: 'relative',
     width: 43,
     height: 43,
     borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(255,255,255,0.2)',
+  },
+  addButtonEndcap: {
+    position: 'relative',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  addButtonSparkle: {
+    position: 'absolute',
+    top: -15,
+    right: -3,
   },
   addButtonCopy: {
     flex: 1,
@@ -2655,6 +2671,14 @@ export const styles = StyleSheet.create({
     borderRadius: 9,
     backgroundColor: COLORS.bluePale,
   },
+  cardLabelCollection: {
+    maxWidth: 142,
+    paddingHorizontal: 9,
+    paddingVertical: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
   cardLabelRevealed: {
     backgroundColor: COLORS.yellowPale,
   },
@@ -2663,6 +2687,11 @@ export const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '900',
     letterSpacing: 1,
+  },
+  cardLabelCollectionText: {
+    flexShrink: 1,
+    fontSize: 8,
+    letterSpacing: 0.65,
   },
   cardLabelTextRevealed: {
     color: '#C59600',
@@ -2675,6 +2704,7 @@ export const styles = StyleSheet.create({
   flashcardWordRow: {
     maxWidth: '100%',
     width: '100%',
+    marginTop: 14,
     flexDirection: 'column',
     alignItems: 'center',
     justifyContent: 'center',
@@ -4286,21 +4316,21 @@ export const styles = StyleSheet.create({
   },
   quizLetterCountValue: {
     color: COLORS.ink,
-    fontSize: 20,
+    fontSize: 16,
     fontWeight: '900',
-    lineHeight: 23,
+    lineHeight: 19,
   },
   quizLetterCountDivider: {
     color: COLORS.muted,
-    fontSize: 15,
+    fontSize: 13,
     fontWeight: '900',
-    lineHeight: 20,
+    lineHeight: 18,
   },
   quizLetterCountTotal: {
     color: COLORS.muted,
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: '900',
-    lineHeight: 20,
+    lineHeight: 18,
   },
   quizLetterCountStatus: {
     color: COLORS.muted,
@@ -6920,6 +6950,8 @@ export const styles = StyleSheet.create({
   tabButton: {
     flex: 1,
     alignItems: 'center',
+    justifyContent: 'flex-start',
+    minHeight: 43,
   },
   tabIcon: {
     width: 38,
@@ -6932,9 +6964,11 @@ export const styles = StyleSheet.create({
     backgroundColor: COLORS.tealPale,
   },
   tabLabel: {
+    minHeight: 12,
     marginTop: 1,
     color: COLORS.muted,
     fontSize: 10,
+    lineHeight: 12,
     fontWeight: '800',
   },
   tabLabelActive: {

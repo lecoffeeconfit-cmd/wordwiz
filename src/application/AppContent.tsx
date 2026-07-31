@@ -27,6 +27,7 @@ import {
   CardsScreen,
   AdminScreen,
   DashboardScreen,
+  CommunityScreen,
   HomeScreen,
   type PausedQuizSession,
   LoginScreen,
@@ -50,6 +51,9 @@ import {
   validateName,
   validatePassword,
   cancelReminder,
+  deactivateCommunityPushTokens,
+  getCommunityContext,
+  subscribeToCommunityNudgeResponses,
   buildSmartReminderMessages,
   getAdminAccess,
   deleteCloudWord,
@@ -166,6 +170,7 @@ export default function AppContent() {
     useState<AchievementWallet>(EMPTY_ACHIEVEMENT_WALLET);
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [communityUnreadNudges, setCommunityUnreadNudges] = useState(0);
   const [isPasswordRecovery, setIsPasswordRecovery] = useState(false);
   const [reminderSettings, setReminderSettings] =
     useState<ReminderSettings>(DEFAULT_REMINDER);
@@ -209,7 +214,7 @@ export default function AppContent() {
   const immediatelyActivatedPlusUserId = useRef<string | null>(null);
   const complimentaryWelcomeUserId = useRef<string | null>(null);
   const activeScreenTimeSession = useRef<{
-    screen: 'home' | 'words' | 'cards' | 'quiz' | 'dashboard';
+    screen: 'home' | 'words' | 'cards' | 'quiz' | 'dashboard' | 'community';
     userId: string;
     startedAt: number;
   } | null>(null);
@@ -548,6 +553,27 @@ export default function AppContent() {
   useEffect(() => {
     setSentryUser(currentUser);
   }, [currentUser]);
+
+  useEffect(() => {
+    if (!currentUser || !env.isSupabaseConfigured) {
+      setCommunityUnreadNudges(0);
+      return;
+    }
+    // Community is optional and must never hold up core learning or startup.
+    let active = true;
+    void getCommunityContext().then((context) => {
+      if (active) setCommunityUnreadNudges(context.unreadNudges);
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, [currentUser?.id]);
+
+  useEffect(() => {
+    let removeListener: (() => void) | undefined;
+    void subscribeToCommunityNudgeResponses(() => setActiveTab('community'))
+      .then((remove) => { removeListener = remove; })
+      .catch(() => undefined);
+    return () => removeListener?.();
+  }, []);
 
   useEffect(() => {
     void subscription.syncUser(currentUser?.id ?? null).catch((error) => {
@@ -1682,6 +1708,7 @@ export default function AppContent() {
     }
 
     try {
+      await deactivateCommunityPushTokens().catch(() => undefined);
       await signOutWithSupabase({ screen: 'Dashboard', reason: 'logout' });
     } catch {
       Alert.alert('Could not log out', 'Please try again.');
@@ -2699,6 +2726,14 @@ export default function AppContent() {
       return <AdminScreen onClose={() => setActiveTab('dashboard')} />;
     }
 
+    if (activeTab === 'community') {
+      return (
+        <CommunityScreen
+          onUnreadNudgesChange={setCommunityUnreadNudges}
+        />
+      );
+    }
+
     return (
       <DashboardScreen
         words={words}
@@ -2822,6 +2857,7 @@ export default function AppContent() {
                 activeTab={activeTab}
                 bottomInset={insets.bottom}
                 quizComplete={Boolean(todayQuizProgress)}
+                communityUnreadNudges={communityUnreadNudges}
                 onChange={(tab) => {
                   if (activeTab === 'quiz' && tab !== 'quiz') {
                     pauseActiveQuizRef.current?.();

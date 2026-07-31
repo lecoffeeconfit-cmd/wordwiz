@@ -5,3 +5,4 @@ export * from './CardsScreen';
 export * from './QuizScreen';
 export * from './DashboardScreen';
 export * from './AdminScreen';
+export * from './CommunityScreen';

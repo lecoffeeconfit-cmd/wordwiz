@@ -3098,3 +3098,36 @@ test('admin dashboard keeps privileged user controls behind server-side access c
   assert.match(adminFunction, /admin_dashboard_flashcard_usage/i);
   assert.match(adminFunction, /admin_dashboard_stats_section_engagement/i);
 });
+
+test('Community remains opt-in and keeps social writes behind protected RPCs', () => {
+  const migration = fs.readFileSync(
+    path.join(projectRoot, 'supabase/migrations/20260730000005_wordwiz_community.sql'),
+    'utf8',
+  );
+  const communityService = fs.readFileSync(
+    path.join(projectRoot, 'src/services/community.ts'),
+    'utf8',
+  );
+  const nudgeFunction = fs.readFileSync(
+    path.join(projectRoot, 'supabase/functions/send-study-nudge/index.ts'),
+    'utf8',
+  );
+
+  assert.match(migration, /create table if not exists public\.community_profiles/i);
+  assert.match(migration, /create table if not exists public\.community_xp_ledger/i);
+  assert.match(migration, /leaderboard_opt_in boolean not null default false/i);
+  assert.match(migration, /community_setup_profile/i);
+  assert.match(migration, /community_leaderboard/i);
+  assert.match(migration, /community_create_nudge/i);
+  assert.match(migration, /community_register_push_token/i);
+  assert.match(migration, /on conflict\(idempotency_key\) do nothing/i);
+  assert.match(migration, /period_eligible boolean not null default true/i);
+  assert.match(migration, /baseline:.*now\(\),false/i);
+  assert.match(migration, /enable row level security/i);
+  assert.match(migration, /revoke all on function public\.community_create_nudge/i);
+  assert.doesNotMatch(communityService, /SERVICE_ROLE/i);
+  assert.match(nudgeFunction, /auth\.getUser\(\)/);
+  assert.match(nudgeFunction, /community_create_nudge/);
+  assert.match(nudgeFunction, /EXPO_ACCESS_TOKEN/);
+  assert.doesNotMatch(nudgeFunction, /console\.log\([^)]*expo_push_token/i);
+});

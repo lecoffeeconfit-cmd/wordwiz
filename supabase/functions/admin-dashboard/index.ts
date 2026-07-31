@@ -122,7 +122,7 @@ Deno.serve(async (request) => {
   if (body.userId === requestingUser.id) {
     return jsonResponse({ error: 'You cannot change your own admin account here' }, 400);
   }
-  if (!['reset_free_tier', 'grant_complimentary_access', 'delete_user'].includes(body.action ?? '')) {
+  if (!['reset_free_tier', 'grant_complimentary_access', 'delete_user', 'community_disable_profile', 'community_restore_profile', 'community_resolve_reports'].includes(body.action ?? '')) {
     return jsonResponse({ error: 'Unknown admin action' }, 400);
   }
 
@@ -157,7 +157,7 @@ Deno.serve(async (request) => {
   }
 });
 
-type AdminAction = 'reset_free_tier' | 'grant_complimentary_access' | 'delete_user';
+type AdminAction = 'reset_free_tier' | 'grant_complimentary_access' | 'delete_user' | 'community_disable_profile' | 'community_restore_profile' | 'community_resolve_reports';
 type UserRow = {
   id: string;
   email?: string;
@@ -170,13 +170,14 @@ async function buildDashboard(
   page: number,
   reportingRange: ReportingRange,
 ) {
-  const [metricsResult, screenTimeResult, flashcardUsageResult, statsSectionEngagementResult, topLearnersResult, topCollectionsResult, directoryResult] = await Promise.all([
+  const [metricsResult, screenTimeResult, flashcardUsageResult, statsSectionEngagementResult, topLearnersResult, topCollectionsResult, communityResult, directoryResult] = await Promise.all([
     adminClient.rpc('admin_dashboard_metrics', { p_range: reportingRange }),
     adminClient.rpc('admin_dashboard_screen_time', { p_range: reportingRange }),
     adminClient.rpc('admin_dashboard_flashcard_usage', { p_range: reportingRange }),
     adminClient.rpc('admin_dashboard_stats_section_engagement', { p_range: reportingRange }),
     adminClient.rpc('admin_dashboard_top_learners', { p_range: reportingRange }),
     adminClient.rpc('admin_dashboard_top_collections'),
+    adminClient.rpc('admin_dashboard_community', { p_range: reportingRange }),
     adminClient.auth.admin.listUsers({ page, perPage: USER_DIRECTORY_PAGE_SIZE }),
   ]);
   if (directoryResult.error) throw directoryResult.error;
@@ -218,9 +219,12 @@ async function buildDashboard(
   if (statsSectionEngagementResult.error) {
     console.error('admin Stats engagement RPC failed', statsSectionEngagementResult.error);
   }
+  if (communityResult.error) {
+    console.error('admin community reporting RPC failed', communityResult.error);
+  }
   const userIds = directory.map((user) => user.id);
   const monthKey = new Date().toISOString().slice(0, 7);
-  const [wordsResult, quizzesResult, reviewsResult, usageResult, entitlementResult, complimentaryResult] = userIds.length
+  const [wordsResult, quizzesResult, reviewsResult, usageResult, entitlementResult, complimentaryResult, communityProfilesResult] = userIds.length
     ? await Promise.all([
       adminClient.from('words').select('user_id, created_at, updated_at').in('user_id', userIds),
       adminClient.from('quiz_attempts').select('user_id, completed_at').in('user_id', userIds),
@@ -228,10 +232,11 @@ async function buildDashboard(
       adminClient.from('word_addition_usage').select('user_id, words_added').in('user_id', userIds).eq('month_key', monthKey),
       adminClient.from('subscription_entitlements').select('user_id, plus_is_active, plus_expires_at').in('user_id', userIds),
       adminClient.from('complimentary_access').select('user_id, complimentary_expires_at').in('user_id', userIds),
+      adminClient.from('community_profiles').select('user_id, leaderboard_eligible').in('user_id', userIds),
     ])
-    : [emptyResult(), emptyResult(), emptyResult(), emptyResult(), emptyResult(), emptyResult()];
+    : [emptyResult(), emptyResult(), emptyResult(), emptyResult(), emptyResult(), emptyResult(), emptyResult()];
 
-  for (const result of [wordsResult, quizzesResult, reviewsResult, usageResult, entitlementResult, complimentaryResult]) {
+  for (const result of [wordsResult, quizzesResult, reviewsResult, usageResult, entitlementResult, complimentaryResult, communityProfilesResult]) {
     if (result.error) throw result.error;
   }
 
@@ -241,6 +246,7 @@ async function buildDashboard(
   const usageByUser = new Map((usageResult.data ?? []).map((row: any) => [row.user_id, Number(row.words_added) || 0]));
   const entitlementsByUser = new Map((entitlementResult.data ?? []).map((row: any) => [row.user_id, row]));
   const complimentaryByUser = new Map((complimentaryResult.data ?? []).map((row: any) => [row.user_id, row]));
+  const communityByUser = new Map((communityProfilesResult.data ?? []).map((row: any) => [row.user_id, row]));
   const now = Date.now();
 
   const users = directory.map((user) => {
@@ -269,6 +275,7 @@ async function buildDashboard(
       access: hasPlus ? 'plus' : hasComplimentary ? 'complimentary' : 'free',
       freeWordsAdded: usageByUser.get(user.id) ?? 0,
       freeWordLimit: 10,
+      communityEligible: communityByUser.get(user.id)?.leaderboard_eligible ?? null,
     };
   });
 
@@ -293,6 +300,9 @@ async function buildDashboard(
     statsSectionEngagement: statsSectionEngagementResult.error || !Array.isArray(statsSectionEngagementResult.data)
       ? []
       : statsSectionEngagementResult.data,
+    community: communityResult.error || !isRecord(communityResult.data)
+      ? { profiles: 0, leaderboardProfiles: 0, acceptedFriendships: 0, pendingFriendships: 0, friendRequestsSent: 0, friendRequestsAccepted: 0, friendRequestsDeclined: 0, nudgesSent: 0, nudgeSenders: 0, nudgesRead: 0, unreadNudges: 0, activePushTokens: 0, openReports: 0, topNudgers: [], topConnectors: [], nudgeTemplates: [], reports: [] }
+      : communityResult.data,
     users,
     directory: {
       page,
@@ -473,6 +483,27 @@ async function runUserAction(
       complimentary_started_at: now.toISOString(),
       complimentary_expires_at: expiresAt.toISOString(),
     }, { onConflict: 'user_id' });
+    if (error) throw error;
+  } else if (action === 'community_disable_profile') {
+    const { error } = await adminClient.from('community_profiles').update({
+      leaderboard_eligible: false,
+      leaderboard_opt_in: false,
+      friend_requests_enabled: false,
+      nudges_enabled: false,
+      push_nudges_enabled: false,
+      updated_at: now.toISOString(),
+    }).eq('user_id', targetUserId);
+    if (error) throw error;
+  } else if (action === 'community_restore_profile') {
+    const { error } = await adminClient.from('community_profiles').update({
+      leaderboard_eligible: true,
+      updated_at: now.toISOString(),
+    }).eq('user_id', targetUserId);
+    if (error) throw error;
+  } else if (action === 'community_resolve_reports') {
+    const { error } = await adminClient.from('community_reports').update({
+      status: 'resolved', reviewed_at: now.toISOString(), reviewed_by: adminUserId,
+    }).eq('reported_user_id', targetUserId).eq('status', 'open');
     if (error) throw error;
   } else {
     const { error } = await adminClient.auth.admin.deleteUser(targetUserId, false);

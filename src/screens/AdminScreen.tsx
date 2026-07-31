@@ -22,6 +22,7 @@ import {
   type AdminUserAction,
   type AdminUsageLeader,
   type AdminStatsSectionEngagement,
+  type AdminCommunityInsights,
   fetchAdminDashboard,
   runAdminUserAction,
 } from '../services';
@@ -135,6 +136,24 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
         confirm: 'Delete user',
         destructive: true,
       },
+      community_disable_profile: {
+        title: 'Hide this Community profile?',
+        detail: `This removes ${displayName(user)} from Community rankings and turns off friend requests, nudges, and Community push delivery. Their learning data stays intact.`,
+        confirm: 'Hide profile',
+        destructive: true,
+      },
+      community_restore_profile: {
+        title: 'Restore Community profile?',
+        detail: `This makes ${displayName(user)} eligible for Community again. They will choose any public options again themselves.`,
+        confirm: 'Restore',
+        destructive: false,
+      },
+      community_resolve_reports: {
+        title: 'Resolve Community reports?',
+        detail: `Mark all open Community reports for ${displayName(user)} as resolved.`,
+        confirm: 'Resolve',
+        destructive: false,
+      },
     }[action];
     Alert.alert(labels.title, labels.detail, [
       { text: 'Cancel', style: 'cancel' },
@@ -154,7 +173,13 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
         ? 'The account and its learning data were removed.'
         : action === 'reset_free_tier'
           ? 'Their monthly free-word counter was reset.'
-          : 'A fresh 30-day complimentary period was granted.';
+          : action === 'grant_complimentary_access'
+            ? 'A fresh 30-day complimentary period was granted.'
+            : action === 'community_disable_profile'
+              ? 'The Community profile is now hidden and Community actions are disabled.'
+              : action === 'community_restore_profile'
+                ? 'The Community profile is eligible again.'
+                : 'Open reports for this Community profile were resolved.';
       Alert.alert('Updated', message);
       setExpandedUserId(null);
       await load(true);
@@ -247,6 +272,42 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
               <MiniMetric label={`REVIEWS · ${reportingRangeLabel}`} value={formatNumber(dashboard.metrics.cardReviews7d)} />
               <MiniMetric label="REMINDERS ON" value={formatNumber(dashboard.metrics.reminderUsers)} />
             </View>
+
+            <View style={styles.sectionHeading}>
+              <View><Text style={styles.sectionEyebrow}>COMMUNITY · {reportingRangeLabel}</Text><Text style={styles.sectionTitle}>Connection health</Text></View>
+              <Text style={styles.generatedText}>Aggregate only</Text>
+            </View>
+            <CommunityInsightsCard insights={dashboard.community} rangeLabel={reportingRangeLabel} />
+            {dashboard.community.topNudgers.length ? (
+              <View style={styles.usageLeadersCard}>
+                <Text style={styles.usageLeadersNote}>Most active nudge senders for this period. These are public Community display names only.</Text>
+                {dashboard.community.topNudgers.map((sender, index) => (
+                  <View key={sender.publicId} style={styles.usageLeaderRow}>
+                    <View style={styles.usageLeaderRank}><Text style={styles.usageLeaderRankText}>{index + 1}</Text></View>
+                    <View style={styles.usageLeaderCopy}><Text style={styles.usageLeaderName}>{sender.displayName}</Text><Text style={styles.usageLeaderDetail}>Community encouragement sent</Text></View>
+                    <View style={styles.usageLeaderTotal}><Text style={styles.usageLeaderTotalValue}>{formatNumber(sender.nudges)}</Text><Text style={styles.usageLeaderTotalLabel}>NUDGES</Text></View>
+                  </View>
+                ))}
+              </View>
+            ) : null}
+            {dashboard.community.topConnectors.length ? (
+              <View style={styles.usageLeadersCard}>
+                <Text style={styles.usageLeadersNote}>Most active Community interactions for this period. Connection counts are current; nudge counts use the selected range.</Text>
+                {dashboard.community.topConnectors.map((connector, index) => <CommunityConnectorRow key={connector.publicId} connector={connector} rank={index + 1} />)}
+              </View>
+            ) : null}
+            {dashboard.community.nudgeTemplates.length ? (
+              <View style={styles.usageLeadersCard}>
+                <Text style={styles.usageLeadersNote}>Most-used nudge types. This reports template selections only, never a message body.</Text>
+                {dashboard.community.nudgeTemplates.map((template) => <NudgeTemplateRow key={template.messageKey} template={template} />)}
+              </View>
+            ) : null}
+            {dashboard.community.reports.length ? (
+              <View style={styles.reportCard}>
+                <Text style={styles.timeGroupLabel}>OPEN COMMUNITY REPORTS</Text>
+                {dashboard.community.reports.map((report) => <CommunityReportRow key={report.id} report={report} users={dashboard.users} onResolve={(user) => confirmAction(user, 'community_resolve_reports')} />)}
+              </View>
+            ) : <View style={styles.timeEmpty}><Ionicons name="shield-checkmark-outline" size={18} color={COLORS.teal} /><Text style={styles.timeEmptyText}>No open Community reports.</Text></View>}
 
             <View style={styles.sectionHeading}>
               <View><Text style={styles.sectionEyebrow}>TIME INSIGHTS · {reportingRangeLabel}</Text><Text style={styles.sectionTitle}>Where learners spend time</Text></View>
@@ -395,6 +456,29 @@ function FlashcardUsageCard({ usage, rangeLabel }: { usage: AdminFlashcardUsage;
   </View>;
 }
 
+function CommunityInsightsCard({ insights, rangeLabel }: { insights: AdminCommunityInsights; rangeLabel: string }) {
+  const nudgeReadRate = insights.nudgesSent ? Math.round((insights.nudgesRead / insights.nudgesSent) * 100) : 0;
+  return <View style={styles.communityInsightsCard}>
+    <View style={styles.communityHeroRow}><View style={styles.communityHeroIcon}><Ionicons name="people-outline" size={21} color={COLORS.purpleDark} /></View><View style={styles.communityHeroCopy}><Text style={styles.communityHeroLabel}>COMMUNITY MEMBERS</Text><Text style={styles.communityHeroValue}>{formatNumber(insights.profiles)}</Text><Text style={styles.communityHeroText}>{formatNumber(insights.leaderboardProfiles)} visible on optional rankings · {formatNumber(insights.acceptedFriendships)} active friend connections</Text></View></View>
+    <View style={styles.communityMetricGrid}><MiniMetric label={`NUDGES · ${rangeLabel}`} value={formatNumber(insights.nudgesSent)} /><MiniMetric label="SENDERS" value={formatNumber(insights.nudgeSenders)} /><MiniMetric label="READ RATE" value={`${nudgeReadRate}%`} /><MiniMetric label="NEW REQUESTS" value={formatNumber(insights.friendRequestsSent)} /></View>
+    <Text style={styles.communitySafetyText}>{formatNumber(insights.friendRequestsAccepted)} accepted · {formatNumber(insights.friendRequestsDeclined)} declined · {formatNumber(insights.unreadNudges)} unread · {formatNumber(insights.activePushTokens)} push devices · {formatNumber(insights.openReports)} open reports. No message bodies or private learning content are collected here.</Text>
+  </View>;
+}
+
+function CommunityConnectorRow({ connector, rank }: { connector: AdminCommunityInsights['topConnectors'][number]; rank: number }) {
+  const interactions = connector.nudgesSent + connector.nudgesReceived;
+  return <View style={styles.usageLeaderRow}><View style={styles.usageLeaderRank}><Text style={styles.usageLeaderRankText}>{rank}</Text></View><View style={styles.usageLeaderCopy}><Text numberOfLines={1} style={styles.usageLeaderName}>{connector.displayName}</Text><Text style={styles.usageLeaderDetail}>{formatNumber(connector.connections)} connections · {formatNumber(connector.nudgesSent)} sent · {formatNumber(connector.nudgesReceived)} received</Text></View><View style={styles.usageLeaderTotal}><Text style={styles.usageLeaderTotalValue}>{formatNumber(interactions)}</Text><Text style={styles.usageLeaderTotalLabel}>INTERACTIONS</Text></View></View>;
+}
+
+function NudgeTemplateRow({ template }: { template: AdminCommunityInsights['nudgeTemplates'][number] }) {
+  return <View style={styles.usageLeaderRow}><View style={styles.usageLeaderRank}><Ionicons name="sparkles-outline" size={14} color={COLORS.purpleDark} /></View><View style={styles.usageLeaderCopy}><Text numberOfLines={1} style={styles.usageLeaderName}>{formatNudgeTemplate(template.messageKey)}</Text><Text style={styles.usageLeaderDetail}>Selected encouragement template</Text></View><View style={styles.usageLeaderTotal}><Text style={styles.usageLeaderTotalValue}>{formatNumber(template.sends)}</Text><Text style={styles.usageLeaderTotalLabel}>SENT</Text></View></View>;
+}
+
+function CommunityReportRow({ report, users, onResolve }: { report: AdminCommunityInsights['reports'][number]; users: AdminUser[]; onResolve: (user: AdminUser) => void }) {
+  const user = users.find((candidate) => candidate.id === report.reportedUserId);
+  return <View style={styles.reportRow}><View style={styles.reportIcon}><Ionicons name="flag-outline" size={16} color={COLORS.orange} /></View><View style={styles.reportCopy}><Text style={styles.reportName}>{report.displayName}</Text><Text style={styles.reportDetail}>{report.reason.replaceAll('_', ' ')} · {relativeDate(report.createdAt)}</Text></View>{user ? <Pressable onPress={() => onResolve(user)} style={styles.resolveButton}><Text style={styles.resolveText}>Resolve</Text></Pressable> : <Text style={styles.reportDetail}>Review</Text>}</View>;
+}
+
 function StatsEngagementRow({ section }: { section: AdminStatsSectionEngagement }) {
   return <TimeRow
     label={STATS_SECTION_LABELS[section.id] ?? section.id}
@@ -449,6 +533,7 @@ function UserCard({ user, isExpanded, busy, onToggle, onAction }: { user: AdminU
         <Control label="Give 30d" icon="gift-outline" disabled={busy} onPress={() => onAction('grant_complimentary_access')} />
         <Control label="Delete" icon="trash-outline" danger disabled={busy} onPress={() => onAction('delete_user')} />
       </View>
+      {user.communityEligible !== null ? <View style={styles.communityControlRow}><Text style={styles.communityStatus}>{user.communityEligible ? 'Community access available' : 'Community access restricted'}</Text><Control label={user.communityEligible ? 'Restrict community' : 'Lift restriction'} icon={user.communityEligible ? 'eye-off-outline' : 'eye-outline'} danger={user.communityEligible} disabled={busy} onPress={() => onAction(user.communityEligible ? 'community_disable_profile' : 'community_restore_profile')} /></View> : null}
       {busy ? <View style={styles.busyLine}><ActivityIndicator size="small" color={COLORS.purpleDark} /><Text style={styles.busyText}>Applying secure update…</Text></View> : null}
     </View> : null}
   </View>;
@@ -462,6 +547,7 @@ function displayName(user: AdminUser) { return user.name?.trim() || user.email.s
 function relativeDate(value: string) { const days = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 86400000)); return days === 0 ? 'today' : days === 1 ? 'yesterday' : `${days}d ago`; }
 function formatNumber(value: number) { return new Intl.NumberFormat().format(Number(value) || 0); }
 function formatDuration(value: number) { const seconds = Math.max(0, Number(value) || 0); if (seconds < 60) return seconds ? '<1m' : '0m'; const minutes = Math.round(seconds / 60); return minutes >= 60 ? `${Math.floor(minutes / 60)}h ${minutes % 60}m` : `${minutes}m`; }
+function formatNudgeTemplate(value: string) { return value.split('_').filter(Boolean).map((word) => `${word.charAt(0).toUpperCase()}${word.slice(1)}`).join(' ') || 'Nudge'; }
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: COLORS.background }, content: { padding: 18, paddingBottom: 44 }, pressed: { opacity: 0.78 },
@@ -474,7 +560,8 @@ const styles = StyleSheet.create({
   overviewCard: { marginTop: 8, paddingVertical: 14, borderRadius: 18, flexDirection: 'row', backgroundColor: COLORS.white, ...SOFT_SHADOW }, miniMetric: { flex: 1, alignItems: 'center', paddingHorizontal: 4 }, miniMetricValue: { color: COLORS.ink, fontSize: 16, fontWeight: '900' }, miniMetricLabel: { marginTop: 4, color: COLORS.muted, textAlign: 'center', fontSize: 7, lineHeight: 9, letterSpacing: 0.4, fontWeight: '900' },
   learningTimeCard: { padding: 14, borderRadius: 18, flexDirection: 'row', alignItems: 'center', gap: 11, backgroundColor: COLORS.bluePale }, learningTimeIcon: { width: 42, height: 42, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.white }, learningTimeCopy: { flex: 1 }, learningTimeLabel: { color: COLORS.blue, fontSize: 9, letterSpacing: 0.8, fontWeight: '900' }, learningTimeValue: { marginTop: 1, color: COLORS.ink, fontSize: 23, letterSpacing: -0.4, fontWeight: '900' }, learningTimeText: { marginTop: 2, color: COLORS.muted, fontSize: 10, lineHeight: 14, fontWeight: '700' }, timeGroupLabel: { marginTop: 16, marginBottom: 7, color: COLORS.muted, fontSize: 9, letterSpacing: 0.8, fontWeight: '900' }, timeRow: { minHeight: 58, marginBottom: 7, paddingHorizontal: 12, borderWidth: 1, borderColor: COLORS.border, borderRadius: 16, flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: COLORS.white }, timeRowIcon: { width: 32, height: 32, borderRadius: 11, alignItems: 'center', justifyContent: 'center' }, timeRowCopy: { flex: 1 }, timeRowLabel: { color: COLORS.ink, fontSize: 12, fontWeight: '900' }, timeRowDetail: { marginTop: 2, color: COLORS.muted, fontSize: 9, fontWeight: '700' }, timeRowValue: { fontSize: 14, fontWeight: '900' }, timeEmpty: { padding: 12, borderRadius: 14, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: COLORS.white }, timeEmptyText: { flex: 1, color: COLORS.muted, fontSize: 10, lineHeight: 14, fontWeight: '700' }, timePrivacyNote: { marginTop: 10, color: COLORS.muted, fontSize: 9, lineHeight: 13, fontStyle: 'italic', fontWeight: '700' },
   flashcardUsageCard: { marginTop: 9, padding: 14, borderRadius: 18, flexDirection: 'row', alignItems: 'center', gap: 11, backgroundColor: COLORS.tealPale }, flashcardUsageIcon: { width: 42, height: 42, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.white }, flashcardUsageCopy: { flex: 1 }, flashcardUsageLabel: { color: COLORS.teal, fontSize: 9, letterSpacing: 0.8, fontWeight: '900' }, flashcardUsageValue: { marginTop: 1, color: COLORS.ink, fontSize: 20, letterSpacing: -0.3, fontWeight: '900' }, flashcardUsageText: { marginTop: 2, color: COLORS.muted, fontSize: 10, lineHeight: 14, fontWeight: '700' },
+  communityInsightsCard: { padding: 14, borderRadius: 18, backgroundColor: COLORS.purplePale, borderWidth: 1, borderColor: '#D9D0FF' }, communityHeroRow: { flexDirection: 'row', alignItems: 'center', gap: 11 }, communityHeroIcon: { width: 42, height: 42, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.white }, communityHeroCopy: { flex: 1 }, communityHeroLabel: { color: COLORS.purpleDark, fontSize: 9, letterSpacing: 0.8, fontWeight: '900' }, communityHeroValue: { marginTop: 1, color: COLORS.ink, fontSize: 23, letterSpacing: -0.4, fontWeight: '900' }, communityHeroText: { marginTop: 2, color: COLORS.muted, fontSize: 10, lineHeight: 14, fontWeight: '700' }, communityMetricGrid: { marginTop: 13, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#DED7F5', flexDirection: 'row' }, communitySafetyText: { marginTop: 12, color: COLORS.muted, fontSize: 9, lineHeight: 13, fontWeight: '700' }, reportCard: { marginTop: 9, padding: 12, borderRadius: 18, backgroundColor: COLORS.white, ...SOFT_SHADOW }, reportRow: { minHeight: 54, borderTopWidth: 1, borderTopColor: COLORS.border, flexDirection: 'row', alignItems: 'center', gap: 9 }, reportIcon: { width: 30, height: 30, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.orangePale }, reportCopy: { flex: 1 }, reportName: { color: COLORS.ink, fontSize: 12, fontWeight: '900' }, reportDetail: { marginTop: 2, color: COLORS.muted, fontSize: 9, fontWeight: '700', textTransform: 'capitalize' }, resolveButton: { paddingHorizontal: 9, paddingVertical: 6, borderRadius: 9, backgroundColor: COLORS.tealPale }, resolveText: { color: COLORS.greenDark, fontSize: 9, fontWeight: '900' },
   usageLeadersCard: { padding: 12, borderRadius: 18, backgroundColor: COLORS.white, ...SOFT_SHADOW }, usageLeadersNote: { marginBottom: 8, color: COLORS.muted, fontSize: 9, lineHeight: 13, fontWeight: '700' }, usageLeaderRow: { minHeight: 60, paddingVertical: 8, borderTopWidth: 1, borderTopColor: COLORS.border, flexDirection: 'row', alignItems: 'center', gap: 9 }, usageLeaderRank: { width: 25, height: 25, borderRadius: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.purplePale }, usageLeaderRankText: { color: COLORS.purpleDark, fontSize: 11, fontWeight: '900' }, usageLeaderCopy: { flex: 1 }, usageLeaderName: { color: COLORS.ink, fontSize: 12, fontWeight: '900' }, usageLeaderDetail: { marginTop: 2, color: COLORS.muted, fontSize: 9, fontWeight: '700' }, usageLeaderTotal: { minWidth: 46, alignItems: 'flex-end' }, usageLeaderTotalValue: { color: COLORS.teal, fontSize: 16, fontWeight: '900' }, usageLeaderTotalLabel: { marginTop: 1, color: COLORS.muted, fontSize: 7, letterSpacing: 0.5, fontWeight: '900' },
   safetyNote: { padding: 12, borderRadius: 14, flexDirection: 'row', gap: 8, backgroundColor: COLORS.purplePale }, safetyText: { flex: 1, color: COLORS.purpleDark, fontSize: 10, lineHeight: 14, fontWeight: '800' }, searchWrap: { height: 48, marginTop: 11, marginBottom: 10, paddingHorizontal: 13, borderWidth: 1, borderColor: COLORS.border, borderRadius: 15, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: COLORS.white }, searchInput: { flex: 1, color: COLORS.ink, fontSize: 13, fontWeight: '700' },
-  userCard: { marginBottom: 9, borderWidth: 1, borderColor: COLORS.border, borderRadius: 18, backgroundColor: COLORS.white, overflow: 'hidden' }, userCardExpanded: { borderColor: '#D9D0FF' }, userTop: { minHeight: 76, padding: 12, flexDirection: 'row', alignItems: 'center', gap: 10 }, userAvatar: { width: 36, height: 36, borderRadius: 13, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.bluePale }, userAvatarText: { color: COLORS.blue, fontSize: 15, fontWeight: '900' }, userCopy: { flex: 1 }, userName: { color: COLORS.ink, fontSize: 13, fontWeight: '900' }, userEmail: { marginTop: 1, color: COLORS.muted, fontSize: 10, fontWeight: '700' }, userActivity: { marginTop: 4, color: COLORS.muted, fontSize: 9, fontWeight: '700' }, userStatus: { alignItems: 'flex-end', gap: 5 }, accessPill: { paddingHorizontal: 6, paddingVertical: 3, borderRadius: 7, borderWidth: 1, overflow: 'hidden', fontSize: 7, fontWeight: '900', letterSpacing: 0.35 }, userControls: { padding: 12, paddingTop: 0, borderTopWidth: 1, borderTopColor: COLORS.border }, userStats: { paddingVertical: 10, flexDirection: 'row', flexWrap: 'wrap', gap: 7 }, userStat: { paddingHorizontal: 7, paddingVertical: 4, borderRadius: 8, color: COLORS.muted, backgroundColor: COLORS.background, fontSize: 9, fontWeight: '800' }, controlRow: { flexDirection: 'row', gap: 7 }, control: { flex: 1, minHeight: 36, borderWidth: 1, borderColor: '#DCD4FF', borderRadius: 11, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, backgroundColor: COLORS.purplePale }, controlDanger: { borderColor: '#FFC8D6', backgroundColor: COLORS.redPale }, controlText: { color: COLORS.purpleDark, fontSize: 9, fontWeight: '900' }, controlDangerText: { color: COLORS.red }, busyLine: { marginTop: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 }, busyText: { color: COLORS.purpleDark, fontSize: 10, fontWeight: '800' }, noUsers: { paddingVertical: 25, textAlign: 'center', color: COLORS.muted, fontSize: 12, fontWeight: '700' }, pagination: { marginTop: 8, marginBottom: 4, minHeight: 42, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }, pageButton: { minHeight: 38, paddingHorizontal: 10, borderWidth: 1, borderColor: '#DCD4FF', borderRadius: 12, flexDirection: 'row', alignItems: 'center', gap: 2, backgroundColor: COLORS.purplePale }, pageButtonDisabled: { opacity: 0.4 }, pageButtonText: { color: COLORS.purpleDark, fontSize: 9, fontWeight: '900' }, pageStatus: { flex: 1, color: COLORS.muted, fontSize: 9, textAlign: 'center', fontWeight: '800' },
+  userCard: { marginBottom: 9, borderWidth: 1, borderColor: COLORS.border, borderRadius: 18, backgroundColor: COLORS.white, overflow: 'hidden' }, userCardExpanded: { borderColor: '#D9D0FF' }, userTop: { minHeight: 76, padding: 12, flexDirection: 'row', alignItems: 'center', gap: 10 }, userAvatar: { width: 36, height: 36, borderRadius: 13, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.bluePale }, userAvatarText: { color: COLORS.blue, fontSize: 15, fontWeight: '900' }, userCopy: { flex: 1 }, userName: { color: COLORS.ink, fontSize: 13, fontWeight: '900' }, userEmail: { marginTop: 1, color: COLORS.muted, fontSize: 10, fontWeight: '700' }, userActivity: { marginTop: 4, color: COLORS.muted, fontSize: 9, fontWeight: '700' }, userStatus: { alignItems: 'flex-end', gap: 5 }, accessPill: { paddingHorizontal: 6, paddingVertical: 3, borderRadius: 7, borderWidth: 1, overflow: 'hidden', fontSize: 7, fontWeight: '900', letterSpacing: 0.35 }, userControls: { padding: 12, paddingTop: 0, borderTopWidth: 1, borderTopColor: COLORS.border }, userStats: { paddingVertical: 10, flexDirection: 'row', flexWrap: 'wrap', gap: 7 }, userStat: { paddingHorizontal: 7, paddingVertical: 4, borderRadius: 8, color: COLORS.muted, backgroundColor: COLORS.background, fontSize: 9, fontWeight: '800' }, controlRow: { flexDirection: 'row', gap: 7 }, communityControlRow: { marginTop: 8, flexDirection: 'row', alignItems: 'center', gap: 8 }, communityStatus: { flex: 1, color: COLORS.muted, fontSize: 9, fontWeight: '800' }, control: { flex: 1, minHeight: 36, borderWidth: 1, borderColor: '#DCD4FF', borderRadius: 11, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, backgroundColor: COLORS.purplePale }, controlDanger: { borderColor: '#FFC8D6', backgroundColor: COLORS.redPale }, controlText: { color: COLORS.purpleDark, fontSize: 9, fontWeight: '900' }, controlDangerText: { color: COLORS.red }, busyLine: { marginTop: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 }, busyText: { color: COLORS.purpleDark, fontSize: 10, fontWeight: '800' }, noUsers: { paddingVertical: 25, textAlign: 'center', color: COLORS.muted, fontSize: 12, fontWeight: '700' }, pagination: { marginTop: 8, marginBottom: 4, minHeight: 42, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }, pageButton: { minHeight: 38, paddingHorizontal: 10, borderWidth: 1, borderColor: '#DCD4FF', borderRadius: 12, flexDirection: 'row', alignItems: 'center', gap: 2, backgroundColor: COLORS.purplePale }, pageButtonDisabled: { opacity: 0.4 }, pageButtonText: { color: COLORS.purpleDark, fontSize: 9, fontWeight: '900' }, pageStatus: { flex: 1, color: COLORS.muted, fontSize: 9, textAlign: 'center', fontWeight: '800' },
 });

@@ -46,6 +46,8 @@ export type AdminUser = {
   access: AdminAccess;
   freeWordsAdded: number;
   freeWordLimit: number;
+  /** null means the learner has not created a Community profile. */
+  communityEligible: boolean | null;
 };
 
 export type AdminTimeInsights = {
@@ -93,6 +95,32 @@ export type AdminStatsSectionEngagement = {
   interactions: number;
 };
 
+export type AdminCommunityInsights = {
+  profiles: number;
+  leaderboardProfiles: number;
+  acceptedFriendships: number;
+  pendingFriendships: number;
+  friendRequestsSent: number;
+  friendRequestsAccepted: number;
+  friendRequestsDeclined: number;
+  nudgesSent: number;
+  nudgeSenders: number;
+  nudgesRead: number;
+  unreadNudges: number;
+  activePushTokens: number;
+  openReports: number;
+  topNudgers: Array<{ publicId: string; displayName: string; nudges: number }>;
+  topConnectors: Array<{
+    publicId: string;
+    displayName: string;
+    connections: number;
+    nudgesSent: number;
+    nudgesReceived: number;
+  }>;
+  nudgeTemplates: Array<{ messageKey: string; sends: number }>;
+  reports: Array<{ id: string; reportedUserId: string; displayName: string; reason: string; status: 'open' | 'resolved'; createdAt: string }>;
+};
+
 export type AdminDashboardData = {
   generatedAt: string;
   metrics: AdminDashboardMetrics;
@@ -102,6 +130,7 @@ export type AdminDashboardData = {
   topCollections: AdminCollectionAdoption[];
   flashcardUsage: AdminFlashcardUsage;
   statsSectionEngagement: AdminStatsSectionEngagement[];
+  community: AdminCommunityInsights;
   users: AdminUser[];
   directory: {
     page: number;
@@ -114,7 +143,10 @@ export type AdminDashboardData = {
 export type AdminUserAction =
   | 'reset_free_tier'
   | 'grant_complimentary_access'
-  | 'delete_user';
+  | 'delete_user'
+  | 'community_disable_profile'
+  | 'community_restore_profile'
+  | 'community_resolve_reports';
 
 async function invokeAdminDashboard<T>(
   method: 'GET' | 'POST',

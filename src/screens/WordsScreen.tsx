@@ -531,7 +531,15 @@ export function WordsScreen({
                   What did you discover today?
                 </Text>
               </View>
-              <Ionicons name="chevron-forward" size={23} color={COLORS.white} />
+              <View style={styles.addButtonEndcap}>
+                <Ionicons
+                  name="sparkles"
+                  size={12}
+                  color="#FFE39A"
+                  style={styles.addButtonSparkle}
+                />
+                <Ionicons name="chevron-forward" size={23} color={COLORS.white} />
+              </View>
             </Pressable>
 
             <View style={styles.wordResourcesRow}>

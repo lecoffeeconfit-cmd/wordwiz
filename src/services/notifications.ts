@@ -1,4 +1,5 @@
 import type * as ExpoNotifications from 'expo-notifications';
+import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 import { COLORS } from '../constants/theme';
 import type { ReminderSettings } from '../types';
@@ -61,6 +62,47 @@ export async function cancelReminder(settings: ReminderSettings) {
       ),
     );
   }
+}
+
+/**
+ * Requests notification permission only after a learner explicitly enables
+ * Community nudges. The returned token is stored through a protected RPC.
+ */
+export async function getCommunityExpoPushToken() {
+  if (Platform.OS === 'web') {
+    throw new Error('Push notifications are available on iOS and Android.');
+  }
+  const Notifications = await getNotificationsModule();
+  if (Platform.OS === 'android') {
+    await Notifications.setNotificationChannelAsync('study-nudges', {
+      name: 'Study nudges',
+      importance: Notifications.AndroidImportance.DEFAULT,
+      vibrationPattern: [0, 200],
+      lightColor: COLORS.purple,
+    });
+  }
+  let { status } = await Notifications.getPermissionsAsync();
+  if (status !== 'granted') {
+    ({ status } = await Notifications.requestPermissionsAsync());
+  }
+  if (status !== 'granted') {
+    throw new Error('Notifications permission was not granted.');
+  }
+  const projectId = Constants.expoConfig?.extra?.eas?.projectId ?? Constants.easConfig?.projectId;
+  if (!projectId) throw new Error('Push notifications are not configured for this build.');
+  const token = await Notifications.getExpoPushTokenAsync({ projectId });
+  return token.data;
+}
+
+/** Opens the Community destination for a remote study nudge. */
+export async function subscribeToCommunityNudgeResponses(onOpenCommunity: () => void) {
+  if (Platform.OS === 'web') return () => undefined;
+  const Notifications = await getNotificationsModule();
+  const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
+    const data = response.notification.request.content.data;
+    if (data?.destination === 'community') onOpenCommunity();
+  });
+  return () => subscription.remove();
 }
 
 export async function scheduleDailyReminder(

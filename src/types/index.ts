@@ -1,4 +1,4 @@
-export type Tab = 'home' | 'words' | 'cards' | 'quiz' | 'dashboard' | 'admin';
+export type Tab = 'home' | 'words' | 'cards' | 'quiz' | 'dashboard' | 'community' | 'admin';
 export type SortMode = 'alphabetical' | 'recent';
 export type LegalPage = 'terms' | 'privacy';
 

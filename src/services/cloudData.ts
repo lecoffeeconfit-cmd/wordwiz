@@ -379,7 +379,7 @@ export async function saveCloudQuizAttempt(
 
 /** Records foreground screen time in a server-validated aggregate session. */
 export async function saveCloudScreenTime(
-  screen: 'home' | 'words' | 'cards' | 'quiz' | 'dashboard',
+  screen: 'home' | 'words' | 'cards' | 'quiz' | 'dashboard' | 'community',
   durationSeconds: number,
   startedAt: string,
 ) {

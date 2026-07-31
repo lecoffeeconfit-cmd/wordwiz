@@ -18,10 +18,17 @@
         }
       ],
       [
-        "expo-notifications",
+      "expo-notifications",
         {
           "color": "#58CC62",
           "defaultChannel": "daily-review"
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow $(PRODUCT_NAME) to access a photo for your Community profile.",
+          "microphonePermission": false
         }
       ],
       "expo-web-browser",

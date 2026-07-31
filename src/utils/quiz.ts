@@ -2495,7 +2495,7 @@ function getDefinitionDistractors(
     definitionVariation,
     index,
   );
-  const otherDefinitions = getRankedDistractorWords(word, words, questionChallenge)
+  const rankedOtherDefinitions = getRankedDistractorWords(word, words, questionChallenge)
     .map((item, distractorIndex) =>
       getQuestionMeaning(
         item,
@@ -2504,6 +2504,12 @@ function getDefinitionDistractors(
         index + distractorIndex + 1,
       ),
     );
+  // Easy questions deliberately keep only the two least-confusing saved-word
+  // meanings. The final option comes from the neutral fallback pool instead
+  // of sometimes rotating a near-synonym into an otherwise gentle question.
+  const otherDefinitions = questionChallenge === 'easy'
+    ? rankedOtherDefinitions.slice(0, 2)
+    : rankedOtherDefinitions;
   const fallbacks = FALLBACK_DEFINITIONS.filter(
     (definition) => definition !== answer,
   );

@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { AppState, FlatList, Pressable, ScrollView, Text, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AppState, FlatList, PanResponder, Pressable, ScrollView, Text, View } from 'react-native';
 import { COLORS } from '../constants/theme';
 import type { AnalyticsData, LegalPage, QuizAnswer, QuizProgress, QuizQuestion, ReminderSettings, SortMode, Word } from '../types';
 import { styles } from '../styles';
@@ -171,6 +171,24 @@ export function CardsScreen({
   }, [alphabeticalWords, deckOrder, shuffleVersion]);
   const current = studyWords[cardIndex % Math.max(studyWords.length, 1)];
   const currentTermLength = current?.term.trim().length ?? 0;
+  const currentCollectionSource = useMemo(() => {
+    // Collection-only words stay part of their curated deck until a learner
+    // explicitly promotes them to My Words. Show that origin on the card.
+    if (!current || isPersonalLibraryWord(current)) return null;
+    const memberships = current.mastery?.studySets ?? [];
+    const selectedSetId = selectedCategory.startsWith('set:')
+      ? selectedCategory.slice(4)
+      : null;
+    return (
+      (selectedSetId
+        ? memberships.find((membership) => membership.id === selectedSetId)
+        : undefined) ??
+      memberships.find((membership) => membership.kind === 'collection') ??
+      memberships[0] ??
+      null
+    );
+  }, [current, selectedCategory]);
+  const cardFrontLabel = currentCollectionSource?.name ?? 'YOUR WORD';
   const cardDefinition = current
     ? getCompleteFlashcardDefinition(current.definition, current.simpleDefinition)
     : '';
@@ -419,14 +437,42 @@ export function CardsScreen({
     resetCardTimer();
   }
 
-  function browseCard(direction: 'previous' | 'next') {
+  const browseCard = useCallback((direction: 'previous' | 'next') => {
     setShowAnswer(false);
     setCardIndex((index) => {
       const nextIndex = direction === 'next' ? index + 1 : index - 1;
       return (nextIndex + studyWords.length) % studyWords.length;
     });
     resetCardTimer();
-  }
+  }, [studyWords.length]);
+
+  const cardSwipeResponder = useMemo(
+    () =>
+      PanResponder.create({
+        // Do not claim normal taps or vertical scrolling; only deliberate,
+        // horizontal drags across a multi-card deck become swipe navigation.
+        onMoveShouldSetPanResponder: (_event, gesture) =>
+          studyWords.length > 1 &&
+          Math.abs(gesture.dx) > 14 &&
+          Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.25,
+        // Capture the horizontal drag before the tappable card handles it,
+        // while leaving all taps and vertical ScrollView gestures alone.
+        onMoveShouldSetPanResponderCapture: (_event, gesture) =>
+          studyWords.length > 1 &&
+          Math.abs(gesture.dx) > 14 &&
+          Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.25,
+        onPanResponderRelease: (_event, gesture) => {
+          if (
+            Math.abs(gesture.dx) < 56 ||
+            Math.abs(gesture.dx) <= Math.abs(gesture.dy) * 1.25
+          ) {
+            return;
+          }
+          browseCard(gesture.dx < 0 ? 'next' : 'previous');
+        },
+      }),
+    [browseCard, studyWords.length],
+  );
 
   if (words.length === 0) {
     return (
@@ -635,10 +681,11 @@ export function CardsScreen({
         </Pressable>
       </View>
 
-      <View style={styles.flashcardShell}>
+      <View style={styles.flashcardShell} {...cardSwipeResponder.panHandlers}>
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={showAnswer ? 'Definition shown' : 'Reveal definition'}
+        accessibilityHint={showAnswer ? 'Swipe left or right to browse cards.' : 'Tap to reveal the definition. Swipe left or right to browse cards.'}
         onPress={() => setShowAnswer((shown) => !shown)}
         style={({ pressed }) => [
           styles.flashcard,
@@ -648,18 +695,33 @@ export function CardsScreen({
       >
         <View style={styles.cardTopRow}>
           <View
+            accessible
+            accessibilityLabel={
+              showAnswer
+                ? 'Meaning'
+                : currentCollectionSource
+                  ? `From ${currentCollectionSource.name} collection`
+                  : 'Your word'
+            }
             style={[
               styles.cardLabel,
+              currentCollectionSource && !showAnswer && styles.cardLabelCollection,
               showAnswer && styles.cardLabelRevealed,
             ]}
           >
+            {currentCollectionSource && !showAnswer ? (
+              <Ionicons name="layers-outline" size={13} color={COLORS.blue} />
+            ) : null}
             <Text
+              numberOfLines={1}
+              ellipsizeMode="tail"
               style={[
                 styles.cardLabelText,
+                currentCollectionSource && !showAnswer && styles.cardLabelCollectionText,
                 showAnswer && styles.cardLabelTextRevealed,
               ]}
             >
-              {showAnswer ? 'MEANING' : 'YOUR WORD'}
+              {showAnswer ? 'MEANING' : cardFrontLabel}
             </Text>
           </View>
           <Ionicons

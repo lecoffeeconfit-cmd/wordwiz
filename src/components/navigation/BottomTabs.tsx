@@ -9,11 +9,13 @@ export function BottomTabs({
   activeTab,
   bottomInset,
   quizComplete,
+  communityUnreadNudges = 0,
   onChange,
 }: {
   activeTab: Tab;
   bottomInset: number;
   quizComplete: boolean;
+  communityUnreadNudges?: number;
   onChange: (tab: Tab) => void;
 }) {
   const tabs: {
@@ -42,6 +44,12 @@ export function BottomTabs({
       icon: 'bar-chart-outline',
       activeIcon: 'bar-chart',
     },
+    {
+      key: 'community',
+      label: 'Connect',
+      icon: 'people-outline',
+      activeIcon: 'people',
+    },
   ];
 
   const bottomPadding = Math.max(8, Math.min(bottomInset, 14));
@@ -69,8 +77,15 @@ export function BottomTabs({
                   <Ionicons name="checkmark" size={8} color={COLORS.white} />
                 </View>
               )}
+              {tab.key === 'community' && communityUnreadNudges > 0 && (
+                <View style={styles.completeDot}>
+                  <Text style={{ color: COLORS.white, fontSize: 8, fontWeight: '900' }}>
+                    {communityUnreadNudges > 9 ? '9+' : communityUnreadNudges}
+                  </Text>
+                </View>
+              )}
             </View>
-            <Text style={[styles.tabLabel, active && styles.tabLabelActive]}>
+            <Text numberOfLines={1} ellipsizeMode="clip" style={[styles.tabLabel, active && styles.tabLabelActive]}>
               {tab.label}
             </Text>
           </Pressable>
