@@ -1,6 +1,4 @@
 import { Platform } from 'react-native';
-import * as ImagePicker from 'expo-image-picker';
-import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 import { supabase } from './supabase';
 
 export type CommunityPeriod = 'daily' | 'weekly' | 'all_time';
@@ -186,6 +184,14 @@ export function getCommunityAvatarUrl(path: string | null) {
 
 /** Pick, crop, resize, and upload an optional profile picture. */
 export async function pickAndUploadCommunityAvatar(previousPath: string | null) {
+  // Both modules require a matching native binary. Keep them out of the app's
+  // import path so an optional avatar capability can never prevent startup.
+  const [imagePickerModule, imageManipulatorModule] = await Promise.all([
+    import('expo-image-picker'),
+    import('expo-image-manipulator'),
+  ]);
+  const ImagePicker = imagePickerModule;
+  const { manipulateAsync, SaveFormat } = imageManipulatorModule;
   const { data: userData, error: userError } = await supabase.auth.getUser();
   if (userError || !userData.user) throw new Error('Please sign in and try again.');
 

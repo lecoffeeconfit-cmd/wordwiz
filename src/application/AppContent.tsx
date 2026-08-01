@@ -80,8 +80,16 @@ import {
   trackEvent,
   type StatsSectionInteraction,
   getStartupFailureCode,
+  beginStartupAttempt,
+  completeStartup,
+  continueStartupOffline,
+  failStartup,
+  getStartupDiagnosticCode,
+  initialStartupState,
   reportStartupFailure,
   reportStartupStage,
+  setStartupStage as setCoordinatorStartupStage,
+  wasStartupFailureReported,
   withStartupTimeout,
 } from '../services';
 import { env } from '../config/env';
@@ -105,7 +113,7 @@ import type {
   StudySetMembership,
 } from '../types';
 import type { Provider } from '@supabase/supabase-js';
-import type { StartupFailureCode, StartupStage } from '../services';
+import type { StartupFailureCode, StartupStage, StartupState } from '../services';
 import {
   addQuizAttempt,
   applyFlashcardReview,
@@ -180,11 +188,7 @@ export default function AppContent() {
     useState<TimeBasedLearningSettings>(DEFAULT_TIME_BASED_LEARNING_SETTINGS);
   const [quizPreferences, setQuizPreferences] =
     useState<QuizPreferences>(DEFAULT_QUIZ_PREFERENCES);
-  const [isReady, setIsReady] = useState(false);
-  const [startupStage, setStartupStage] = useState<StartupStage>('js_entry');
-  const [startupFailure, setStartupFailure] =
-    useState<StartupFailureCode | null>(null);
-  const [startupAttempt, setStartupAttempt] = useState(0);
+  const [startupState, setStartupState] = useState<StartupState>(initialStartupState);
   const [appNotice, setAppNotice] = useState<string | null>(null);
   const [currentDayKey, setCurrentDayKey] = useState(getDayKey());
   const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState(false);
@@ -219,6 +223,12 @@ export default function AppContent() {
     startedAt: number;
   } | null>(null);
   const activeTabRef = useRef<Tab>('home');
+  const isReady = startupState.status !== 'booting';
+  const startupStage = startupState.stage;
+  const startupFailure = startupState.status === 'failed'
+    ? startupState.failureCode
+    : null;
+  const startupAttempt = startupState.attempt;
   const hasFullLearningAccess =
     subscription.hasPlusAccess ||
     justActivatedPlusUserId === currentUser?.id;
@@ -266,7 +276,7 @@ export default function AppContent() {
 
   const showStartupStage = useCallback((stage: StartupStage) => {
     startupStageRef.current = stage;
-    setStartupStage(stage);
+    setStartupState((current) => setCoordinatorStartupStage(current, stage));
   }, []);
 
   const hideNativeSplash = useCallback(async () => {
@@ -278,26 +288,33 @@ export default function AppContent() {
     try {
       reportStartupStage('splash', 'started');
       await SplashScreen.hideAsync();
-      hasHiddenNativeSplash.current = true;
       reportStartupStage('splash', 'completed');
     } catch (error) {
       reportStartupFailure(error, 'splash');
+      try {
+        // `hide` is the current synchronous API. It is a last-resort native
+        // fallback if the backwards-compatible async call rejects.
+        SplashScreen.hide();
+      } catch (fallbackError) {
+        reportStartupFailure(fallbackError, 'splash');
+      }
+    } finally {
+      // Either call has reached the native splash module. Do not retry on
+      // every layout pass if it has already been dismissed by Expo.
+      hasHiddenNativeSplash.current = true;
     }
   }, [showStartupStage]);
 
-  useEffect(() => {
-    // Do not depend solely on onLayout. A release failure must still dismiss
-    // the native splash once React reaches this component.
-    void hideNativeSplash();
-  }, [hideNativeSplash]);
-
   const retryStartup = useCallback(() => {
-    setStartupFailure(null);
     setAppNotice(null);
-    setIsReady(false);
-    showStartupStage('js_entry');
-    setStartupAttempt((attempt) => attempt + 1);
-  }, [showStartupStage]);
+    startupStageRef.current = 'js_entry';
+    setStartupState((current) => beginStartupAttempt(current));
+  }, []);
+
+  const continueOfflineAfterStartupFailure = useCallback(() => {
+    setAppNotice('Some online services are unavailable. You can keep learning with data saved on this device.');
+    setStartupState((current) => continueStartupOffline(current));
+  }, []);
 
   const signOutAfterStartupFailure = useCallback(() => {
     void signOutWithSupabase()
@@ -376,7 +393,7 @@ export default function AppContent() {
 
   useEffect(() => {
     let isActive = true;
-    if (!currentUser || !env.isSupabaseConfigured) {
+    if (!isReady || !currentUser || !env.isSupabaseConfigured) {
       setIsAdmin(false);
       return () => { isActive = false; };
     }
@@ -391,14 +408,13 @@ export default function AppContent() {
       });
 
     return () => { isActive = false; };
-  }, [currentUser?.id]);
+  }, [currentUser?.id, isReady]);
 
   useEffect(() => {
     let isActive = true;
 
     async function loadData() {
-      setStartupFailure(null);
-      setIsReady(false);
+      let completed = false;
       try {
         trackEvent('app_opened');
         showStartupStage('environment');
@@ -453,12 +469,20 @@ export default function AppContent() {
           setTimeBasedLearningSettings(DEFAULT_TIME_BASED_LEARNING_SETTINGS);
           setQuizPreferences(DEFAULT_QUIZ_PREFERENCES);
         }
+        completed = true;
       } catch (error) {
+        if (!isActive) {
+          return;
+        }
         const failedStage = startupStageRef.current;
         const failureCode = failedStage === 'js_entry' || failedStage === 'loading_state'
           ? 'STARTUP_ENTRY_FAILED'
           : getStartupFailureCode(failedStage);
-        if (failedStage !== 'js_entry' && failedStage !== 'loading_state') {
+        if (
+          failedStage !== 'js_entry' &&
+          failedStage !== 'loading_state' &&
+          !wasStartupFailureReported(error)
+        ) {
           reportStartupFailure(error, failedStage);
         }
         setWords([]);
@@ -468,20 +492,25 @@ export default function AppContent() {
         setTimedLearningEnabled(false);
         setTimeBasedLearningSettings(DEFAULT_TIME_BASED_LEARNING_SETTINGS);
         setQuizPreferences(DEFAULT_QUIZ_PREFERENCES);
-        setStartupFailure(failureCode);
+        setStartupState((current) => failStartup(current, failedStage, failureCode));
       } finally {
-        try {
-          await withStartupTimeout('profile_data', clearLegacyLearningData);
-        } catch {
-          // Legacy cleanup is best effort and must not block startup recovery.
-        }
         if (isActive) {
           showStartupStage('loading_state');
           reportStartupStage('loading_state', 'started');
-          setIsReady(true);
+          if (completed) {
+            setStartupState((current) => completeStartup(current));
+          }
           reportStartupStage('loading_state', 'completed');
+          // This is deliberately in the bootstrap finally block: every
+          // success, failure, and timeout reaches a visible app screen before
+          // the native splash is dismissed.
           void hideNativeSplash();
         }
+        // This migration is housekeeping only. It must never extend startup
+        // or delay the splash/error screen.
+        void clearLegacyLearningData().catch((cleanupError) => {
+          reportError(cleanupError, { area: 'clear_legacy_learning_data' });
+        });
       }
     }
 
@@ -555,7 +584,7 @@ export default function AppContent() {
   }, [currentUser]);
 
   useEffect(() => {
-    if (!currentUser || !env.isSupabaseConfigured) {
+    if (!isReady || !currentUser || !env.isSupabaseConfigured) {
       setCommunityUnreadNudges(0);
       return;
     }
@@ -563,25 +592,31 @@ export default function AppContent() {
     let active = true;
     void getCommunityContext().then((context) => {
       if (active) setCommunityUnreadNudges(context.unreadNudges);
-    }).catch(() => undefined);
+    }).catch((error) => {
+      reportError(error, { area: 'community_startup_context' });
+    });
     return () => { active = false; };
-  }, [currentUser?.id]);
+  }, [currentUser?.id, isReady]);
 
   useEffect(() => {
+    if (!isReady || !currentUser) return;
     let removeListener: (() => void) | undefined;
     void subscribeToCommunityNudgeResponses(() => setActiveTab('community'))
       .then((remove) => { removeListener = remove; })
-      .catch(() => undefined);
+      .catch((error) => {
+        reportError(error, { area: 'community_notification_listener' });
+      });
     return () => removeListener?.();
-  }, []);
+  }, [currentUser?.id, isReady]);
 
   useEffect(() => {
+    if (!isReady) return;
     void subscription.syncUser(currentUser?.id ?? null).catch((error) => {
       // Access checks are intentionally non-blocking after the main app has
       // rendered. Their timeout/error state remains available in the paywall.
       reportError(error, { area: 'startup_subscription_sync' });
     });
-  }, [currentUser?.id, subscription.syncUser]);
+  }, [currentUser?.id, isReady, subscription.syncUser]);
 
   useEffect(() => {
     if (
@@ -2780,9 +2815,10 @@ export default function AppContent() {
     return (
       <StartupFailureScreen
         code={startupFailure}
+        stage={startupStage}
         onRetry={retryStartup}
+        onContinueOffline={continueOfflineAfterStartupFailure}
         onSignOut={currentUser ? signOutAfterStartupFailure : undefined}
-        onLayout={() => void hideNativeSplash()}
       />
     );
   }
@@ -2791,14 +2827,13 @@ export default function AppContent() {
     return (
       <WordSyncLoadingScreen
         stage={startupStage}
-        onLayout={() => void hideNativeSplash()}
       />
     );
   }
 
   if (!env.isSupabaseConfigured) {
     return (
-      <SafeAreaView style={styles.loadingScreen} onLayout={hideNativeSplash}>
+      <SafeAreaView style={styles.loadingScreen}>
         <Ionicons name="warning-outline" size={34} color={COLORS.purpleDark} />
         <Text style={styles.loadingTitle}>WordWiz needs setup</Text>
         <Text style={styles.loadingText}>
@@ -2810,7 +2845,7 @@ export default function AppContent() {
   }
 
   return (
-    <SafeAreaView style={styles.safeArea} onLayout={hideNativeSplash}>
+    <SafeAreaView style={styles.safeArea}>
       <StatusBar style="dark" />
       <View style={styles.backgroundAura}>
         <View style={styles.backgroundBlobTop} />
@@ -3219,14 +3254,12 @@ async function clearLegacyLearningData() {
 }
 
 function WordSyncLoadingScreen({
-  onLayout,
   stage,
 }: {
-  onLayout: () => void;
   stage: StartupStage;
 }) {
   return (
-    <SafeAreaView style={styles.loadingScreen} onLayout={onLayout}>
+    <SafeAreaView style={styles.loadingScreen}>
       <Ionicons name="sparkles" size={34} color={COLORS.purpleDark} />
       <Text style={styles.loadingTitle}>Getting your words ready...</Text>
       <Text style={styles.startupStageText}>
@@ -3238,25 +3271,51 @@ function WordSyncLoadingScreen({
 
 function StartupFailureScreen({
   code,
+  stage,
   onRetry,
+  onContinueOffline,
   onSignOut,
-  onLayout,
 }: {
   code: StartupFailureCode;
+  stage: StartupStage;
   onRetry: () => void;
+  onContinueOffline: () => void;
   onSignOut?: () => void;
-  onLayout: () => void;
 }) {
+  const diagnosticCode = getStartupDiagnosticCode({
+    ...initialStartupState,
+    stage,
+    failureCode: code,
+    status: 'failed',
+  });
+
+  const copyDiagnosticCode = useCallback(() => {
+    void import('expo-clipboard')
+      .then(({ setStringAsync }) => setStringAsync(diagnosticCode))
+      .then(() => Alert.alert('Diagnostic code copied', diagnosticCode))
+      .catch((error) => {
+        reportError(error, { area: 'copy_startup_diagnostic' });
+        Alert.alert('Diagnostic code', diagnosticCode);
+      });
+  }, [diagnosticCode]);
+
   return (
-    <SafeAreaView style={styles.startupFailureScreen} onLayout={onLayout}>
+    <SafeAreaView style={styles.startupFailureScreen}>
       <Ionicons name="cloud-offline-outline" size={38} color={COLORS.purpleDark} />
-      <Text style={styles.startupFailureTitle}>WordWiz needs a fresh start</Text>
+      <Text style={styles.startupFailureTitle}>WordWiz couldn’t finish starting</Text>
       <Text style={styles.startupFailureText}>
-        Your learning data is safe. Please try again.
+        Your learning data is safe. Check your connection, then try again.
       </Text>
-      <Text style={styles.startupFailureCode}>{code}</Text>
+      <Text style={styles.startupFailureCode}>{diagnosticCode}</Text>
+      <Text style={styles.startupStageText}>Stopped while {getStartupStageLabel(stage)}</Text>
+      <Pressable onPress={copyDiagnosticCode} style={styles.startupSignOutButton}>
+        <Text style={styles.startupSignOutText}>COPY DIAGNOSTIC CODE</Text>
+      </Pressable>
       <Pressable onPress={onRetry} style={styles.startupRetryButton}>
         <Text style={styles.startupRetryText}>RETRY</Text>
+      </Pressable>
+      <Pressable onPress={onContinueOffline} style={styles.startupSignOutButton}>
+        <Text style={styles.startupSignOutText}>CONTINUE WITH SAVED DATA</Text>
       </Pressable>
       {onSignOut ? (
         <Pressable onPress={onSignOut} style={styles.startupSignOutButton}>

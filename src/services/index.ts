@@ -12,5 +12,6 @@ export * from './revenueCat';
 export * from './speech';
 export * from './sentry';
 export * from './startup';
+export * from './startupCoordinator';
 export * from './supabase';
 export * from './wordnik';

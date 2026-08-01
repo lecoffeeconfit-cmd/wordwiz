@@ -53,6 +53,7 @@ export function LoginScreen({
   const emailInputRef = useRef<TextInput>(null);
   const passwordInputRef = useRef<TextInput>(null);
   const passwordConfirmationInputRef = useRef<TextInput>(null);
+  const focusedInputRef = useRef<TextInput | null>(null);
   const scrollOffsetRef = useRef(0);
   const keyboardHeightRef = useRef(0);
   const focusScrollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -66,9 +67,16 @@ export function LoginScreen({
     const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
     const keyboardShowSubscription = Keyboard.addListener(showEvent, (event) => {
       keyboardHeightRef.current = event.endCoordinates.height;
+      // Focus usually fires before the keyboard has finished opening. Re-run
+      // the visibility check after the keyboard reports its final height so
+      // the focused field (especially Password) stays above it.
+      if (focusedInputRef.current) {
+        keepFocusedInputVisible(focusedInputRef.current);
+      }
     });
     const keyboardHideSubscription = Keyboard.addListener(hideEvent, () => {
       keyboardHeightRef.current = 0;
+      focusedInputRef.current = null;
     });
 
     return () => {
@@ -81,6 +89,7 @@ export function LoginScreen({
   }, []);
 
   function keepFocusedInputVisible(input: TextInput | null) {
+    focusedInputRef.current = input;
     if (focusScrollTimer.current) {
       clearTimeout(focusScrollTimer.current);
     }

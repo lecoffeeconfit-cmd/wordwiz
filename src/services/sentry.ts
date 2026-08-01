@@ -9,6 +9,11 @@ const pendingStartupBreadcrumbs: Array<{
   status: 'started' | 'completed' | 'failed';
   code?: string;
 }> = [];
+const pendingStartupExceptions: Array<{
+  error: unknown;
+  stage: string;
+  code: string;
+}> = [];
 
 export function initializeSentry() {
   if (!env.sentryDsn || sentryInitialized) {
@@ -42,6 +47,9 @@ export function initializeSentry() {
     sentryInitialized = true;
     pendingStartupBreadcrumbs.splice(0).forEach((breadcrumb) => {
       addStartupBreadcrumb(breadcrumb.stage, breadcrumb.status, breadcrumb.code);
+    });
+    pendingStartupExceptions.splice(0).forEach(({ error, stage, code }) => {
+      captureStartupException(error, stage, code);
     });
   } catch (error) {
     // Telemetry must never prevent WordWiz from launching.
@@ -110,6 +118,7 @@ export function captureStartupException(
 ) {
   addStartupBreadcrumb(stage, 'failed', code);
   if (!sentryInitialized) {
+    pendingStartupExceptions.push({ error, stage, code });
     return;
   }
 

@@ -62,6 +62,7 @@ const dateUtils = loadTsModule('src/utils/date.ts');
 const quiz = loadTsModule('src/utils/quiz.ts');
 const dictionary = loadTsModule('src/services/dictionary.ts');
 const wordnik = loadTsModule('src/services/wordnik.ts');
+const startupCoordinator = loadTsModule('src/services/startupCoordinator.ts');
 
 function makeWord(id, term, definition, reviews = 0) {
   return {
@@ -3130,4 +3131,46 @@ test('Community remains opt-in and keeps social writes behind protected RPCs', (
   assert.match(nudgeFunction, /community_create_nudge/);
   assert.match(nudgeFunction, /EXPO_ACCESS_TOKEN/);
   assert.doesNotMatch(nudgeFunction, /console\.log\([^)]*expo_push_token/i);
+});
+
+test('startup coordinator always reaches a visible terminal state and supports retry', () => {
+  const initial = startupCoordinator.initialStartupState;
+  const loading = startupCoordinator.setStartupStage(initial, 'auth_session');
+  const failed = startupCoordinator.failStartup(
+    loading,
+    'auth_session',
+    'STARTUP_AUTH_FAILED',
+  );
+  const offline = startupCoordinator.continueStartupOffline(failed);
+  const retrying = startupCoordinator.beginStartupAttempt(offline);
+  const ready = startupCoordinator.completeStartup(retrying);
+
+  assert.equal(initial.status, 'booting');
+  assert.equal(failed.status, 'failed');
+  assert.equal(startupCoordinator.getStartupDiagnosticCode(failed), 'STARTUP_AUTH_FAILED');
+  assert.equal(offline.status, 'offline');
+  assert.equal(retrying.status, 'booting');
+  assert.equal(retrying.attempt, 1);
+  assert.equal(ready.status, 'ready');
+});
+
+test('release startup keeps optional Connect native modules and remote work off the import path', () => {
+  const appContent = fs.readFileSync(
+    path.join(projectRoot, 'src/application/AppContent.tsx'),
+    'utf8',
+  );
+  const communityService = fs.readFileSync(
+    path.join(projectRoot, 'src/services/community.ts'),
+    'utf8',
+  );
+  const appEntry = fs.readFileSync(path.join(projectRoot, 'App.tsx'), 'utf8');
+
+  assert.doesNotMatch(communityService, /^import .*expo-image-(picker|manipulator)/m);
+  assert.match(communityService, /import\('expo-image-picker'\)/);
+  assert.match(communityService, /import\('expo-image-manipulator'\)/);
+  assert.match(appContent, /if \(!isReady \|\| !currentUser\) return;[\s\S]*subscribeToCommunityNudgeResponses/);
+  assert.match(appContent, /if \(!isReady \|\| !currentUser \|\| !env\.isSupabaseConfigured\)/);
+  assert.doesNotMatch(appContent, /preventAutoHideAsync/);
+  assert.match(appContent, /finally \{[\s\S]*void hideNativeSplash\(\)/);
+  assert.match(appEntry, /componentDidCatch/);
 });
