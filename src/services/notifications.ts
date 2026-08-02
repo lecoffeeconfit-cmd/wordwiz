@@ -6,14 +6,20 @@ import type { ReminderSettings } from '../types';
 
 export type ReminderContext = {
   currentStreak: number;
+  longestStreak: number;
   hasPracticedToday: boolean;
   dueReviewCount: number;
   quizzesToday: number;
   dailyQuizGoal: number;
+  totalQuizSessions: number;
   totalQuizQuestions: number;
   overallAccuracy: number | null;
   unreviewedNewWordCount: number;
   pointsToNextLevel: number | null;
+  nextMasteryLevelTitle: string | null;
+  masteredWordCount: number;
+  totalWordCount: number;
+  omegaTestAvailable: boolean;
   dayKey: string;
 };
 
@@ -109,14 +115,20 @@ export async function scheduleDailyReminder(
   settings: ReminderSettings,
   messages: ReminderMessage[] = buildSmartReminderMessages({
     currentStreak: 0,
+    longestStreak: 0,
     hasPracticedToday: false,
     dueReviewCount: 0,
     quizzesToday: 0,
     dailyQuizGoal: 1,
+    totalQuizSessions: 0,
     totalQuizQuestions: 0,
     overallAccuracy: null,
     unreviewedNewWordCount: 0,
     pointsToNextLevel: null,
+    nextMasteryLevelTitle: null,
+    masteredWordCount: 0,
+    totalWordCount: 0,
+    omegaTestAvailable: false,
     dayKey: new Date().toISOString().slice(0, 10),
   }),
 ): Promise<ReminderSettings> {
@@ -182,57 +194,103 @@ export function buildSmartReminderMessages(
   const messages: ReminderMessage[] = [];
 
   if (context.currentStreak > 0 && !context.hasPracticedToday) {
+    const daysToBeatBest = Math.max(
+      1,
+      context.longestStreak - context.currentStreak + 1,
+    );
+    const streakBody =
+      context.longestStreak > context.currentStreak
+        ? `Study for ${daysToBeatBest} more days to beat your ${context.longestStreak}-day best.`
+        : `Study today to extend your streak to ${context.currentStreak + 1} days.`;
+
     messages.push({
       kind: 'streak',
-      title: `${context.currentStreak}-day retrieval streak is active`,
-      body: 'A short recall session today preserves your practice interval and adds fresh retention evidence for your saved words.',
+      title: `Keep your ${context.currentStreak}-day streak`,
+      body: streakBody,
     });
   }
 
   if (context.dueReviewCount > 0) {
+    const estimatedMinutes = Math.max(
+      2,
+      Math.ceil(context.dueReviewCount * 0.75),
+    );
+
     messages.push({
       kind: 'review',
-      title: 'Spaced retrieval is due',
-      body: `${context.dueReviewCount} ${context.dueReviewCount === 1 ? 'word is' : 'words are'} scheduled for recall. Timely retrieval can strengthen long-term word memory more than rereading.`,
+      title: `${context.dueReviewCount} ${context.dueReviewCount === 1 ? 'word' : 'words'} due`,
+      body: `Review them in about ${estimatedMinutes} min to strengthen recall.`,
     });
   }
 
   if (context.quizzesToday < context.dailyQuizGoal) {
+    const quizzesLeft = context.dailyQuizGoal - context.quizzesToday;
+
     messages.push({
       kind: 'quiz',
-      title: context.totalQuizQuestions
-        ? `${context.dailyQuizGoal - context.quizzesToday} quiz ${context.dailyQuizGoal - context.quizzesToday === 1 ? 'session' : 'sessions'} left today`
-        : 'Build your first recall baseline',
-      body: context.overallAccuracy === null
-        ? 'A short quiz gives WordWiz its first retrieval data so future review timing can adapt to your memory.'
-        : `Your current accuracy is ${context.overallAccuracy}% across ${context.totalQuizQuestions} answers. Another recall session gives WordWiz fresher evidence to adapt review timing.`,
+      title: `${quizzesLeft} quiz${quizzesLeft === 1 ? '' : 'zes'} left today`,
+      body: `Finish ${quizzesLeft} to hit your ${context.dailyQuizGoal}-quiz daily goal.`,
     });
   }
 
   if (context.unreviewedNewWordCount > 0) {
     messages.push({
       kind: 'new-words',
-      title: `${context.unreviewedNewWordCount} new ${context.unreviewedNewWordCount === 1 ? 'word needs' : 'words need'} a first recall`,
-      body: 'Early retrieval establishes a memory baseline and helps WordWiz schedule the next review at a useful interval.',
+      title: `${context.unreviewedNewWordCount} new ${context.unreviewedNewWordCount === 1 ? 'word' : 'words'} to unlock`,
+      body: `Quiz them once to start their spaced-review plan.`,
+    });
+  }
+
+  if (context.totalWordCount > 0 && context.masteredWordCount < context.totalWordCount) {
+    const wordsLeftToMaster = context.totalWordCount - context.masteredWordCount;
+
+    messages.push({
+      kind: 'mastery',
+      title: `${context.masteredWordCount}/${context.totalWordCount} words mastered`,
+      body: `Keep using spaced quizzes to master ${wordsLeftToMaster} more.`,
     });
   }
 
   if (
     context.pointsToNextLevel !== null &&
     context.pointsToNextLevel > 0 &&
-    context.pointsToNextLevel <= 5
+    context.nextMasteryLevelTitle
   ) {
     messages.push({
       kind: 'mastery',
-      title: 'Your next mastery level is close',
-      body: `You’re ${context.pointsToNextLevel} ${context.pointsToNextLevel === 1 ? 'point' : 'points'} away. Successful recall adds stronger retention evidence than passive review.`,
+      title: `${context.pointsToNextLevel} pts to ${context.nextMasteryLevelTitle}`,
+      body: `Recall today to reach ${context.nextMasteryLevelTitle} mastery.`,
+    });
+  }
+
+  const quizMilestones = [10, 25, 50, 100];
+  const nextQuizMilestone = quizMilestones.find(
+    (milestone) => milestone > context.totalQuizSessions,
+  );
+  if (
+    nextQuizMilestone &&
+    nextQuizMilestone - context.totalQuizSessions <= 10
+  ) {
+    const quizzesLeft = nextQuizMilestone - context.totalQuizSessions;
+    messages.push({
+      kind: 'quiz',
+      title: `${quizzesLeft} quiz${quizzesLeft === 1 ? '' : 'zes'} to ${nextQuizMilestone}`,
+      body: `Reach ${nextQuizMilestone} total quizzes to build more recall evidence.`,
+    });
+  }
+
+  if (context.omegaTestAvailable && context.totalWordCount > 0) {
+    messages.push({
+      kind: 'quiz',
+      title: 'Omega Test is ready',
+      body: `Test all ${context.totalWordCount} words to check long-term recall.`,
     });
   }
 
   messages.push({
     kind: 'practice',
-    title: 'Two minutes for deliberate recall',
-    body: 'A focused retrieval session can reinforce word memory and gives WordWiz new data to personalize future practice.',
+    title: 'Daily recall builds memory',
+    body: 'Practice for 2 min today; retrieval helps words stick faster.',
   });
 
   const rotation = hashDayKey(context.dayKey) % messages.length;

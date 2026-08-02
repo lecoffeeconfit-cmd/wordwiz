@@ -126,9 +126,11 @@ import {
   getDayKey,
   getDueReviewWords,
   getNextMasteryLevel,
+  getOmegaTestStatus,
+  getWordMasteryProgress,
+  isWordMastered,
   getSavedWordTermKey,
   getWordMastery,
-  getWordMasteryProgress,
   mergeWordLists,
   normalizeQuestionTypePreferences,
   upsertSavedWord,
@@ -3210,6 +3212,7 @@ function buildCurrentReminderContext(
       )
     : 0;
   const nextLevel = getNextMasteryLevel(overallMastery);
+  const streakStats = calculateStreakStats(analytics);
   const quizzesToday = analytics.quizHistory.filter(
     (attempt) => attempt.date === dayKey,
   ).length;
@@ -3226,11 +3229,13 @@ function buildCurrentReminderContext(
   );
 
   return {
-    currentStreak: calculateStreakStats(analytics).current,
+    currentStreak: streakStats.current,
+    longestStreak: streakStats.longest,
     hasPracticedToday: hasCardPracticeToday || quizzesToday > 0,
     dueReviewCount: getDueReviewWords(userWords, analytics).length,
     quizzesToday,
     dailyQuizGoal,
+    totalQuizSessions: analytics.quizHistory.length,
     totalQuizQuestions,
     overallAccuracy: totalQuizQuestions
       ? Math.round((totalCorrect / totalQuizQuestions) * 100)
@@ -3240,6 +3245,12 @@ function buildCurrentReminderContext(
     pointsToNextLevel: nextLevel
       ? Math.max(0, nextLevel.minScore - overallMastery)
       : null,
+    nextMasteryLevelTitle: nextLevel?.shortTitle ?? null,
+    masteredWordCount: userWords.filter((word) =>
+      isWordMastered(getWordMasteryProgress(word, analytics)),
+    ).length,
+    totalWordCount: userWords.length,
+    omegaTestAvailable: getOmegaTestStatus(analytics).available,
     dayKey,
   };
 }
