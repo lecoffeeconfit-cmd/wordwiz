@@ -19,6 +19,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { COLORS } from '../../constants/theme';
 import { MASTERY_LEVELS } from '../../utils';
+import { LevelMagicIcon } from '../community/MiniLeaderboardCrest';
 
 const SIZE = 132;
 const STROKE_WIDTH = 12;
@@ -35,6 +36,7 @@ type LessonProgressRingProps = {
   progress: number;
   lessonTitle: string;
   masteryScore?: number;
+  currentLevel: (typeof MASTERY_LEVELS)[number]['shortTitle'];
 };
 
 type MasteryRingSegment = {
@@ -112,6 +114,7 @@ export function LessonProgressRing({
   progress,
   lessonTitle,
   masteryScore,
+  currentLevel,
 }: LessonProgressRingProps) {
   const safeProgress = clampProgress(progress);
   const safeMasteryScore = clampProgress(masteryScore ?? progress);
@@ -128,7 +131,6 @@ export function LessonProgressRing({
   const displayedProgressValue = useSharedValue(safeCenterProgress);
   const ringPulse = useSharedValue(1);
   const centerScale = useSharedValue(1);
-  const capBounce = useSharedValue(0);
   const sparkleBurst = useSharedValue(0);
   const completionTitleOpacity = useSharedValue(isComplete ? 1 : 0);
   const xpReward = useSharedValue(isComplete ? 1 : 0);
@@ -157,10 +159,6 @@ export function LessonProgressRing({
       ringPulse.value = withSequence(
         withSpring(1.035, { damping: 12, stiffness: 210 }),
         withSpring(1, { damping: 13, stiffness: 180 }),
-      );
-      capBounce.value = withSequence(
-        withSpring(-4, { damping: 9, stiffness: 260 }),
-        withSpring(0, { damping: 11, stiffness: 210 }),
       );
       if (shouldSparkle) {
         sparkleBurst.value = withSequence(
@@ -197,7 +195,6 @@ export function LessonProgressRing({
     previousCompletionProgress.current = completionProgress;
   }, [
     animatedMasteryScore,
-    capBounce,
     centerScale,
     completionTitleOpacity,
     completionProgress,
@@ -226,10 +223,6 @@ export function LessonProgressRing({
 
   const centerStyle = useAnimatedStyle(() => ({
     transform: [{ scale: centerScale.value }],
-  }));
-
-  const capStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: capBounce.value }],
   }));
 
   const completionTitleStyle = useAnimatedStyle(() => ({
@@ -284,9 +277,7 @@ export function LessonProgressRing({
       </View>
 
       <Animated.View style={[localStyles.centerCard, centerStyle]}>
-        <Animated.View style={capStyle}>
-          <Ionicons name="school" size={31} color={COLORS.purpleDark} />
-        </Animated.View>
+        <LevelMagicIcon level={currentLevel} size={35} variant="progressCircle" />
         <Text style={localStyles.percentText}>{displayProgress}%</Text>
         <Animated.Text
           numberOfLines={2}

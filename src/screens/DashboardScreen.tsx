@@ -312,8 +312,6 @@ export function DashboardScreen({
   );
   const masterSparkleScale = useRef(new Animated.Value(1)).current;
   const flaggedCountScale = useRef(new Animated.Value(1)).current;
-  const streakSparkleFloat = useRef(new Animated.Value(0)).current;
-  const streakSparklePulse = useRef(new Animated.Value(0.38)).current;
   const refreshTokenPulse = useRef(new Animated.Value(1)).current;
   const refreshTokenFloat = useRef(new Animated.Value(0)).current;
   const refreshTokenGlow = useRef(new Animated.Value(0.45)).current;
@@ -406,39 +404,6 @@ export function DashboardScreen({
       }),
     ]).start();
   }, [flaggedCount, flaggedCountScale]);
-
-  useEffect(() => {
-    const animation = Animated.loop(
-      Animated.parallel([
-        Animated.sequence([
-          Animated.timing(streakSparkleFloat, {
-            toValue: -4,
-            duration: 1700,
-            useNativeDriver: true,
-          }),
-          Animated.timing(streakSparkleFloat, {
-            toValue: 0,
-            duration: 1700,
-            useNativeDriver: true,
-          }),
-        ]),
-        Animated.sequence([
-          Animated.timing(streakSparklePulse, {
-            toValue: 0.95,
-            duration: 1200,
-            useNativeDriver: true,
-          }),
-          Animated.timing(streakSparklePulse, {
-            toValue: 0.38,
-            duration: 1200,
-            useNativeDriver: true,
-          }),
-        ]),
-      ]),
-    );
-    animation.start();
-    return () => animation.stop();
-  }, [streakSparkleFloat, streakSparklePulse]);
 
   useEffect(() => {
     if (refreshTokens === 0) {
@@ -1166,6 +1131,7 @@ export function DashboardScreen({
         <LessonProgressRing
           progress={masteryLevelProgress}
           masteryScore={words.length ? overallMastery : 0}
+          currentLevel={masteryLevel.shortTitle}
           lessonTitle={`TO ${nextMasteryLevel?.shortTitle.toUpperCase() ?? 'TOP'}`}
         />
       </View>
@@ -1223,19 +1189,6 @@ export function DashboardScreen({
 
       <View style={styles.streakReminderGrid}>
         <View style={styles.streakCard}>
-          <View pointerEvents="none" style={styles.streakSparkleLayer}>
-            <Animated.View
-              style={[
-                styles.streakSparkleLarge,
-                {
-                  opacity: streakSparklePulse,
-                  transform: [{ translateY: streakSparkleFloat }],
-                },
-              ]}
-            >
-              <Ionicons name="sparkles" size={18} color="#E2AF2F" />
-            </Animated.View>
-          </View>
           <View style={styles.streakCardHeader}>
             <View style={styles.streakFlame}>
               <Ionicons name="sparkles" size={25} color={COLORS.white} />

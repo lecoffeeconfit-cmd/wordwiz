@@ -593,7 +593,7 @@ export default function AppContent() {
     // Community is optional and must never hold up core learning or startup.
     let active = true;
     void getCommunityContext().then((context) => {
-      if (active) setCommunityUnreadNudges(context.unreadNudges);
+      if (active) setCommunityUnreadNudges(context.enabled ? context.unreadNudges : 0);
     }).catch((error) => {
       reportError(error, { area: 'community_startup_context' });
     });

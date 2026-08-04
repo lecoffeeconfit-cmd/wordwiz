@@ -8,6 +8,7 @@ Community is an opt-in learning feature. It adds a sixth bottom-tab destination 
 - A display name, optional avatar path, friend code, and Social XP are the only profile values intended for Community surfaces.
 - Definitions, examples, saved words, quiz answers, email addresses, and private learning history are never returned by the Community RPCs.
 - Leaderboards include only profiles that explicitly enable leaderboard visibility.
+- Public profiles show only aggregate learning stats: saved-word count, achievements unlocked, quiz count, flashcard reviews, and active study days in the last 30 days. Learners can hide their public profile from rankings and profile cards while keeping private friend connections.
 - Friend requests require an exact eight-character code; there is no user search or contact import.
 - Blocks, mutes, report records, friend-only nudges, and server-side limits are enforced in database functions, not only in the app UI.
 - Profile pictures are optional. WordWiz crops and resizes a selected image to a 512px JPEG before upload; Storage accepts only JPEG files up to 2 MB, scoped to the uploader's account. Avatar images are public only so they can be displayed beside the public display name a learner chose to share.
@@ -16,7 +17,7 @@ Community is an opt-in learning feature. It adds a sixth bottom-tab destination 
 
 Social XP is separate from WordWiz mastery, achievements, levels, and subscription access.
 
-- A completed quiz attempt earns `score × 5` Social XP.
+- A completed standard quiz attempt earns `score × 3` Social XP; an Omega Test earns `score × 5`.
 - Each flashcard review earns 2 XP when remembered and 1 XP otherwise.
 - A one-time historical baseline is all-time only. It never appears in daily or weekly rankings.
 - New events are recorded with idempotency keys by database triggers, so retries do not create duplicate XP.

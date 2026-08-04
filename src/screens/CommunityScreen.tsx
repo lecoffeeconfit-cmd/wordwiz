@@ -17,6 +17,7 @@ import {
   View,
 } from 'react-native';
 import { COLORS, SOFT_SHADOW } from '../constants/theme';
+import { LevelMagicIcon, MiniLeaderboardCrest } from '../components';
 import {
   type CommunityConnection,
   type CommunityContext,
@@ -24,6 +25,7 @@ import {
   type CommunityLevel,
   type CommunityNudge,
   type CommunityPeriod,
+  deactivateCommunityPushTokens,
   getCommunityAvatarUrl,
   getCommunityConnections,
   getCommunityContext,
@@ -33,6 +35,7 @@ import {
   markCommunityNudgeRead,
   pickAndUploadCommunityAvatar,
   registerCommunityPushToken,
+  reportCommunityUser,
   removeOrBlockCommunityConnection,
   respondToCommunityFriendRequest,
   sendCommunityFriendRequest,
@@ -117,8 +120,8 @@ const LEVEL_RULES: Record<CommunityLevel, string> = {
   Journeyman: 'Next 25%',
   Adept: 'Next 25%',
   Mage: 'Next 20%',
-  Master: 'Next 40',
-  Grandmaster: 'Top 10',
+  Master: 'Next 5%',
+  Grandmaster: 'Top 25',
 };
 
 function initialFor(name: string) {
@@ -134,11 +137,19 @@ function levelPresentation(level: CommunityLevel) {
     case 'Grandmaster': return { name: level, icon: 'ribbon' as const, color: '#B98416', background: '#FFF1CB' };
     case 'Master': return { name: level, icon: 'flame-outline' as const, color: '#F19A45', background: '#FFF0DF' };
     case 'Mage': return { name: level, icon: 'sparkles-outline' as const, color: '#8067E8', background: '#EEE9FF' };
-    case 'Adept': return { name: level, icon: 'star-outline' as const, color: '#E2B32E', background: '#FFF6D5' };
-    case 'Journeyman': return { name: level, icon: 'navigate-outline' as const, color: '#43B899', background: '#E2F7EF' };
+    case 'Adept': return { name: level, icon: 'star-outline' as const, color: '#FFD23F', background: '#FFF2B8' };
+    case 'Journeyman': return { name: level, icon: 'navigate-outline' as const, color: '#3CCFC4', background: '#D9F7F3' };
     case 'Apprentice': return { name: level, icon: 'leaf-outline' as const, color: '#36BDA2', background: '#E1F8F4' };
     default: return { name: level, icon: 'leaf-outline' as const, color: '#69A4D7', background: '#E5F2FF' };
   }
+}
+
+function LevelPresentationIcon({ level, size }: { level: CommunityLevel; size: number }) {
+  const tier = levelPresentation(level);
+  if (level === 'Adept') {
+    return <LevelMagicIcon level={level} size={size} variant="bare" color={tier.color} />;
+  }
+  return <Ionicons name={tier.icon} size={size} color={tier.color} />;
 }
 
 function CommunityAvatar({
@@ -170,7 +181,7 @@ function TierBadge({ level, compact = false }: { level: CommunityLevel; compact?
   const tier = levelPresentation(level);
   return (
     <View style={[community.tierBadge, compact && community.tierBadgeCompact, { backgroundColor: tier.background }]}>
-      <Ionicons name={tier.icon} size={compact ? 12 : 13} color={tier.color} />
+      <LevelPresentationIcon level={level} size={compact ? 12 : 13} />
       <Text style={[community.tierBadgeText, compact && community.tierBadgeTextCompact, { color: tier.color }]}>{tier.name}</Text>
     </View>
   );
@@ -286,6 +297,7 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
   const [selectedLevel, setSelectedLevel] = useState<CommunityLevel | null>(null);
   const [friendCode, setFriendCode] = useState('');
   const [profileName, setProfileName] = useState('');
+  const [profileVisible, setProfileVisible] = useState(true);
   const [leaderboardOptIn, setLeaderboardOptIn] = useState(true);
   const [requestsEnabled, setRequestsEnabled] = useState(true);
   const [nudgesEnabled, setNudgesEnabled] = useState(true);
@@ -311,6 +323,7 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
     onUnreadNudgesChange?.(nextContext.unreadNudges);
     if (nextContext.profile) {
       setProfileName(nextContext.profile.displayName);
+      setProfileVisible(nextContext.profile.profileVisible);
       setLeaderboardOptIn(nextContext.profile.leaderboardOptIn);
       setRequestsEnabled(nextContext.profile.friendRequestsEnabled);
       setNudgesEnabled(nextContext.profile.nudgesEnabled);
@@ -450,6 +463,7 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
     try {
       await setupCommunityProfile({
         displayName: profileName,
+        profileVisible,
         leaderboardOptIn,
         friendRequestsEnabled: requestsEnabled,
         nudgesEnabled,
@@ -461,8 +475,10 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
           await registerCommunityPushToken(token);
         } catch {
           setPushEnabled(false);
+          await deactivateCommunityPushTokens().catch(() => undefined);
           await setupCommunityProfile({
             displayName: profileName,
+            profileVisible,
             leaderboardOptIn,
             friendRequestsEnabled: requestsEnabled,
             nudgesEnabled,
@@ -470,6 +486,9 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
           });
           Alert.alert('Push nudges are off', 'You can still receive nudges in Community. Enable notifications in Settings to receive them on your device.');
         }
+      } else {
+        // Keep the server-side device list aligned with the learner's choice.
+        await deactivateCommunityPushTokens().catch(() => undefined);
       }
       await refreshCommunity();
     } catch (error) {
@@ -477,7 +496,7 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
     } finally {
       setSaving(false);
     }
-  }, [leaderboardOptIn, nudgesEnabled, profileName, pushEnabled, refreshCommunity, requestsEnabled]);
+  }, [leaderboardOptIn, nudgesEnabled, profileName, profileVisible, pushEnabled, refreshCommunity, requestsEnabled]);
 
   const addFriend = useCallback(async () => {
     try {
@@ -556,6 +575,29 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
       setAvatarUpdating(false);
     }
   }, [context?.profile, refreshCommunity]);
+
+  const runConnectionAction = useCallback(async (action: () => Promise<void>, title: string) => {
+    try {
+      await action();
+      await refreshCommunity();
+    } catch (error) {
+      Alert.alert(title, error instanceof Error ? error.message : 'Please try again.');
+    }
+  }, [refreshCommunity]);
+
+  const reportLeaderboardMember = useCallback(async (reason: 'harassment' | 'spam' | 'inappropriate_name' | 'other') => {
+    if (!selectedLeaderboardEntry) return;
+    setLeaderboardActionLoading(true);
+    try {
+      await reportCommunityUser(selectedLeaderboardEntry.publicId, reason);
+      setSelectedLeaderboardEntry(null);
+      Alert.alert('Report submitted', 'Thanks for helping keep Connect welcoming.');
+    } catch (error) {
+      Alert.alert('Could not submit report', error instanceof Error ? error.message : 'Please try again.');
+    } finally {
+      setLeaderboardActionLoading(false);
+    }
+  }, [selectedLeaderboardEntry]);
 
   const openProfileEditor = useCallback(() => {
     setProfileName(context?.profile?.displayName ?? '');
@@ -652,21 +694,18 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
       <View style={community.myLeaderboardCard}>
         <Text style={community.myLeaderboardEyebrow}>YOUR LEADERBOARD STATUS</Text>
         <View style={[community.rankRow, community.rankRowMe]}>
-          {context?.rank === 1 ? (
-            <View style={community.rankOneNumber}>
-              <Ionicons name="ribbon" size={14} color="#B98416" />
-              <Text style={community.rankOneNumberText}>#1</Text>
-            </View>
-          ) : (
-            <Text style={community.rankNumber}>{context?.rank ? `#${context.rank}` : '—'}</Text>
-          )}
+          <MiniLeaderboardCrest
+            rank={context?.rank}
+            level={context?.level ?? 'Novice'}
+            testID="community-your-rank"
+          />
           <View style={context?.rank === 1 ? community.rankOneAvatarFrame : undefined}>
             <CommunityAvatar name={context?.profile?.displayName ?? 'You'} avatarPath={context?.profile?.avatarPath} small />
           </View>
           <View style={community.rankName}>
             <Text numberOfLines={1} style={community.rankNameText}>{context?.profile?.displayName} (you)</Text>
             <View style={community.rankDetailRow}>
-              <Ionicons name={levelPresentation(context?.level ?? 'Novice').icon} size={12} color={levelPresentation(context?.level ?? 'Novice').color} />
+              <LevelPresentationIcon level={context?.level ?? 'Novice'} size={12} />
               <Text style={[community.rankDetail, { color: levelPresentation(context?.level ?? 'Novice').color }]}>{context?.level ?? 'Novice'}</Text>
               <Text style={community.rankDetailDivider}>·</Text>
               <Text style={community.rankSocialXp}>Social XP</Text>
@@ -705,21 +744,18 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
               onPress={() => setSelectedLeaderboardEntry(entry)}
               style={({ pressed }) => [community.rankRow, entry.isMe && community.rankRowMe, pressed && community.rankRowPressed]}
             >
-              {entry.rank === 1 ? (
-                <View style={community.rankOneNumber}>
-                  <Ionicons name="ribbon" size={14} color="#B98416" />
-                  <Text style={community.rankOneNumberText}>#1</Text>
-                </View>
-              ) : (
-                <Text style={community.rankNumber}>#{entry.rank}</Text>
-              )}
+              <MiniLeaderboardCrest
+                rank={entry.rank}
+                level={entry.level}
+                testID={`community-rank-${entry.rank}`}
+              />
               <View style={entry.rank === 1 ? community.rankOneAvatarFrame : undefined}>
                 <CommunityAvatar name={entry.displayName} avatarPath={entry.avatarPath} small />
               </View>
               <View style={community.rankName}>
                 <Text numberOfLines={1} style={community.rankNameText}>{entry.displayName}{entry.isMe ? ' (you)' : ''}</Text>
                 <View style={community.rankDetailRow}>
-                  <Ionicons name={tier.icon} size={12} color={tier.color} />
+                  <LevelPresentationIcon level={entry.level} size={12} />
                   <Text style={[community.rankDetail, { color: tier.color }]}>{tier.name}</Text>
                   <Text style={community.rankDetailDivider}>·</Text>
                   <Text style={community.rankSocialXp}>Social XP</Text>
@@ -731,7 +767,11 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
         })}
         {!leaderboard.length && !leaderboardLoading ? (
           <View style={community.empty}>
-            <Ionicons name="sparkles" size={31} color={COLORS.purple} />
+            {selectedLevel ? (
+              <LevelMagicIcon level={selectedLevel} size={52} variant="bare" color={COLORS.purple} />
+            ) : (
+              <Ionicons name="sparkles" size={31} color={COLORS.purple} />
+            )}
             <Text style={community.emptyTitle}>{selectedLevel ? `No ${selectedLevel} learners yet` : 'The leaderboard is warming up'}</Text>
             <Text style={community.emptyText}>
               {selectedLevel
@@ -790,10 +830,16 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
           </View>
           {friend.status === 'pending' && friend.direction === 'incoming' ? (
             <View style={community.friendActions}>
-              <Pressable onPress={() => void respondToCommunityFriendRequest(friend.requestId, true).then(refreshCommunity)}>
+              <Pressable onPress={() => void runConnectionAction(
+                () => respondToCommunityFriendRequest(friend.requestId, true),
+                'Could not accept request',
+              )}>
                 <Text style={community.accept}>Accept</Text>
               </Pressable>
-              <Pressable onPress={() => void respondToCommunityFriendRequest(friend.requestId, false).then(refreshCommunity)}>
+              <Pressable onPress={() => void runConnectionAction(
+                () => respondToCommunityFriendRequest(friend.requestId, false),
+                'Could not decline request',
+              )}>
                 <Text style={community.subtleAction}>Decline</Text>
               </Pressable>
             </View>
@@ -802,14 +848,23 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
               <Pressable onPress={() => void handleNudge(friend)}>
                 <Ionicons name="paper-plane-outline" size={21} color={COLORS.purpleDark} />
               </Pressable>
-              <Pressable onPress={() => void setCommunityMute(friend.publicId, !friend.isMuted).then(refreshCommunity)}>
+              <Pressable onPress={() => void runConnectionAction(
+                () => setCommunityMute(friend.publicId, !friend.isMuted),
+                'Could not update mute setting',
+              )}>
                 <Ionicons name={friend.isMuted ? 'notifications-outline' : 'notifications-off-outline'} size={21} color={COLORS.muted} />
               </Pressable>
               <Pressable
                 onPress={() => Alert.alert('Manage friend', `Remove or block ${friend.displayName}?`, [
                   { text: 'Cancel', style: 'cancel' },
-                  { text: 'Remove', onPress: () => void removeOrBlockCommunityConnection(friend.publicId, false).then(refreshCommunity) },
-                  { text: 'Block', style: 'destructive', onPress: () => void removeOrBlockCommunityConnection(friend.publicId, true).then(refreshCommunity) },
+                  { text: 'Remove', onPress: () => void runConnectionAction(
+                    () => removeOrBlockCommunityConnection(friend.publicId, false),
+                    'Could not remove friend',
+                  ) },
+                  { text: 'Block', style: 'destructive', onPress: () => void runConnectionAction(
+                    () => removeOrBlockCommunityConnection(friend.publicId, true),
+                    'Could not block friend',
+                  ) },
                 ])}
               >
                 <Ionicons name="ellipsis-horizontal" size={21} color={COLORS.muted} />
@@ -959,6 +1014,18 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
     );
   }
 
+  if (context && !context.enabled) {
+    return (
+      <ScrollView contentContainerStyle={community.container}>
+        <View style={community.hero}>
+          <Ionicons name="people" size={28} color={COLORS.purpleDark} />
+          <Text style={community.heroTitle}>Connect is taking a short break</Text>
+          <Text style={community.heroText}>Community features are temporarily unavailable. Your learning words, progress, and account are unaffected.</Text>
+        </View>
+      </ScrollView>
+    );
+  }
+
   if (!context?.profile) {
     return (
       <ScrollView contentContainerStyle={community.container}>
@@ -969,6 +1036,7 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
         </View>
         <Text style={community.fieldLabel}>Display name</Text>
         <TextInput value={profileName} onChangeText={setProfileName} placeholder="3–24 characters" placeholderTextColor={COLORS.muted} style={community.input} maxLength={24} />
+        <Preference label="Show my Connect profile" detail="Turn this off to stay out of public profiles and leaderboards. Friends can still connect privately." value={profileVisible} onChange={setProfileVisible} />
         <Preference label="Appear on leaderboards" detail="Optional. You can still use friends privately." value={leaderboardOptIn} onChange={setLeaderboardOptIn} />
         <Preference label="Allow friend requests" detail="People need your code to find you." value={requestsEnabled} onChange={setRequestsEnabled} />
         <Preference label="Allow study nudges" detail="Friends can send a gentle reminder." value={nudgesEnabled} onChange={setNudgesEnabled} />
@@ -1067,6 +1135,28 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
                 <Text style={community.memberSheetName}>{selectedLeaderboardEntry.displayName}{selectedLeaderboardEntry.isMe ? ' (you)' : ''}</Text>
                 <TierBadge level={selectedLeaderboardEntry.level} />
                 <Text style={community.memberSheetScore}>#{selectedLeaderboardEntry.rank} · {selectedLeaderboardEntry.xp.toLocaleString()} Social XP</Text>
+                <View style={community.memberSheetStats}>
+                  <View style={community.memberSheetStat}>
+                    <Text style={community.memberSheetStatValue}>{selectedLeaderboardEntry.wordCount.toLocaleString()}</Text>
+                    <Text style={community.memberSheetStatLabel}>WORDS</Text>
+                  </View>
+                  <View style={community.memberSheetStat}>
+                    <Text style={community.memberSheetStatValue}>{selectedLeaderboardEntry.achievementsUnlocked.toLocaleString()}</Text>
+                    <Text style={community.memberSheetStatLabel}>UNLOCKED</Text>
+                  </View>
+                  <View style={community.memberSheetStat}>
+                    <Text style={community.memberSheetStatValue}>{selectedLeaderboardEntry.quizCount.toLocaleString()}</Text>
+                    <Text style={community.memberSheetStatLabel}>QUIZZES</Text>
+                  </View>
+                  <View style={community.memberSheetStat}>
+                    <Text style={community.memberSheetStatValue}>{selectedLeaderboardEntry.flashcardReviewCount.toLocaleString()}</Text>
+                    <Text style={community.memberSheetStatLabel}>CARD REVIEWS</Text>
+                  </View>
+                  <View style={community.memberSheetStat}>
+                    <Text style={community.memberSheetStatValue}>{selectedLeaderboardEntry.activeStudyDays30d.toLocaleString()}</Text>
+                    <Text style={community.memberSheetStatLabel}>ACTIVE DAYS · 30D</Text>
+                  </View>
+                </View>
                 {selectedLeaderboardEntry.isMe ? (
                   <Text style={community.memberSheetHelp}>This is your public Connect profile. Keep learning anywhere in WordWiz to grow your Social XP.</Text>
                 ) : selectedConnection?.status === 'accepted' ? (
@@ -1128,6 +1218,7 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
                   </>
                 )}
                 {!selectedLeaderboardEntry.isMe ? (
+                  <>
                   <Pressable
                     disabled={leaderboardActionLoading}
                     onPress={() => Alert.alert(
@@ -1139,11 +1230,30 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
                       ],
                     )}
                     style={[community.memberSheetBlock, leaderboardActionLoading && community.disabledButton]}
-                  >
-                    <Ionicons name="ban-outline" size={17} color="#D9627C" />
-                    <Text style={community.memberSheetBlockText}>Block user</Text>
-                  </Pressable>
-                ) : null}
+                >
+                  <Ionicons name="ban-outline" size={17} color="#D9627C" />
+                  <Text style={community.memberSheetBlockText}>Block user</Text>
+                </Pressable>
+                <Pressable
+                  disabled={leaderboardActionLoading}
+                  onPress={() => Alert.alert(
+                    'Report user',
+                    'What is the reason for this report?',
+                    [
+                      { text: 'Cancel', style: 'cancel' },
+                      { text: 'Harassment', onPress: () => void reportLeaderboardMember('harassment') },
+                      { text: 'Spam', onPress: () => void reportLeaderboardMember('spam') },
+                      { text: 'Inappropriate name', onPress: () => void reportLeaderboardMember('inappropriate_name') },
+                      { text: 'Other', onPress: () => void reportLeaderboardMember('other') },
+                    ],
+                  )}
+                  style={[community.memberSheetReport, leaderboardActionLoading && community.disabledButton]}
+                >
+                  <Ionicons name="flag-outline" size={17} color={COLORS.muted} />
+                  <Text style={community.memberSheetReportText}>Report user</Text>
+                </Pressable>
+                  </>
+              ) : null}
               </>
             ) : null}
           </View>
@@ -1238,9 +1348,6 @@ const community = StyleSheet.create({
   rankRow: { minHeight: 68, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, borderWidth: 1, borderColor: COLORS.border, borderRadius: 18, backgroundColor: COLORS.surface },
   rankRowMe: { borderColor: '#B6DBFF', backgroundColor: '#F3F9FF' },
   rankRowPressed: { opacity: 0.78, transform: [{ scale: 0.992 }] },
-  rankNumber: { width: 30, color: COLORS.purpleDark, fontSize: 15, fontWeight: '900' },
-  rankOneNumber: { width: 30, alignItems: 'center', gap: 1 },
-  rankOneNumberText: { color: '#A8740B', fontSize: 12, fontWeight: '900' },
   rankOneAvatarFrame: { padding: 2, borderRadius: 16, backgroundColor: '#D9A72B', boxShadow: '0 4px 12px rgba(185, 132, 22, 0.22)' },
   rankName: { flex: 1 },
   rankNameText: { color: COLORS.ink, fontSize: 16, fontWeight: '800' },
@@ -1267,6 +1374,10 @@ const community = StyleSheet.create({
   memberSheetClose: { position: 'absolute', top: 13, right: 14, width: 34, height: 34, alignItems: 'center', justifyContent: 'center', borderRadius: 12, backgroundColor: '#F4F1FA' },
   memberSheetName: { marginTop: 7, color: COLORS.ink, fontSize: 22, fontWeight: '900', textAlign: 'center' },
   memberSheetScore: { color: COLORS.muted, fontSize: 13, fontWeight: '800' },
+  memberSheetStats: { width: '100%', flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 7, marginTop: 5, padding: 9, borderRadius: 16, backgroundColor: '#F8F5FF' },
+  memberSheetStat: { minWidth: '28%', flexGrow: 1, alignItems: 'center', paddingHorizontal: 4, paddingVertical: 5 },
+  memberSheetStatValue: { color: COLORS.greenDark, fontSize: 18, fontWeight: '900' },
+  memberSheetStatLabel: { marginTop: 2, color: COLORS.muted, fontSize: 8, fontWeight: '900', letterSpacing: 0.35, textAlign: 'center' },
   memberSheetHelp: { marginTop: 8, color: COLORS.muted, fontSize: 13, lineHeight: 19, fontWeight: '600', textAlign: 'center' },
   memberSheetPrimary: { width: '100%', minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, marginTop: 10, borderRadius: 16, backgroundColor: COLORS.purpleDark },
   memberSheetPrimaryText: { color: COLORS.white, fontSize: 15, fontWeight: '900' },
@@ -1274,6 +1385,8 @@ const community = StyleSheet.create({
   memberSheetNoticeText: { flex: 1, color: COLORS.purpleDark, fontSize: 12, lineHeight: 17, fontWeight: '700' },
   memberSheetBlock: { width: '100%', minHeight: 42, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, marginTop: 6, borderRadius: 14, borderWidth: 1, borderColor: '#F4C6D1', backgroundColor: '#FFF4F6' },
   memberSheetBlockText: { color: '#C94D69', fontSize: 13, fontWeight: '900' },
+  memberSheetReport: { width: '100%', minHeight: 42, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, marginTop: 2, borderRadius: 14 },
+  memberSheetReportText: { color: COLORS.muted, fontSize: 13, fontWeight: '800' },
   nudgePicker: { width: '100%', marginTop: 8, gap: 8 },
   nudgePickerTitle: { color: COLORS.ink, fontSize: 16, fontWeight: '900', textAlign: 'center' },
   nudgePickerHelp: { color: COLORS.muted, fontSize: 12, fontWeight: '600', textAlign: 'center' },

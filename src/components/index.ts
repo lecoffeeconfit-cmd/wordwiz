@@ -17,3 +17,4 @@ export * from './dashboard/ReminderTimeButton';
 export * from './dashboard/DashboardSection';
 export * from './dashboard/LevelRow';
 export * from './navigation/BottomTabs';
+export * from './community/MiniLeaderboardCrest';

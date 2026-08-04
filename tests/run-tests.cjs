@@ -63,6 +63,7 @@ const quiz = loadTsModule('src/utils/quiz.ts');
 const dictionary = loadTsModule('src/services/dictionary.ts');
 const wordnik = loadTsModule('src/services/wordnik.ts');
 const startupCoordinator = loadTsModule('src/services/startupCoordinator.ts');
+const cards = loadTsModule('src/utils/cards.ts');
 
 function makeWord(id, term, definition, reviews = 0) {
   return {
@@ -207,6 +208,16 @@ test('native container JSX does not render raw text nodes', () => {
   });
 
   assert.deepEqual(violations, []);
+});
+
+test('flashcard swipes only claim deliberate horizontal movement', () => {
+  assert.equal(cards.isHorizontalCardGesture(20, 0), true);
+  assert.equal(cards.isHorizontalCardGesture(20, 18), false);
+  assert.equal(cards.isHorizontalCardGesture(13, 0), false);
+  assert.equal(cards.getCardSwipeDirection(-72, 10), 'next');
+  assert.equal(cards.getCardSwipeDirection(72, -10), 'previous');
+  assert.equal(cards.getCardSwipeDirection(42, 0), null);
+  assert.equal(cards.getCardSwipeDirection(72, 60), null);
 });
 
 test('subscription access uses the configured public iOS key and active plus entitlement', () => {
@@ -3131,6 +3142,119 @@ test('Community remains opt-in and keeps social writes behind protected RPCs', (
   assert.match(nudgeFunction, /community_create_nudge/);
   assert.match(nudgeFunction, /EXPO_ACCESS_TOKEN/);
   assert.doesNotMatch(nudgeFunction, /console\.log\([^)]*expo_push_token/i);
+});
+
+test('Stats progress ring uses the current purple magical level icon', () => {
+  const ring = fs.readFileSync(
+    path.join(projectRoot, 'src/components/dashboard/LessonProgressRing.tsx'),
+    'utf8',
+  );
+  const dashboard = fs.readFileSync(path.join(projectRoot, 'src/screens/DashboardScreen.tsx'), 'utf8');
+  const crest = fs.readFileSync(
+    path.join(projectRoot, 'src/components/community/MiniLeaderboardCrest.tsx'),
+    'utf8',
+  );
+
+  assert.match(ring, /currentLevel: \(typeof MASTERY_LEVELS\)\[number\]\['shortTitle'\]/);
+  assert.match(ring, /<LevelMagicIcon level=\{currentLevel\} size=\{35\} variant="progressCircle" \/>/);
+  assert.doesNotMatch(ring, /Ionicons name="school" size=\{31\}/);
+  assert.match(dashboard, /currentLevel=\{masteryLevel\.shortTitle\}/);
+  assert.match(crest, /variant\?: 'filled' \| 'outline' \| 'bare' \| 'progressCircle'/);
+  assert.match(crest, /const accent = isProgressCircle \? COLORS\.purple/);
+  assert.match(crest, /secondaryColor: '#FFD23F'/);
+  assert.match(crest, /progressAura/);
+  assert.match(crest, /isProgressCircle && level === 'Novice'/);
+  assert.match(crest, /<FontAwesome6 name="star" solid/);
+});
+
+test('Streaks card omits only the top-right gold sparkle', () => {
+  const dashboard = fs.readFileSync(
+    path.join(projectRoot, 'src/screens/DashboardScreen.tsx'),
+    'utf8',
+  );
+
+  assert.doesNotMatch(
+    dashboard,
+    /streakSparkleLayer|streakSparkleLarge|streakSparkleFloat|streakSparklePulse/,
+  );
+  assert.match(dashboard, /<View style=\{styles\.streakCard\}>/);
+  assert.match(dashboard, /styles\.streakCurrentIcon/);
+  assert.match(dashboard, /styles\.streakBestIcon/);
+});
+
+test('Community handles the disabled state, push opt-out, reports, and declined reconnections', () => {
+  const screen = fs.readFileSync(
+    path.join(projectRoot, 'src/screens/CommunityScreen.tsx'),
+    'utf8',
+  );
+  const leaderboardCrest = fs.readFileSync(
+    path.join(projectRoot, 'src/components/community/MiniLeaderboardCrest.tsx'),
+    'utf8',
+  );
+  const appContent = fs.readFileSync(path.join(projectRoot, 'src/application/AppContent.tsx'), 'utf8');
+  const reliabilityMigration = fs.readFileSync(
+    path.join(projectRoot, 'supabase/migrations/20260804000000_community_reliability.sql'),
+    'utf8',
+  );
+  const visibilityMigration = fs.readFileSync(
+    path.join(projectRoot, 'supabase/migrations/20260804000001_community_profile_visibility.sql'),
+    'utf8',
+  );
+  const activityStatsMigration = fs.readFileSync(
+    path.join(projectRoot, 'supabase/migrations/20260804000002_community_public_activity_stats.sql'),
+    'utf8',
+  );
+  const masterTierMigration = fs.readFileSync(
+    path.join(projectRoot, 'supabase/migrations/20260804000003_community_master_five_percent.sql'),
+    'utf8',
+  );
+  const communityDocs = fs.readFileSync(path.join(projectRoot, 'docs/community.md'), 'utf8');
+
+  assert.match(screen, /context && !context\.enabled/);
+  assert.match(appContent, /context\.enabled \? context\.unreadNudges : 0/);
+  assert.match(screen, /deactivateCommunityPushTokens/);
+  assert.match(screen, /reportCommunityUser/);
+  assert.doesNotMatch(screen, /<Text style=\{community\.code\}>\{context\?\.profile\?\.friendCode\}<\/Text>\s*<Text style=\{community\.code\}>/);
+  assert.match(reliabilityMigration, /v_existing_status = 'declined'/);
+  assert.match(reliabilityMigration, /status = 'pending'/);
+  assert.match(visibilityMigration, /profile_visible boolean not null default true/);
+  assert.match(visibilityMigration, /'wordCount', word_count/);
+  assert.match(visibilityMigration, /from public\.words/);
+  assert.match(screen, /Show my Connect profile/);
+  assert.match(screen, /<MiniLeaderboardCrest[\s\S]*rank=\{context\?\.rank\}[\s\S]*level=\{context\?\.level/);
+  assert.match(screen, /<MiniLeaderboardCrest[\s\S]*rank=\{entry\.rank\}[\s\S]*level=\{entry\.level\}/);
+  assert.match(screen, /<LevelMagicIcon level=\{selectedLevel\} size=\{52\} variant="bare" color=\{COLORS\.purple\}/);
+  assert.match(screen, /function LevelPresentationIcon/);
+  assert.match(screen, /level === 'Adept'/);
+  assert.match(screen, /<LevelPresentationIcon level=\{entry\.level\} size=\{12\}/);
+  assert.match(leaderboardCrest, /rank === 1/);
+  assert.match(leaderboardCrest, /rank === 2/);
+  assert.match(leaderboardCrest, /rank === 3/);
+  assert.match(leaderboardCrest, /book-outline/);
+  assert.match(leaderboardCrest, /First place/);
+  assert.match(leaderboardCrest, /Rank \$\{rank\}, \$\{level\}/);
+  assert.match(leaderboardCrest, /wand-sparkles/);
+  assert.match(leaderboardCrest, /hat-wizard/);
+  assert.match(leaderboardCrest, /Adept:\s*\{[\s\S]*icon: 'scroll'/);
+  assert.match(leaderboardCrest, /animation: 'rune-shimmer'/);
+  assert.match(leaderboardCrest, /hasRune: true/);
+  assert.match(leaderboardCrest, /name="asterisk"/);
+  assert.match(leaderboardCrest, /wand-magic-sparkles/);
+  assert.match(leaderboardCrest, /variant\?: 'filled' \| 'outline' \| 'bare'/);
+  assert.match(leaderboardCrest, /const accent = isProgressCircle \? COLORS\.purple/);
+  assert.match(screen, /level=\{entry\.level\}/);
+  assert.match(screen, /memberSheetStats/);
+  assert.match(screen, /achievementsUnlocked/);
+  assert.match(screen, /activeStudyDays30d/);
+  assert.match(activityStatsMigration, /community_public_activity_stats/);
+  assert.match(activityStatsMigration, /'achievementsUnlocked'/);
+  assert.match(activityStatsMigration, /'activeStudyDays30d'/);
+  assert.match(activityStatsMigration, /revoke all on function public\.community_public_activity_stats\(uuid\) from public, anon, authenticated/);
+  assert.match(screen, /Master: 'Next 5%'/);
+  assert.match(masterTierMigration, /ceil\(p_total \* 0\.05\)/);
+  assert.match(masterTierMigration, /return 'Master'/);
+  assert.match(communityDocs, /standard quiz attempt earns `score × 3`/);
+  assert.match(communityDocs, /achievements unlocked/);
 });
 
 test('startup coordinator always reaches a visible terminal state and supports retry', () => {

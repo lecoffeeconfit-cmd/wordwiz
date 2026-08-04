@@ -12,6 +12,7 @@ export type CommunityProfile = {
   displayName: string;
   friendCode: string;
   avatarPath: string | null;
+  profileVisible: boolean;
   leaderboardOptIn: boolean;
   friendRequestsEnabled: boolean;
   nudgesEnabled: boolean;
@@ -33,6 +34,11 @@ export type CommunityLeaderboardEntry = {
   publicId: string;
   displayName: string;
   avatarPath: string | null;
+  wordCount: number;
+  achievementsUnlocked: number;
+  quizCount: number;
+  flashcardReviewCount: number;
+  activeStudyDays30d: number;
   xp: number;
   level: CommunityLevel;
   isMe: boolean;
@@ -62,8 +68,10 @@ function messageFor(error: unknown) {
   if (message.includes('display_name_unavailable')) return 'That display name is already in use.';
   if (message.includes('invalid_display_name')) return 'Use 3–24 letters, numbers, spaces, hyphens, or underscores.';
   if (message.includes('friend_code_not_available')) return 'That friend code is unavailable. Check it and try again.';
+  if (message.includes('friend_request_not_available')) return 'That learner is not accepting friend requests right now.';
   if (message.includes('cannot_add_yourself')) return 'That is your own friend code.';
   if (message.includes('friend_request_already_exists')) return 'A request already exists for this friend.';
+  if (message.includes('relationship_unavailable')) return 'This connection is unavailable.';
   if (message.includes('nudge_rate_limited')) return 'You have sent the maximum number of nudges for now.';
   if (message.includes('friendship_required')) return 'You can nudge accepted friends only.';
   if (message.includes('avatar_not_uploaded')) return 'Your photo uploaded, but could not be verified. Please try again.';
@@ -98,6 +106,7 @@ export async function getCommunityLeaderboard(
 
 export async function setupCommunityProfile(input: {
   displayName: string;
+  profileVisible: boolean;
   leaderboardOptIn: boolean;
   friendRequestsEnabled: boolean;
   nudgesEnabled: boolean;
@@ -105,6 +114,7 @@ export async function setupCommunityProfile(input: {
 }) {
   return rpc<CommunityProfile>('community_setup_profile', {
     p_name: input.displayName,
+    p_profile_visible: input.profileVisible,
     p_leaderboard: input.leaderboardOptIn,
     p_requests: input.friendRequestsEnabled,
     p_nudges: input.nudgesEnabled,

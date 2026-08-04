@@ -1,10 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AppState, FlatList, PanResponder, Pressable, ScrollView, Text, View } from 'react-native';
+import { AppState, PanResponder, Pressable, ScrollView, Text, View } from 'react-native';
 import { COLORS } from '../constants/theme';
 import type { AnalyticsData, LegalPage, QuizAnswer, QuizProgress, QuizQuestion, ReminderSettings, SortMode, Word } from '../types';
 import { styles } from '../styles';
-import { buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, formatWordAddedDate, formatWordFlaggedDate, getCompleteFlashcardDefinition, getDayKey, getNewStudyWords, getRecentDays, getStreakMessage, getStreakWeek, getStudySets, getWordLearningContexts, getWordMastery, getWordMasteryCategoryForWord, isPersonalLibraryWord, NEW_STUDY_GROUP, shuffle, sortWordsAlphabetically, WORD_MASTERY_CATEGORIES, type WordMasteryCategoryId } from '../utils';
+import { buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, formatWordAddedDate, formatWordFlaggedDate, getCardSwipeDirection, getCompleteFlashcardDefinition, getDayKey, getNewStudyWords, getRecentDays, getStreakMessage, getStreakWeek, getStudySets, getWordLearningContexts, getWordMastery, getWordMasteryCategoryForWord, isHorizontalCardGesture, isPersonalLibraryWord, NEW_STUDY_GROUP, shuffle, sortWordsAlphabetically, WORD_MASTERY_CATEGORIES, type WordMasteryCategoryId } from '../utils';
 import { DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, ProgressFill, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, SpeakButton, SpeakDefinitionButton, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 
 type CardsStudyGroupId = WordMasteryCategoryId | 'new' | 'flagged' | 'sets' | `set:${string}`;
@@ -429,7 +429,7 @@ export function CardsScreen({
   );
 
   function nextCard(remembered: boolean) {
-    if (!current) return;
+    if (!current || studyWords.length === 0) return;
     const durationSeconds = getActiveCardDurationSeconds();
     onReview(current.id, remembered, durationSeconds);
     setShowAnswer(false);
@@ -438,6 +438,8 @@ export function CardsScreen({
   }
 
   const browseCard = useCallback((direction: 'previous' | 'next') => {
+    if (studyWords.length === 0) return;
+
     setShowAnswer(false);
     setCardIndex((index) => {
       const nextIndex = direction === 'next' ? index + 1 : index - 1;
@@ -453,22 +455,18 @@ export function CardsScreen({
         // horizontal drags across a multi-card deck become swipe navigation.
         onMoveShouldSetPanResponder: (_event, gesture) =>
           studyWords.length > 1 &&
-          Math.abs(gesture.dx) > 14 &&
-          Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.25,
+          isHorizontalCardGesture(gesture.dx, gesture.dy),
         // Capture the horizontal drag before the tappable card handles it,
         // while leaving all taps and vertical ScrollView gestures alone.
         onMoveShouldSetPanResponderCapture: (_event, gesture) =>
           studyWords.length > 1 &&
-          Math.abs(gesture.dx) > 14 &&
-          Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.25,
+          isHorizontalCardGesture(gesture.dx, gesture.dy),
+        // Once a deliberate horizontal swipe is claimed, do not let the
+        // surrounding vertical ScrollView interrupt it before release.
+        onPanResponderTerminationRequest: () => false,
         onPanResponderRelease: (_event, gesture) => {
-          if (
-            Math.abs(gesture.dx) < 56 ||
-            Math.abs(gesture.dx) <= Math.abs(gesture.dy) * 1.25
-          ) {
-            return;
-          }
-          browseCard(gesture.dx < 0 ? 'next' : 'previous');
+          const direction = getCardSwipeDirection(gesture.dx, gesture.dy);
+          if (direction) browseCard(direction);
         },
       }),
     [browseCard, studyWords.length],
