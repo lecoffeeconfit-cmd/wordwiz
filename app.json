@@ -28,15 +28,15 @@
         "expo-image-picker",
         {
           "photosPermission": "Allow $(PRODUCT_NAME) to access a photo for your Community profile.",
-          "microphonePermission": false
+          "microphonePermission": "WordWiz uses the microphone only when you choose voice input, so it can transcribe the spoken word and look up its definition."
         }
       ],
       "expo-web-browser",
       [
         "expo-speech-recognition",
         {
-          "microphonePermission": "Allow $(PRODUCT_NAME) to use your microphone for dictation.",
-          "speechRecognitionPermission": "Allow $(PRODUCT_NAME) to turn your speech into words.",
+          "microphonePermission": "WordWiz uses the microphone only when you choose voice input, so it can transcribe the spoken word and look up its definition.",
+          "speechRecognitionPermission": "WordWiz uses speech recognition only when you choose voice input, so it can convert your spoken word into text for lookup.",
           "androidSpeechServicePackages": [
             "com.google.android.googlequicksearchbox"
           ]
@@ -65,7 +65,9 @@
         "ITSAppUsesNonExemptEncryption": false,
         "NSAppTransportSecurity": {
           "NSAllowsArbitraryLoads": false
-        }
+        },
+        "NSMicrophoneUsageDescription": "WordWiz uses the microphone only when you choose voice input, so it can transcribe the spoken word and look up its definition.",
+        "NSSpeechRecognitionUsageDescription": "WordWiz uses speech recognition only when you choose voice input, so it can convert your spoken word into text for lookup."
       },
       "buildNumber": "27"
     },
