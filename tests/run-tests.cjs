@@ -214,8 +214,8 @@ test('flashcard swipes only claim deliberate horizontal movement', () => {
   assert.equal(cards.isHorizontalCardGesture(20, 0), true);
   assert.equal(cards.isHorizontalCardGesture(20, 18), false);
   assert.equal(cards.isHorizontalCardGesture(13, 0), false);
-  assert.equal(cards.getCardSwipeDirection(-72, 10), 'next');
-  assert.equal(cards.getCardSwipeDirection(72, -10), 'previous');
+  assert.equal(cards.getCardSwipeDirection(-72, 10), 'previous');
+  assert.equal(cards.getCardSwipeDirection(72, -10), 'next');
   assert.equal(cards.getCardSwipeDirection(42, 0), null);
   assert.equal(cards.getCardSwipeDirection(72, 60), null);
 });
@@ -3144,6 +3144,36 @@ test('Community remains opt-in and keeps social writes behind protected RPCs', (
   assert.doesNotMatch(nudgeFunction, /console\.log\([^)]*expo_push_token/i);
 });
 
+test('Community avatars are moderated server-side before reaching public storage', () => {
+  const communityService = fs.readFileSync(
+    path.join(projectRoot, 'src/services/community.ts'),
+    'utf8',
+  );
+  const migration = fs.readFileSync(
+    path.join(projectRoot, 'supabase/migrations/20260816000000_community_avatar_moderation.sql'),
+    'utf8',
+  );
+  const moderationFunction = fs.readFileSync(
+    path.join(projectRoot, 'supabase/functions/moderate-community-avatar/index.ts'),
+    'utf8',
+  );
+
+  assert.match(communityService, /base64:\s*true/);
+  assert.match(communityService, /functions\.invoke\('moderate-community-avatar'/);
+  assert.doesNotMatch(communityService, /storage\.from\('community-avatars'\)\.upload/);
+  assert.match(migration, /drop policy if exists "community avatar owner upload"/i);
+  assert.match(migration, /revoke all on function public\.community_set_avatar\(text\) from authenticated/i);
+  assert.match(migration, /community_avatar_moderation_attempts/i);
+  assert.match(migration, /grant execute on function public\.community_reserve_avatar_moderation\(uuid\) to service_role/i);
+  assert.match(moderationFunction, /OPENAI_API_KEY/);
+  assert.match(moderationFunction, /https:\/\/api\.openai\.com\/v1\/moderations/);
+  assert.match(moderationFunction, /omni-moderation-latest/);
+  assert.match(moderationFunction, /if \(flagged\) return json\(\{ error: 'avatar_rejected' \}, 422\)/);
+  assert.match(moderationFunction, /auth\.getUser\(\)/);
+  assert.match(moderationFunction, /admin\.storage\.from\(AVATAR_BUCKET\)\.upload/);
+  assert.doesNotMatch(moderationFunction, /console\.(log|error).*OPENAI_API_KEY/i);
+});
+
 test('Stats progress ring uses the current purple magical level icon', () => {
   const ring = fs.readFileSync(
     path.join(projectRoot, 'src/components/dashboard/LessonProgressRing.tsx'),
@@ -3244,6 +3274,14 @@ test('Community handles the disabled state, push opt-out, reports, and declined 
   assert.match(leaderboardCrest, /const accent = isProgressCircle \? COLORS\.purple/);
   assert.match(screen, /level=\{entry\.level\}/);
   assert.match(screen, /memberSheetStats/);
+  assert.match(screen, /onPress=\{\(\) => setSelectedLeaderboardEntry\(entry\)\}/);
+  assert.match(screen, /visible=\{Boolean\(selectedLeaderboardEntry\)\}/);
+  assert.match(screen, /function formatPublicStat\(value: number \| null \| undefined\)/);
+  assert.match(screen, /formatPublicStat\(selectedLeaderboardEntry\.wordCount\)/);
+  assert.match(screen, /formatPublicStat\(selectedLeaderboardEntry\.achievementsUnlocked\)/);
+  assert.match(screen, /formatPublicStat\(selectedLeaderboardEntry\.quizCount\)/);
+  assert.match(screen, /formatPublicStat\(selectedLeaderboardEntry\.flashcardReviewCount\)/);
+  assert.match(screen, /formatPublicStat\(selectedLeaderboardEntry\.activeStudyDays30d\)/);
   assert.match(screen, /achievementsUnlocked/);
   assert.match(screen, /activeStudyDays30d/);
   assert.match(activityStatsMigration, /community_public_activity_stats/);
@@ -3278,6 +3316,51 @@ test('startup coordinator always reaches a visible terminal state and supports r
   assert.equal(ready.status, 'ready');
 });
 
+test('leaderboard summaries stay paginated and social writes remain collision-safe', () => {
+  const scaleMigration = fs.readFileSync(
+    path.join(projectRoot, 'supabase/migrations/20260807000000_community_leaderboard_scale.sql'),
+    'utf8',
+  );
+  const communityMigration = fs.readFileSync(
+    path.join(projectRoot, 'supabase/migrations/20260730000005_wordwiz_community.sql'),
+    'utf8',
+  );
+
+  assert.match(scaleMigration, /page as \([\s\S]*?limit least\(greatest\(p_limit, 1\), 50\)/);
+  assert.match(scaleMigration, /from page[\s\S]*?community_public_activity_stats\(page\.user_id\)/);
+  assert.match(scaleMigration, /community_profiles_visible_leaderboard_idx/);
+  assert.match(communityMigration, /unique \(pair_low_id, pair_high_id\)/);
+  assert.match(communityMigration, /idempotency_key uuid not null unique/);
+});
+
+test('Help & Feedback is isolated from startup and loads remote reports only on demand', () => {
+  const appContent = fs.readFileSync(
+    path.join(projectRoot, 'src/application/AppContent.tsx'),
+    'utf8',
+  );
+  const feedbackScreen = fs.readFileSync(
+    path.join(projectRoot, 'src/screens/FeedbackScreen.tsx'),
+    'utf8',
+  );
+  const adminScreen = fs.readFileSync(
+    path.join(projectRoot, 'src/screens/AdminScreen.tsx'),
+    'utf8',
+  );
+  const feedbackService = fs.readFileSync(
+    path.join(projectRoot, 'src/services/feedback.ts'),
+    'utf8',
+  );
+
+  assert.match(appContent, /if \(activeTab === 'feedback'\)/);
+  assert.match(feedbackScreen, /useState<'compose' \| 'reports'>\('compose'\)/);
+  assert.match(feedbackScreen, /if \(mode === 'reports'\) void loadReports\(\)/);
+  assert.match(feedbackScreen, /catch \(error\) \{ Alert\.alert\('Could not load reports'/);
+  assert.match(adminScreen, /adminSection === 'feedback' \? <AdminFeedbackPanel/);
+  assert.doesNotMatch(feedbackService, /^import .*expo-(application|device)/m);
+  assert.match(feedbackService, /import\('expo-application'\)\.catch\(\(\) => null\)/);
+  assert.match(feedbackService, /import\('expo-device'\)\.catch\(\(\) => null\)/);
+});
+
 test('release startup keeps optional Connect native modules and remote work off the import path', () => {
   const appContent = fs.readFileSync(
     path.join(projectRoot, 'src/application/AppContent.tsx'),
@@ -3297,4 +3380,76 @@ test('release startup keeps optional Connect native modules and remote work off 
   assert.doesNotMatch(appContent, /preventAutoHideAsync/);
   assert.match(appContent, /finally \{[\s\S]*void hideNativeSplash\(\)/);
   assert.match(appEntry, /componentDidCatch/);
+});
+
+test('Community safety flow uses consent, content reporting, and server-only moderator actions', () => {
+  const communityScreen = fs.readFileSync(path.join(projectRoot, 'src/screens/CommunityScreen.tsx'), 'utf8');
+  const communityService = fs.readFileSync(path.join(projectRoot, 'src/services/community.ts'), 'utf8');
+  const moderatorFunction = fs.readFileSync(path.join(projectRoot, 'supabase/functions/moderate-community-avatar/index.ts'), 'utf8');
+  const adminFunction = fs.readFileSync(path.join(projectRoot, 'supabase/functions/admin-dashboard/index.ts'), 'utf8');
+  const migration = fs.readFileSync(path.join(projectRoot, 'supabase/migrations/20260817000000_community_safety_operations.sql'), 'utf8');
+
+  assert.match(communityScreen, /loadMoreLeaderboard/);
+  assert.match(communityScreen, /More learners appear as you scroll/);
+  assert.doesNotMatch(communityScreen, /Page \{page \+ 1\}/);
+  assert.match(communityScreen, /Inappropriate photo/);
+  assert.match(communityService, /confirmAvatarModerationNotice/);
+  assert.match(communityService, /moderationNoticeAccepted: true/);
+  assert.match(moderatorFunction, /avatar_moderation_consent_required/);
+  assert.match(migration, /inappropriate_avatar/);
+  assert.match(migration, /report_count/);
+  assert.match(adminFunction, /community_remove_avatar/);
+  assert.match(adminFunction, /adminClient\.storage\.from\('community-avatars'\)\.remove/);
+});
+
+test('Word Collectors stays separate from Social XP and protects qualifying counts and coarse location', () => {
+  const screen = fs.readFileSync(path.join(projectRoot, 'src/screens/CommunityScreen.tsx'), 'utf8');
+  const communityService = fs.readFileSync(path.join(projectRoot, 'src/services/community.ts'), 'utf8');
+  const appConfig = fs.readFileSync(path.join(projectRoot, 'app.json'), 'utf8');
+  const migration = fs.readFileSync(
+    path.join(projectRoot, 'supabase/migrations/20260817000001_word_collectors.sql'),
+    'utf8',
+  );
+
+  assert.match(screen, /leaderboardMode.*'social' \| 'collectors'/);
+  assert.match(screen, /Word Collectors/);
+  assert.match(screen, /WORD_COLLECTOR_PERIODS.*'week'.*'month'.*'all_time'/);
+  assert.match(screen, /WORD_COLLECTOR_AUDIENCES.*'all'.*'nearby'.*'state'.*'global'/);
+  assert.match(screen, /My Rank/);
+  assert.match(screen, /Enable Location/);
+  assert.match(screen, /Open Settings/);
+  assert.match(screen, /entry\.rank === 1 \? '🥇'/);
+  assert.match(screen, /loadMoreWordCollectors/);
+  assert.match(communityService, /import\('expo-location'\)/);
+  assert.doesNotMatch(communityService, /^import .*expo-location/m);
+  assert.match(communityService, /word_collectors_set_my_location/);
+  assert.match(communityService, /area-\$\{Math\.floor\(\(latitude \+ 90\) \/ 2\)\}/);
+  assert.match(appConfig, /"expo-location"/);
+  assert.match(migration, /create table if not exists public\.word_collector_entries/);
+  assert.match(migration, /primary key \(user_id, normalized_term\)/);
+  assert.match(migration, /word_collector_normalize_term/);
+  assert.match(migration, /on conflict \(user_id, normalized_term\) do nothing/);
+  assert.match(migration, /librarySource'.*, 'personal'\) = 'collection'/);
+  assert.match(migration, /create table if not exists public\.word_collector_regions/);
+  assert.match(migration, /alter table public\.word_collector_entries enable row level security/);
+  assert.match(migration, /alter table public\.word_collector_regions enable row level security/);
+  assert.match(migration, /word_collectors_leaderboard/);
+  assert.match(migration, /limit least\(greatest\(p_limit, 1\), 50\)/);
+  assert.match(migration, /word_collectors_my_rank/);
+  assert.doesNotMatch(migration, /\b(latitude|longitude)\b/i);
+  assert.doesNotMatch(migration, /community_leaderboard_level/);
+});
+
+test('onboarding waits for the signed-in user cache and does not replay on login', () => {
+  const appContent = fs.readFileSync(
+    path.join(projectRoot, 'src/application/AppContent.tsx'),
+    'utf8',
+  );
+
+  assert.match(appContent, /onboardingCacheState[\s\S]*'loading' \| 'ready' \| 'unavailable'/);
+  assert.match(appContent, /setOnboardingCacheState\('loading'\)/);
+  assert.match(appContent, /setOnboardingCacheUserId\(userId\)/);
+  assert.match(appContent, /onboardingCacheUserId === currentUser\?\.id/);
+  assert.match(appContent, /!isOnboardingCacheReadyForUser/);
+  assert.match(appContent, /onboardingCacheState === 'ready' &&/);
 });

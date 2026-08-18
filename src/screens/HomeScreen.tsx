@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, FlatList, Image, Pressable, ScrollView, Text, View } from 'react-native';
+import { Animated, FlatList, Image, Pressable, ScrollView, Text, useWindowDimensions, View } from 'react-native';
 import { COLORS } from '../constants/theme';
 import type { AnalyticsData, LegalPage, QuizAnswer, QuizProgress, QuizQuestion, ReminderSettings, SortMode, Word } from '../types';
 import { styles } from '../styles';
@@ -48,6 +48,10 @@ export function HomeScreen({
   complimentaryAccess: { daysRemaining: number; expiresAt: string | null } | null;
   showFreePlanNotice: boolean;
 }) {
+  const { height: windowHeight } = useWindowDimensions();
+  const heroAddedHeight = Math.max(12, Math.min(18, Math.round(windowHeight * 0.018)));
+  const heroBrandGap = Math.max(4, Math.min(6, Math.round(heroAddedHeight / 3)));
+  const heroBottomBreathingRoom = heroAddedHeight - heroBrandGap;
   const [achievementCarouselWidth, setAchievementCarouselWidth] = useState(0);
   const [showAllReviewWords, setShowAllReviewWords] = useState(false);
   const [reviewWordPage, setReviewWordPage] = useState(0);
@@ -220,7 +224,7 @@ export function HomeScreen({
         contentContainerStyle={styles.homeContent}
         showsVerticalScrollIndicator={false}
       >
-      <View style={styles.homeHero}>
+      <View style={[styles.homeHero, { minHeight: 365 + heroAddedHeight }]}>
         <View style={styles.heroCloudOne} />
         <View style={styles.heroCloudTwo} />
         <View style={styles.heroCloudThree} />
@@ -244,15 +248,31 @@ export function HomeScreen({
         <View style={styles.paperPlane}>
           <Ionicons name="paper-plane" size={28} color={COLORS.white} />
         </View>
-        <View style={styles.heroGreeting}>
-          <Text maxFontSizeMultiplier={1.25} style={styles.homeTitle}>{getGreeting()}, WordWiz</Text>
+        <View
+          style={[
+            styles.heroGreeting,
+            { bottom: 47 + heroBottomBreathingRoom },
+          ]}
+        >
+          <Text
+            accessibilityLabel={`${getGreeting()}, WordWiz`}
+            maxFontSizeMultiplier={1.25}
+            style={styles.homeTitle}
+          >
+            {getGreeting()},{'\n'}
+            <Text style={styles.homeBrandTitle}>WordWiz</Text>
+            <Text style={styles.homeBrandAccent}> ✦</Text>
+          </Text>
           <View style={styles.homeSubtitleRow}>
             {hasProgressCelebration ? (
               <Animated.View style={{ opacity: homeProgressSparkle }}>
                 <Ionicons name="sparkles" size={13} color="#D39A16" />
               </Animated.View>
             ) : null}
-            <Text maxFontSizeMultiplier={1.2} style={styles.homeSubtitle}>
+            <Text
+              maxFontSizeMultiplier={1.2}
+              style={[styles.homeSubtitle, { marginTop: 7 + heroBrandGap }]}
+            >
               {homeProgressSummary}
             </Text>
           </View>

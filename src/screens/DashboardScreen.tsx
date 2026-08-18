@@ -12,6 +12,7 @@ import { styles } from '../styles';
 import { DEFAULT_TIME_BASED_LEARNING_SETTINGS, MASTERY_LEVELS, buildAchievements, buildQuiz, calculateStreakStats, FLUENT_RECALL_SECONDS, formatReminderTime, formatStudyTime, getDayKey, getDueReviewWords, getHeroProgressColor, getLongTermRetention, getMasteryLevel, getMasteryLevelProgress, getNextMasteryLevel, getOmegaTestAttempts, getOmegaTestStatus, getProgressColor, getProgressPaleColor, getQuizAttemptKind, getQuizFeedbackByWord, getQuizFeedbackSummary, getQuizRecallPaceByQuestionType, getQuizRecallPaceByWord, getQuizResponseSignalSummary, getQuizRetrievalProfile, getRecentDays, getRecentStreakLengths, getStreakMessage, getStreakMilestone, getStreakWeek, getWordLearningSignalScores, getWordMastery, getWordMasteryCategory, getWordMasteryCategoryForWord, getWordMasteryProgress, isCompletedOmegaTestAttempt, normalizeQuestionTypePreferences, normalizeTimeBasedLearningSettings, shuffle } from '../utils';
 import { CompactPagination, DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, ProgressFill, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 import { LessonProgressRing } from '../components/dashboard/LessonProgressRing';
+import { CommunityGuidelinesModal } from '../modals';
 import { useSubscription } from '../subscription/SubscriptionProvider';
 import { type StatsSectionInteraction, validatePassword } from '../services';
 
@@ -191,6 +192,7 @@ export function DashboardScreen({
   onOpenAdmin,
   onOpenOnboardingGuide,
   onOpenPlus,
+  onOpenFeedback,
   onTrackStatsSectionInteraction,
 }: {
   words: Word[];
@@ -222,6 +224,7 @@ export function DashboardScreen({
   onOpenAdmin?: () => void;
   onOpenOnboardingGuide: () => void;
   onOpenPlus: () => void;
+  onOpenFeedback: () => void;
   onTrackStatsSectionInteraction: (section: StatsSectionInteraction) => void;
 }) {
   const subscription = useSubscription();
@@ -229,6 +232,7 @@ export function DashboardScreen({
   const [newPassword, setNewPassword] = useState('');
   const [passwordConfirmation, setPasswordConfirmation] = useState('');
   const [isChangingPassword, setIsChangingPassword] = useState(false);
+  const [communityGuidelinesOpen, setCommunityGuidelinesOpen] = useState(false);
   const plusEntitlement = subscription.customerInfo?.entitlements.active.Plus;
   const isComplimentary = subscription.accessSource === 'complimentary';
   const isSubscribed = subscription.accessSource === 'subscription';
@@ -3259,6 +3263,21 @@ export function DashboardScreen({
         </Pressable>
       ) : null}
 
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Open Help and Feedback"
+        onPress={onOpenFeedback}
+        style={({ pressed }) => [styles.helpFeedbackCard, pressed && styles.pressed]}
+      >
+        <View style={styles.helpFeedbackIcon}><Ionicons name="help-buoy-outline" size={22} color={COLORS.purpleDark} /></View>
+        <View style={styles.helpFeedbackCopy}>
+          <Text style={styles.helpFeedbackLabel}>SUPPORT</Text>
+          <Text style={styles.helpFeedbackTitle}>Help & Feedback</Text>
+          <Text style={styles.helpFeedbackText}>Report an issue, suggest an idea, or check on your reports.</Text>
+        </View>
+        <Ionicons name="chevron-forward" size={19} color={COLORS.purpleDark} />
+      </Pressable>
+
       <View
         style={[
           styles.passwordSecurityCard,
@@ -3382,6 +3401,7 @@ export function DashboardScreen({
           </Text>
         </View>
         <View style={styles.legalLinkStack}>
+          <LegalLink label="Community guidelines" onPress={() => setCommunityGuidelinesOpen(true)} />
           <LegalLink label="Terms" onPress={() => onOpenLegal('terms')} />
           <LegalLink label="Privacy" onPress={() => onOpenLegal('privacy')} />
         </View>
@@ -3397,6 +3417,7 @@ export function DashboardScreen({
       analytics={analytics}
       onDismiss={() => setMasteryOverviewWordId(null)}
     />
+    <CommunityGuidelinesModal visible={communityGuidelinesOpen} onClose={() => setCommunityGuidelinesOpen(false)} />
     </>
   );
 }

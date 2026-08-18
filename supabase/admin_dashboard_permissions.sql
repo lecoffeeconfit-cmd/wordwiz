@@ -11,6 +11,8 @@ grant select on table
   public.card_reviews,
   public.subscription_entitlements,
   public.reminder_settings
+  , public.feedback_reports
+  , public.feedback_messages
 to service_role;
 
 grant select, insert, update on table

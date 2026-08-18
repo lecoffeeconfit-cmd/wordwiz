@@ -36,6 +36,7 @@ export function CardsScreen({
   onReview,
   onToggleFlag,
   onOpenStudySetBuilder,
+  onReportIncorrectInfo,
 }: {
   words: Word[];
   analytics: AnalyticsData;
@@ -49,6 +50,7 @@ export function CardsScreen({
   ) => void;
   onToggleFlag: (wordId: string) => void;
   onOpenStudySetBuilder: () => void;
+  onReportIncorrectInfo?: (word: Word, section: string) => void;
 }) {
   const [cardIndex, setCardIndex] = useState(0);
   const [showAnswer, setShowAnswer] = useState(false);
@@ -776,7 +778,7 @@ export function CardsScreen({
                   Full meaning: {current.definition}
                 </Text>
               )}
-              <WordInfoPanel word={current} onEdit={onEditWord} />
+              <WordInfoPanel word={current} onEdit={onEditWord} onReportIncorrectInfo={onReportIncorrectInfo} />
               <View style={styles.exampleBox}>
                 <Ionicons
                   name="chatbox-ellipses-outline"

@@ -46,7 +46,7 @@ export function LegalModal({
             </View>
             <Text style={styles.legalTitle}>{title}</Text>
             <Text style={styles.legalSubtitle}>{subtitle}</Text>
-            <Text style={styles.legalDate}>Last updated June 19, 2026</Text>
+            <Text style={styles.legalDate}>Last updated August 17, 2026</Text>
           </View>
 
           {isTerms ? <TermsContent /> : <PrivacyContent />}
@@ -112,6 +112,14 @@ function PrivacyContent() {
       <LegalSection
         title="Automatic definitions"
         body="If you ask WordWiz to automatically define a word, that word is sent to external dictionary and word-history services to fetch definitions, examples, pronunciation, synonyms, antonyms, and origin information when available."
+      />
+      <LegalSection
+        title="Community profile photos and safety screening"
+        body="If you choose a Community profile photo, WordWiz asks for your permission before sending that photo to OpenAI solely to screen it for harmful content. The photo is saved for your Community profile only when it passes that safety check."
+      />
+      <LegalSection
+        title="Word Collectors location"
+        body="If you choose Nearby or State in Word Collectors, WordWiz may ask for foreground approximate location access. Your device derives a broad competition area and optional state-level group; WordWiz does not store exact coordinates, an address, or distance to other learners, and never tracks location in the background."
       />
       <LegalSection
         title="Notifications"

@@ -6,6 +6,7 @@ export * from './cloudData';
 export * from './community';
 export * from './dictionary';
 export * from './errorReporting';
+export * from './feedback';
 export * from './freeWordUsage';
 export * from './notifications';
 export * from './revenueCat';

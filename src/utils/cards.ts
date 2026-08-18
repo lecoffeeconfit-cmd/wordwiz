@@ -24,5 +24,5 @@ export function getCardSwipeDirection(
     return null;
   }
 
-  return dx < 0 ? 'next' : 'previous';
+  return dx > 0 ? 'next' : 'previous';
 }

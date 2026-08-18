@@ -1,5 +1,6 @@
 import { supabase } from './supabase';
 import { env } from '../config/env';
+import type { FeedbackCategory, FeedbackMessage, FeedbackPriority, FeedbackReport, FeedbackStatus } from './feedback';
 
 export type AdminAccess = 'free' | 'complimentary' | 'plus';
 export type AdminReportingRange = 'today' | '7d' | '30d' | 'all';
@@ -118,7 +119,7 @@ export type AdminCommunityInsights = {
     nudgesReceived: number;
   }>;
   nudgeTemplates: Array<{ messageKey: string; sends: number }>;
-  reports: Array<{ id: string; reportedUserId: string; displayName: string; reason: string; status: 'open' | 'resolved'; createdAt: string }>;
+  reports: Array<{ id: string; reportedUserId: string; displayName: string; reason: string; status: 'open' | 'resolved'; createdAt: string; reportCount: number; oldestCreatedAt: string }>;
 };
 
 export type AdminDashboardData = {
@@ -146,7 +147,39 @@ export type AdminUserAction =
   | 'delete_user'
   | 'community_disable_profile'
   | 'community_restore_profile'
-  | 'community_resolve_reports';
+  | 'community_resolve_reports'
+  | 'community_remove_avatar';
+
+export type AdminFeedbackReport = FeedbackReport & {
+  userId: string;
+  userName: string | null;
+  userEmail: string | null;
+  messages: FeedbackMessage[];
+};
+
+export async function fetchAdminFeedback(filters: {
+  status?: FeedbackStatus | 'all';
+  category?: FeedbackCategory | 'all';
+  priority?: FeedbackPriority | 'all';
+  order?: 'newest' | 'oldest';
+} = {}) {
+  return invokeAdminDashboard<{ reports: AdminFeedbackReport[]; unresolvedCount: number }>('GET', undefined, {
+    section: 'feedback',
+    status: filters.status ?? 'all',
+    category: filters.category ?? 'all',
+    priority: filters.priority ?? 'all',
+    order: filters.order ?? 'newest',
+  });
+}
+
+export async function updateAdminFeedback(input: {
+  reportId: string;
+  status?: FeedbackStatus;
+  priority?: FeedbackPriority;
+  reply?: string;
+}) {
+  await invokeAdminDashboard('POST', { action: 'update_feedback', ...input });
+}
 
 async function invokeAdminDashboard<T>(
   method: 'GET' | 'POST',

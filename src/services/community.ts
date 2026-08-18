@@ -1,8 +1,11 @@
-import { Platform } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Alert, Platform } from 'react-native';
 import { supabase } from './supabase';
 
 export type CommunityPeriod = 'daily' | 'weekly' | 'all_time';
 export type CommunityLevel = 'Novice' | 'Apprentice' | 'Journeyman' | 'Adept' | 'Mage' | 'Master' | 'Grandmaster';
+export type WordCollectorPeriod = 'week' | 'month' | 'all_time';
+export type WordCollectorAudience = 'all' | 'nearby' | 'state' | 'global';
 export type CommunityTierSummary = {
   level: CommunityLevel;
   count: number;
@@ -43,6 +46,23 @@ export type CommunityLeaderboardEntry = {
   level: CommunityLevel;
   isMe: boolean;
 };
+export type WordCollectorEntry = {
+  rank: number;
+  publicId: string;
+  displayName: string;
+  avatarPath: string | null;
+  wordCount: number;
+  isMe: boolean;
+};
+export type WordCollectorContext = {
+  eligible: boolean;
+  hasLocation: boolean;
+  rank: number | null;
+  wordCount: number;
+  totalUsers: number;
+};
+export type WordCollectorLocationPermission = 'granted' | 'denied' | 'undetermined';
+export type WordCollectorLocationResult = 'ready' | 'denied' | 'unavailable';
 export type CommunityConnection = {
   requestId: string;
   status: 'pending' | 'accepted';
@@ -74,10 +94,36 @@ function messageFor(error: unknown) {
   if (message.includes('relationship_unavailable')) return 'This connection is unavailable.';
   if (message.includes('nudge_rate_limited')) return 'You have sent the maximum number of nudges for now.';
   if (message.includes('friendship_required')) return 'You can nudge accepted friends only.';
+  if (message.includes('avatar_rejected')) return "This picture can't be used as a profile photo. Please choose another one.";
+  if (message.includes('avatar_rate_limited')) return 'You can update your profile picture up to five times every 15 minutes. Please try again shortly.';
+  if (message.includes('avatar_moderation_unavailable')) return 'Profile picture checks are temporarily unavailable. Please try again shortly.';
+  if (message.includes('avatar_moderation_consent_required')) return 'Please agree to the profile picture safety check before continuing.';
+  if (message.includes('invalid_avatar_image')) return 'Choose a different photo and try again.';
   if (message.includes('avatar_not_uploaded')) return 'Your photo uploaded, but could not be verified. Please try again.';
   if (message.includes('invalid_avatar_path')) return 'Your photo could not be prepared. Please choose it again.';
   if (message.includes('community_profile_required')) return 'Create your Connect profile before adding a picture.';
+  if (message.includes('collector_location_required')) return 'Nearby and State rankings need approximate location access.';
   return 'Community is temporarily unavailable. Please try again.';
+}
+
+async function messageFromFunctionError(error: unknown): Promise<string> {
+  const context = typeof error === 'object' && error && 'context' in error
+    ? (error as { context?: unknown }).context
+    : null;
+  if (
+    context &&
+    typeof context === 'object' &&
+    'json' in context &&
+    typeof (context as { json?: unknown }).json === 'function'
+  ) {
+    try {
+      const payload = await (context as { json: () => Promise<{ error?: unknown }> }).json();
+      if (typeof payload.error === 'string') return payload.error;
+    } catch {
+      // The generic function error below is still safe to show the user.
+    }
+  }
+  return error instanceof Error ? error.message : '';
 }
 
 async function rpc<T>(name: string, args?: Record<string, unknown>): Promise<T> {
@@ -102,6 +148,121 @@ export async function getCommunityLeaderboard(
     p_offset: offset,
     p_level: level,
   });
+}
+
+export async function getWordCollectorsContext(
+  period: WordCollectorPeriod,
+  audience: WordCollectorAudience,
+) {
+  return rpc<WordCollectorContext>('word_collectors_my_context', {
+    p_period: period,
+    p_scope: audience,
+  });
+}
+
+export async function getWordCollectorsLeaderboard(
+  period: WordCollectorPeriod,
+  audience: WordCollectorAudience,
+  limit: number,
+  offset: number,
+) {
+  return rpc<WordCollectorEntry[]>('word_collectors_leaderboard', {
+    p_period: period,
+    p_scope: audience,
+    p_limit: limit,
+    p_offset: offset,
+  });
+}
+
+export async function getWordCollectorsMyRank(
+  period: WordCollectorPeriod,
+  audience: WordCollectorAudience,
+) {
+  return rpc<WordCollectorEntry[]>('word_collectors_my_rank', {
+    p_period: period,
+    p_scope: audience,
+    p_radius: 3,
+  });
+}
+
+export async function getWordCollectorLocationPermission(): Promise<WordCollectorLocationPermission> {
+  // Keeping this module dynamic guarantees that optional location support never
+  // participates in app startup. It is checked only after a learner chooses a
+  // location-based Word Collectors filter.
+  const Location = await import('expo-location');
+  const permission = await Location.getForegroundPermissionsAsync();
+  if (permission.granted) return 'granted';
+  return permission.status === 'denied' ? 'denied' : 'undetermined';
+}
+
+/**
+ * Requests foreground location only after an explicit learner action, derives
+ * broad competition keys on-device, and sends those keys (never coordinates or
+ * an address) to the private server-side region table.
+ */
+export async function enableWordCollectorLocation(): Promise<WordCollectorLocationResult> {
+  const Location = await import('expo-location');
+  const permission = await Location.requestForegroundPermissionsAsync();
+  if (!permission.granted) return 'denied';
+  return updateWordCollectorLocation(Location);
+}
+
+/** Refreshes a permitted learner's coarse group without displaying a prompt. */
+export async function refreshWordCollectorLocation(): Promise<WordCollectorLocationResult> {
+  const Location = await import('expo-location');
+  const permission = await Location.getForegroundPermissionsAsync();
+  if (!permission.granted) return 'denied';
+  return updateWordCollectorLocation(Location);
+}
+
+async function updateWordCollectorLocation(
+  Location: typeof import('expo-location'),
+): Promise<WordCollectorLocationResult> {
+  let location = await Location.getLastKnownPositionAsync({
+    maxAge: 15 * 60 * 1000,
+    requiredAccuracy: 50_000,
+  });
+  if (!location) {
+    location = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+  }
+
+  const { latitude, longitude } = location.coords;
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return 'unavailable';
+
+  // A two-degree grid represents a broad region, not a street, address, or
+  // neighbourhood. This key never leaves the private region table.
+  const areaKey = `area-${Math.floor((latitude + 90) / 2)}-${Math.floor((longitude + 180) / 2)}`;
+  let stateKey: string | null = null;
+  try {
+    const [place] = await Location.reverseGeocodeAsync({ latitude, longitude });
+    stateKey = collectorStateKey(place?.isoCountryCode, place?.region);
+  } catch {
+    // Nearby still works with the coarse grid if a platform geocoder has no
+    // answer. State simply remains unavailable until a future refresh succeeds.
+  }
+
+  await rpc<void>('word_collectors_set_my_location', {
+    p_area_key: areaKey,
+    p_state_key: stateKey,
+  });
+  return 'ready';
+}
+
+function collectorStateKey(country: string | null | undefined, region: string | null | undefined) {
+  const normalizedCountry = normalizeCollectorRegionPart(country);
+  const normalizedRegion = normalizeCollectorRegionPart(region);
+  return normalizedCountry && normalizedRegion
+    ? `${normalizedCountry}-${normalizedRegion}`.slice(0, 96)
+    : null;
+}
+
+function normalizeCollectorRegionPart(value: string | null | undefined) {
+  const normalized = (value ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return normalized || null;
 }
 
 export async function setupCommunityProfile(input: {
@@ -183,7 +344,7 @@ export async function deactivateCommunityPushTokens() {
   await rpc<void>('community_deactivate_my_push_tokens');
 }
 
-export async function reportCommunityUser(publicId: string, reason: 'harassment' | 'spam' | 'inappropriate_name' | 'other') {
+export async function reportCommunityUser(publicId: string, reason: 'harassment' | 'spam' | 'inappropriate_name' | 'inappropriate_avatar' | 'other') {
   await rpc<void>('community_report_user', { p_public_id: publicId, p_reason: reason });
 }
 
@@ -192,8 +353,42 @@ export function getCommunityAvatarUrl(path: string | null) {
   return supabase.storage.from('community-avatars').getPublicUrl(path).data.publicUrl;
 }
 
-/** Pick, crop, resize, and upload an optional profile picture. */
-export async function pickAndUploadCommunityAvatar(previousPath: string | null) {
+const AVATAR_MODERATION_NOTICE_KEY = '@wordwiz/community-avatar-moderation-notice/v1';
+
+async function confirmAvatarModerationNotice(): Promise<boolean> {
+  if (await AsyncStorage.getItem(AVATAR_MODERATION_NOTICE_KEY) === 'accepted') return true;
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (accepted: boolean) => {
+      if (settled) return;
+      settled = true;
+      resolve(accepted);
+    };
+
+    Alert.alert(
+      'Profile picture safety',
+      'Your selected photo will be sent to OpenAI only to screen it for harmful content before it is public in Connect. It is saved to WordWiz only if approved. Continue to agree.',
+      [
+        { text: 'Not now', style: 'cancel', onPress: () => finish(false) },
+        {
+          text: 'Continue',
+          onPress: () => {
+            void AsyncStorage.setItem(AVATAR_MODERATION_NOTICE_KEY, 'accepted')
+              .catch(() => undefined)
+              .finally(() => finish(true));
+          },
+        },
+      ],
+      { cancelable: true, onDismiss: () => finish(false) },
+    );
+  });
+}
+
+/** Pick any supported image, crop it, and convert it to a moderated JPEG avatar. */
+export async function pickAndUploadCommunityAvatar() {
+  if (!await confirmAvatarModerationNotice()) return null;
+
   // Both modules require a matching native binary. Keep them out of the app's
   // import path so an optional avatar capability can never prevent startup.
   const [imagePickerModule, imageManipulatorModule] = await Promise.all([
@@ -202,9 +397,6 @@ export async function pickAndUploadCommunityAvatar(previousPath: string | null) 
   ]);
   const ImagePicker = imagePickerModule;
   const { manipulateAsync, SaveFormat } = imageManipulatorModule;
-  const { data: userData, error: userError } = await supabase.auth.getUser();
-  if (userError || !userData.user) throw new Error('Please sign in and try again.');
-
   const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
   if (!permission.granted) {
     throw new Error('Photo permission is needed to choose a profile picture.');
@@ -221,29 +413,21 @@ export async function pickAndUploadCommunityAvatar(previousPath: string | null) 
   const image = await manipulateAsync(
     result.assets[0].uri,
     [{ resize: { width: 512 } }],
-    { compress: 0.82, format: SaveFormat.JPEG },
+    { base64: true, compress: 0.82, format: SaveFormat.JPEG },
   );
-  const imageResponse = await fetch(image.uri);
-  const bytes = await imageResponse.arrayBuffer();
-  if (!bytes.byteLength || bytes.byteLength > 2 * 1024 * 1024) {
+
+  if (!image.base64 || image.base64.length > 2_800_000) {
     throw new Error('Choose a smaller photo and try again.');
   }
-  const nextPath = `${userData.user.id}/avatar-${Date.now()}.jpg`;
-  const { error: uploadError } = await supabase.storage.from('community-avatars').upload(nextPath, bytes, {
-    contentType: 'image/jpeg',
-    cacheControl: '31536000',
-    upsert: false,
-  });
-  if (uploadError) throw new Error('Could not upload your profile picture. Please try again.');
 
-  try {
-    await rpc<string>('community_set_avatar', { p_path: nextPath });
-  } catch (error) {
-    await supabase.storage.from('community-avatars').remove([nextPath]);
-    throw error;
+  // The protected function converts no additional formats: any image the
+  // device can pick has already become a normalized JPEG at this point.
+  const { data, error } = await supabase.functions.invoke('moderate-community-avatar', {
+    body: { imageBase64: image.base64, moderationNoticeAccepted: true },
+  });
+  if (error) {
+    throw new Error(messageFor(new Error(await messageFromFunctionError(error))));
   }
-  if (previousPath && previousPath !== nextPath) {
-    await supabase.storage.from('community-avatars').remove([previousPath]);
-  }
-  return nextPath;
+  if (!data || typeof data.avatarPath !== 'string') throw new Error('avatar_not_uploaded');
+  return data.avatarPath;
 }

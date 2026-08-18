@@ -85,6 +85,9 @@ Deno.serve(async (request) => {
   if (request.method === 'GET') {
     try {
       const requestUrl = new URL(request.url);
+      if (requestUrl.searchParams.get('section') === 'feedback') {
+        return jsonResponse(await buildFeedbackWorkspace(adminClient, requestUrl));
+      }
       const requestedPage = Number(requestUrl.searchParams.get('page'));
       const requestedRange = requestUrl.searchParams.get('range');
       const reportingRange: ReportingRange =
@@ -109,11 +112,44 @@ Deno.serve(async (request) => {
     }
   }
 
-  let body: { action?: string; userId?: string };
+  let body: { action?: string; userId?: string; reportId?: string; status?: string; priority?: string; reply?: string };
   try {
     body = await request.json();
   } catch {
     return jsonResponse({ error: 'Invalid request body' }, 400);
+  }
+
+  if (body.action === 'update_feedback') {
+    if (!body.reportId || !UUID_PATTERN.test(body.reportId)) {
+      return jsonResponse({ error: 'A valid feedback report is required' }, 400);
+    }
+    const statuses = ['new', 'reviewing', 'in_progress', 'resolved', 'closed'];
+    const priorities = ['low', 'normal', 'high', 'critical'];
+    if ((body.status && !statuses.includes(body.status)) || (body.priority && !priorities.includes(body.priority))) {
+      return jsonResponse({ error: 'Invalid feedback update' }, 400);
+    }
+    const reply = body.reply?.trim();
+    if (reply && reply.length > 3000) return jsonResponse({ error: 'Reply is too long' }, 400);
+    if (!body.status && !body.priority && !reply) return jsonResponse({ error: 'Choose a status, priority, or reply' }, 400);
+    try {
+      const changes: Record<string, string> = {};
+      if (body.status) changes.status = body.status;
+      if (body.priority) changes.priority = body.priority;
+      if (Object.keys(changes).length) {
+        const { error } = await adminClient.from('feedback_reports').update(changes).eq('id', body.reportId);
+        if (error) throw error;
+      }
+      if (reply) {
+        const { error } = await adminClient.from('feedback_messages').insert({
+          report_id: body.reportId, sender_id: requestingUser.id, sender_role: 'admin', message: reply,
+        });
+        if (error) throw error;
+      }
+      return jsonResponse({ ok: true });
+    } catch (error) {
+      console.error('feedback update failed', error);
+      return jsonResponse({ error: 'Could not update feedback', detail: getErrorMessage(error) }, 500);
+    }
   }
 
   if (!body.userId || !UUID_PATTERN.test(body.userId)) {
@@ -122,7 +158,7 @@ Deno.serve(async (request) => {
   if (body.userId === requestingUser.id) {
     return jsonResponse({ error: 'You cannot change your own admin account here' }, 400);
   }
-  if (!['reset_free_tier', 'grant_complimentary_access', 'delete_user', 'community_disable_profile', 'community_restore_profile', 'community_resolve_reports'].includes(body.action ?? '')) {
+  if (!['reset_free_tier', 'grant_complimentary_access', 'delete_user', 'community_disable_profile', 'community_restore_profile', 'community_resolve_reports', 'community_remove_avatar'].includes(body.action ?? '')) {
     return jsonResponse({ error: 'Unknown admin action' }, 400);
   }
 
@@ -157,13 +193,59 @@ Deno.serve(async (request) => {
   }
 });
 
-type AdminAction = 'reset_free_tier' | 'grant_complimentary_access' | 'delete_user' | 'community_disable_profile' | 'community_restore_profile' | 'community_resolve_reports';
+type AdminAction = 'reset_free_tier' | 'grant_complimentary_access' | 'delete_user' | 'community_disable_profile' | 'community_restore_profile' | 'community_resolve_reports' | 'community_remove_avatar';
 type UserRow = {
   id: string;
   email?: string;
   created_at: string;
   user_metadata?: { name?: string; full_name?: string };
 };
+
+async function buildFeedbackWorkspace(adminClient: ReturnType<typeof createClient>, requestUrl: URL) {
+  const status = requestUrl.searchParams.get('status');
+  const category = requestUrl.searchParams.get('category');
+  const priority = requestUrl.searchParams.get('priority');
+  const order = requestUrl.searchParams.get('order') === 'oldest' ? 'asc' : 'desc';
+  let query = adminClient.from('feedback_reports').select('*').order('created_at', { ascending: order === 'asc' }).limit(100);
+  if (status && status !== 'all') query = query.eq('status', status);
+  if (category && category !== 'all') query = query.eq('category', category);
+  if (priority && priority !== 'all') query = query.eq('priority', priority);
+  const [{ data: reports, error: reportError }, { count: unresolvedCount, error: countError }] = await Promise.all([
+    query,
+    adminClient.from('feedback_reports').select('*', { count: 'exact', head: true }).not('status', 'in', '(resolved,closed)'),
+  ]);
+  if (reportError) throw reportError;
+  if (countError) throw countError;
+  const reportIds = (reports ?? []).map((report: any) => report.id);
+  const { data: messages, error: messageError } = reportIds.length
+    ? await adminClient.from('feedback_messages').select('*').in('report_id', reportIds).order('created_at')
+    : { data: [], error: null };
+  if (messageError) throw messageError;
+  const messagesByReport = new Map<string, any[]>();
+  for (const message of messages ?? []) messagesByReport.set(message.report_id, [...(messagesByReport.get(message.report_id) ?? []), mapFeedbackMessage(message)]);
+  const users = await Promise.all((reports ?? []).map(async (report: any) => {
+    const { data } = await adminClient.auth.admin.getUserById(report.user_id);
+    return [report.user_id, data.user] as const;
+  }));
+  const usersById = new Map(users);
+  return {
+    unresolvedCount: unresolvedCount ?? 0,
+    reports: (reports ?? []).map((report: any) => ({
+      ...mapFeedbackReport(report), userId: report.user_id,
+      userName: usersById.get(report.user_id)?.user_metadata?.name ?? usersById.get(report.user_id)?.user_metadata?.full_name ?? null,
+      userEmail: usersById.get(report.user_id)?.email ?? null,
+      messages: messagesByReport.get(report.id) ?? [],
+    })),
+  };
+}
+
+function mapFeedbackReport(report: any) {
+  return { id: report.id, category: report.category, subject: report.subject, description: report.description, status: report.status, priority: report.priority, screenshotPath: report.screenshot_path ?? null, screen: report.screen ?? null, wordId: report.word_id ?? null, word: report.word ?? null, wordSection: report.word_section ?? null, appVersion: report.app_version ?? null, buildNumber: report.build_number ?? null, deviceModel: report.device_model ?? null, osVersion: report.os_version ?? null, accessStatus: report.access_status ?? null, createdAt: report.created_at, updatedAt: report.updated_at };
+}
+
+function mapFeedbackMessage(message: any) {
+  return { id: message.id, reportId: message.report_id, senderId: message.sender_id, senderRole: message.sender_role, message: message.message, createdAt: message.created_at };
+}
 
 async function buildDashboard(
   adminClient: ReturnType<typeof createClient>,
@@ -505,6 +587,24 @@ async function runUserAction(
       status: 'resolved', reviewed_at: now.toISOString(), reviewed_by: adminUserId,
     }).eq('reported_user_id', targetUserId).eq('status', 'open');
     if (error) throw error;
+  } else if (action === 'community_remove_avatar') {
+    const { data: profile, error: profileError } = await adminClient
+      .from('community_profiles')
+      .select('avatar_path')
+      .eq('user_id', targetUserId)
+      .maybeSingle();
+    if (profileError) throw profileError;
+    if (!profile) throw new Error('This learner does not have a Community profile.');
+    const { error: updateError } = await adminClient.from('community_profiles').update({
+      avatar_path: null,
+      avatar_updated_at: now.toISOString(),
+      updated_at: now.toISOString(),
+    }).eq('user_id', targetUserId);
+    if (updateError) throw updateError;
+    if (typeof profile.avatar_path === 'string' && profile.avatar_path.startsWith(`${targetUserId}/`)) {
+      const { error: storageError } = await adminClient.storage.from('community-avatars').remove([profile.avatar_path]);
+      if (storageError) throw storageError;
+    }
   } else {
     const { error } = await adminClient.auth.admin.deleteUser(targetUserId, false);
     if (error) throw error;

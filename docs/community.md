@@ -7,6 +7,9 @@ Community is an opt-in learning feature. It adds a sixth bottom-tab destination 
 - A learner must create a Community profile before appearing anywhere public.
 - A display name, optional avatar path, friend code, and Social XP are the only profile values intended for Community surfaces.
 - Definitions, examples, saved words, quiz answers, email addresses, and private learning history are never returned by the Community RPCs.
+- Word Collectors returns only public profile details, rank, and a qualifying-word count. It never returns another learner's saved words.
+- Nearby and State Word Collectors rankings are optional. Location is requested only after a learner chooses one of those filters; the app sends a broad derived competition key and optional state key, never coordinates, a street address, or a distance. Those keys are private and are not returned by leaderboard RPCs.
+- The Word Collectors ledger retains a learner's first qualifying normalized term after they delete it, preventing deletion and re-addition from changing a competitive count. Curated WordWiz starter collections do not qualify.
 - Leaderboards include only profiles that explicitly enable leaderboard visibility.
 - Public profiles show only aggregate learning stats: saved-word count, achievements unlocked, quiz count, flashcard reviews, and active study days in the last 30 days. Learners can hide their public profile from rankings and profile cards while keeping private friend connections.
 - Friend requests require an exact eight-character code; there is no user search or contact import.

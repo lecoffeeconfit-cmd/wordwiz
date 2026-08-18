@@ -24,8 +24,10 @@ import {
   type AdminStatsSectionEngagement,
   type AdminCommunityInsights,
   fetchAdminDashboard,
+  fetchAdminFeedback,
   runAdminUserAction,
 } from '../services';
+import { AdminFeedbackPanel } from '../components/admin/AdminFeedbackPanel';
 
 const REPORTING_RANGES: Array<{ id: AdminReportingRange; label: string; shortLabel: string }> = [
   { id: 'today', label: 'Today', shortLabel: 'TODAY' },
@@ -60,6 +62,8 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
   const [reportingRange, setReportingRange] = useState<AdminReportingRange>('30d');
   const [expandedUserId, setExpandedUserId] = useState<string | null>(null);
   const [busyUserId, setBusyUserId] = useState<string | null>(null);
+  const [adminSection, setAdminSection] = useState<'overview' | 'feedback'>('overview');
+  const [unresolvedFeedbackCount, setUnresolvedFeedbackCount] = useState(0);
 
   const load = useCallback(async (refreshing = false) => {
     refreshing ? setIsRefreshing(true) : setIsLoading(true);
@@ -76,6 +80,11 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    // Keep the inbox count visible before an admin opens the Feedback tab.
+    void fetchAdminFeedback().then((data) => setUnresolvedFeedbackCount(data.unresolvedCount)).catch(() => undefined);
+  }, []);
 
   const filteredUsers = useMemo(() => {
     const normalized = query.trim().toLowerCase();
@@ -154,6 +163,12 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
         confirm: 'Resolve',
         destructive: false,
       },
+      community_remove_avatar: {
+        title: 'Remove Community picture?',
+        detail: `Delete ${displayName(user)}’s public Community picture. Their account and ranking stay active unless you also hide their profile.`,
+        confirm: 'Remove picture',
+        destructive: true,
+      },
     }[action];
     Alert.alert(labels.title, labels.detail, [
       { text: 'Cancel', style: 'cancel' },
@@ -179,7 +194,9 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
               ? 'The Community profile is now hidden and Community actions are disabled.'
               : action === 'community_restore_profile'
                 ? 'The Community profile is eligible again.'
-                : 'Open reports for this Community profile were resolved.';
+                : action === 'community_remove_avatar'
+                  ? 'The Community picture was removed. Their profile now shows initials.'
+                  : 'Open reports for this Community profile were resolved.';
       Alert.alert('Updated', message);
       setExpandedUserId(null);
       await load(true);
@@ -212,6 +229,12 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
           </Pressable>
         </View>
 
+        <View style={styles.adminTabs}>
+          <Pressable onPress={() => setAdminSection('overview')} style={[styles.adminTab, adminSection === 'overview' && styles.adminTabActive]}><Text style={[styles.adminTabText, adminSection === 'overview' && styles.adminTabTextActive]}>Overview</Text></Pressable>
+          <Pressable onPress={() => setAdminSection('feedback')} style={[styles.adminTab, adminSection === 'feedback' && styles.adminTabActive]}><Text style={[styles.adminTabText, adminSection === 'feedback' && styles.adminTabTextActive]}>Feedback</Text>{unresolvedFeedbackCount > 0 ? <View style={styles.feedbackNavBadge}><Text style={styles.feedbackNavBadgeText}>{unresolvedFeedbackCount > 99 ? '99+' : unresolvedFeedbackCount}</Text></View> : null}</Pressable>
+        </View>
+
+        {adminSection === 'feedback' ? <AdminFeedbackPanel onUnresolvedCountChange={setUnresolvedFeedbackCount} /> : <>
         <View style={styles.rangeCard}>
           <Text style={styles.rangeLabel}>REPORTING RANGE</Text>
           <View style={styles.rangeOptions}>
@@ -305,7 +328,16 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
             {dashboard.community.reports.length ? (
               <View style={styles.reportCard}>
                 <Text style={styles.timeGroupLabel}>OPEN COMMUNITY REPORTS</Text>
-                {dashboard.community.reports.map((report) => <CommunityReportRow key={report.id} report={report} users={dashboard.users} onResolve={(user) => confirmAction(user, 'community_resolve_reports')} />)}
+                {dashboard.community.reports.map((report) => {
+                  const reportedUser = { id: report.reportedUserId, name: report.displayName, email: '' } as AdminUser;
+                  return <CommunityReportRow
+                    key={report.id}
+                    report={report}
+                    onResolve={() => confirmAction(reportedUser, 'community_resolve_reports')}
+                    onHide={() => confirmAction(reportedUser, 'community_disable_profile')}
+                    onRemoveAvatar={() => confirmAction(reportedUser, 'community_remove_avatar')}
+                  />;
+                })}
               </View>
             ) : <View style={styles.timeEmpty}><Ionicons name="shield-checkmark-outline" size={18} color={COLORS.teal} /><Text style={styles.timeEmptyText}>No open Community reports.</Text></View>}
 
@@ -427,6 +459,7 @@ export function AdminScreen({ onClose }: { onClose: () => void }) {
             ) : null}
           </>
         ) : null}
+        </>}
       </ScrollView>
     </View>
   );
@@ -474,9 +507,9 @@ function NudgeTemplateRow({ template }: { template: AdminCommunityInsights['nudg
   return <View style={styles.usageLeaderRow}><View style={styles.usageLeaderRank}><Ionicons name="sparkles-outline" size={14} color={COLORS.purpleDark} /></View><View style={styles.usageLeaderCopy}><Text numberOfLines={1} style={styles.usageLeaderName}>{formatNudgeTemplate(template.messageKey)}</Text><Text style={styles.usageLeaderDetail}>Selected encouragement template</Text></View><View style={styles.usageLeaderTotal}><Text style={styles.usageLeaderTotalValue}>{formatNumber(template.sends)}</Text><Text style={styles.usageLeaderTotalLabel}>SENT</Text></View></View>;
 }
 
-function CommunityReportRow({ report, users, onResolve }: { report: AdminCommunityInsights['reports'][number]; users: AdminUser[]; onResolve: (user: AdminUser) => void }) {
-  const user = users.find((candidate) => candidate.id === report.reportedUserId);
-  return <View style={styles.reportRow}><View style={styles.reportIcon}><Ionicons name="flag-outline" size={16} color={COLORS.orange} /></View><View style={styles.reportCopy}><Text style={styles.reportName}>{report.displayName}</Text><Text style={styles.reportDetail}>{report.reason.replaceAll('_', ' ')} · {relativeDate(report.createdAt)}</Text></View>{user ? <Pressable onPress={() => onResolve(user)} style={styles.resolveButton}><Text style={styles.resolveText}>Resolve</Text></Pressable> : <Text style={styles.reportDetail}>Review</Text>}</View>;
+function CommunityReportRow({ report, onResolve, onHide, onRemoveAvatar }: { report: AdminCommunityInsights['reports'][number]; onResolve: () => void; onHide: () => void; onRemoveAvatar: () => void }) {
+  const count = report.reportCount > 1 ? `${report.reportCount} open reports` : '1 open report';
+  return <View style={styles.reportRow}><View style={styles.reportIcon}><Ionicons name="flag-outline" size={16} color={COLORS.orange} /></View><View style={styles.reportCopy}><Text style={styles.reportName}>{report.displayName}</Text><Text style={styles.reportDetail}>{report.reason.replaceAll('_', ' ')} · {relativeDate(report.createdAt)} · {count}</Text><Text style={styles.reportDetail}>Oldest {relativeDate(report.oldestCreatedAt)}</Text></View><View style={styles.reportActions}><Pressable onPress={onResolve} style={styles.resolveButton}><Text style={styles.resolveText}>Resolve</Text></Pressable><Pressable onPress={onRemoveAvatar} style={styles.reportAction}><Text style={styles.reportActionText}>Photo</Text></Pressable><Pressable onPress={onHide} style={styles.reportActionDanger}><Text style={styles.reportActionDangerText}>Hide</Text></Pressable></View></View>;
 }
 
 function StatsEngagementRow({ section }: { section: AdminStatsSectionEngagement }) {
@@ -533,7 +566,7 @@ function UserCard({ user, isExpanded, busy, onToggle, onAction }: { user: AdminU
         <Control label="Give 30d" icon="gift-outline" disabled={busy} onPress={() => onAction('grant_complimentary_access')} />
         <Control label="Delete" icon="trash-outline" danger disabled={busy} onPress={() => onAction('delete_user')} />
       </View>
-      {user.communityEligible !== null ? <View style={styles.communityControlRow}><Text style={styles.communityStatus}>{user.communityEligible ? 'Community access available' : 'Community access restricted'}</Text><Control label={user.communityEligible ? 'Restrict community' : 'Lift restriction'} icon={user.communityEligible ? 'eye-off-outline' : 'eye-outline'} danger={user.communityEligible} disabled={busy} onPress={() => onAction(user.communityEligible ? 'community_disable_profile' : 'community_restore_profile')} /></View> : null}
+      {user.communityEligible !== null ? <><View style={styles.communityControlRow}><Text style={styles.communityStatus}>{user.communityEligible ? 'Community access available' : 'Community access restricted'}</Text><Control label={user.communityEligible ? 'Restrict community' : 'Lift restriction'} icon={user.communityEligible ? 'eye-off-outline' : 'eye-outline'} danger={user.communityEligible} disabled={busy} onPress={() => onAction(user.communityEligible ? 'community_disable_profile' : 'community_restore_profile')} /></View><View style={styles.communityControlRow}><Text style={styles.communityStatus}>Remove a photo without changing the learner’s account.</Text><Control label="Remove picture" icon="image-outline" danger disabled={busy} onPress={() => onAction('community_remove_avatar')} /></View></> : null}
       {busy ? <View style={styles.busyLine}><ActivityIndicator size="small" color={COLORS.purpleDark} /><Text style={styles.busyText}>Applying secure update…</Text></View> : null}
     </View> : null}
   </View>;
@@ -552,6 +585,7 @@ function formatNudgeTemplate(value: string) { return value.split('_').filter(Boo
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: COLORS.background }, content: { padding: 18, paddingBottom: 44 }, pressed: { opacity: 0.78 },
   header: { minHeight: 136, borderRadius: 25, padding: 18, flexDirection: 'row', alignItems: 'flex-start', gap: 12, backgroundColor: '#E6E0FF', ...SOFT_SHADOW }, headerIcon: { width: 43, height: 43, borderRadius: 15, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.purpleDark }, headerCopy: { flex: 1 }, eyebrow: { color: COLORS.purpleDark, fontSize: 10, fontWeight: '900', letterSpacing: 1 }, title: { marginTop: 2, color: COLORS.ink, fontSize: 26, fontWeight: '900', letterSpacing: -0.5 }, subtitle: { marginTop: 5, color: COLORS.muted, fontSize: 12, fontWeight: '700', lineHeight: 17 }, closeButton: { width: 36, height: 36, borderRadius: 13, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.white },
+  adminTabs: { marginTop: 12, padding: 4, borderRadius: 15, flexDirection: 'row', backgroundColor: COLORS.lavender }, adminTab: { flex: 1, minHeight: 37, borderRadius: 11, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 5 }, adminTabActive: { backgroundColor: COLORS.white, ...SOFT_SHADOW }, adminTabText: { color: COLORS.muted, fontSize: 11, fontWeight: '900' }, adminTabTextActive: { color: COLORS.purpleDark }, feedbackNavBadge: { minWidth: 17, height: 17, paddingHorizontal: 4, borderRadius: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.red }, feedbackNavBadgeText: { color: COLORS.white, fontSize: 8, fontWeight: '900' },
   rangeCard: { marginTop: 12, padding: 5, borderRadius: 16, backgroundColor: COLORS.white, ...SOFT_SHADOW }, rangeLabel: { marginLeft: 7, marginTop: 2, color: COLORS.muted, fontSize: 7, letterSpacing: 0.7, fontWeight: '900' }, rangeOptions: { marginTop: 4, flexDirection: 'row', gap: 3 }, rangeOption: { flex: 1, minHeight: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center' }, rangeOptionActive: { backgroundColor: COLORS.purplePale }, rangeOptionText: { color: COLORS.muted, fontSize: 8, fontWeight: '900' }, rangeOptionTextActive: { color: COLORS.purpleDark },
   loading: { paddingVertical: 72, alignItems: 'center', gap: 12 }, loadingText: { color: COLORS.muted, fontWeight: '700' }, errorCard: { marginTop: 18, padding: 16, flexDirection: 'row', alignItems: 'center', gap: 10, borderRadius: 18, backgroundColor: COLORS.redPale }, errorCopy: { flex: 1 }, errorTitle: { color: COLORS.ink, fontSize: 14, fontWeight: '900' }, errorText: { marginTop: 3, color: COLORS.muted, fontSize: 11, lineHeight: 15, fontWeight: '700' }, retryButton: { paddingHorizontal: 11, paddingVertical: 8, borderRadius: 10, backgroundColor: COLORS.white }, retryText: { color: COLORS.red, fontSize: 11, fontWeight: '900' },
   metricsGrid: { marginTop: 18, flexDirection: 'row', flexWrap: 'wrap', gap: 10 }, metricCard: { width: '48.5%', minHeight: 117, padding: 13, borderRadius: 18 }, metricIcon: { width: 31, height: 31, borderRadius: 10, alignItems: 'center', justifyContent: 'center' }, metricValue: { marginTop: 13, color: COLORS.ink, fontSize: 23, fontWeight: '900', letterSpacing: -0.5 }, metricLabel: { marginTop: 3, color: COLORS.muted, fontSize: 8, lineHeight: 11, fontWeight: '900', letterSpacing: 0.5 },
@@ -560,7 +594,7 @@ const styles = StyleSheet.create({
   overviewCard: { marginTop: 8, paddingVertical: 14, borderRadius: 18, flexDirection: 'row', backgroundColor: COLORS.white, ...SOFT_SHADOW }, miniMetric: { flex: 1, alignItems: 'center', paddingHorizontal: 4 }, miniMetricValue: { color: COLORS.ink, fontSize: 16, fontWeight: '900' }, miniMetricLabel: { marginTop: 4, color: COLORS.muted, textAlign: 'center', fontSize: 7, lineHeight: 9, letterSpacing: 0.4, fontWeight: '900' },
   learningTimeCard: { padding: 14, borderRadius: 18, flexDirection: 'row', alignItems: 'center', gap: 11, backgroundColor: COLORS.bluePale }, learningTimeIcon: { width: 42, height: 42, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.white }, learningTimeCopy: { flex: 1 }, learningTimeLabel: { color: COLORS.blue, fontSize: 9, letterSpacing: 0.8, fontWeight: '900' }, learningTimeValue: { marginTop: 1, color: COLORS.ink, fontSize: 23, letterSpacing: -0.4, fontWeight: '900' }, learningTimeText: { marginTop: 2, color: COLORS.muted, fontSize: 10, lineHeight: 14, fontWeight: '700' }, timeGroupLabel: { marginTop: 16, marginBottom: 7, color: COLORS.muted, fontSize: 9, letterSpacing: 0.8, fontWeight: '900' }, timeRow: { minHeight: 58, marginBottom: 7, paddingHorizontal: 12, borderWidth: 1, borderColor: COLORS.border, borderRadius: 16, flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: COLORS.white }, timeRowIcon: { width: 32, height: 32, borderRadius: 11, alignItems: 'center', justifyContent: 'center' }, timeRowCopy: { flex: 1 }, timeRowLabel: { color: COLORS.ink, fontSize: 12, fontWeight: '900' }, timeRowDetail: { marginTop: 2, color: COLORS.muted, fontSize: 9, fontWeight: '700' }, timeRowValue: { fontSize: 14, fontWeight: '900' }, timeEmpty: { padding: 12, borderRadius: 14, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: COLORS.white }, timeEmptyText: { flex: 1, color: COLORS.muted, fontSize: 10, lineHeight: 14, fontWeight: '700' }, timePrivacyNote: { marginTop: 10, color: COLORS.muted, fontSize: 9, lineHeight: 13, fontStyle: 'italic', fontWeight: '700' },
   flashcardUsageCard: { marginTop: 9, padding: 14, borderRadius: 18, flexDirection: 'row', alignItems: 'center', gap: 11, backgroundColor: COLORS.tealPale }, flashcardUsageIcon: { width: 42, height: 42, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.white }, flashcardUsageCopy: { flex: 1 }, flashcardUsageLabel: { color: COLORS.teal, fontSize: 9, letterSpacing: 0.8, fontWeight: '900' }, flashcardUsageValue: { marginTop: 1, color: COLORS.ink, fontSize: 20, letterSpacing: -0.3, fontWeight: '900' }, flashcardUsageText: { marginTop: 2, color: COLORS.muted, fontSize: 10, lineHeight: 14, fontWeight: '700' },
-  communityInsightsCard: { padding: 14, borderRadius: 18, backgroundColor: COLORS.purplePale, borderWidth: 1, borderColor: '#D9D0FF' }, communityHeroRow: { flexDirection: 'row', alignItems: 'center', gap: 11 }, communityHeroIcon: { width: 42, height: 42, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.white }, communityHeroCopy: { flex: 1 }, communityHeroLabel: { color: COLORS.purpleDark, fontSize: 9, letterSpacing: 0.8, fontWeight: '900' }, communityHeroValue: { marginTop: 1, color: COLORS.ink, fontSize: 23, letterSpacing: -0.4, fontWeight: '900' }, communityHeroText: { marginTop: 2, color: COLORS.muted, fontSize: 10, lineHeight: 14, fontWeight: '700' }, communityMetricGrid: { marginTop: 13, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#DED7F5', flexDirection: 'row' }, communitySafetyText: { marginTop: 12, color: COLORS.muted, fontSize: 9, lineHeight: 13, fontWeight: '700' }, reportCard: { marginTop: 9, padding: 12, borderRadius: 18, backgroundColor: COLORS.white, ...SOFT_SHADOW }, reportRow: { minHeight: 54, borderTopWidth: 1, borderTopColor: COLORS.border, flexDirection: 'row', alignItems: 'center', gap: 9 }, reportIcon: { width: 30, height: 30, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.orangePale }, reportCopy: { flex: 1 }, reportName: { color: COLORS.ink, fontSize: 12, fontWeight: '900' }, reportDetail: { marginTop: 2, color: COLORS.muted, fontSize: 9, fontWeight: '700', textTransform: 'capitalize' }, resolveButton: { paddingHorizontal: 9, paddingVertical: 6, borderRadius: 9, backgroundColor: COLORS.tealPale }, resolveText: { color: COLORS.greenDark, fontSize: 9, fontWeight: '900' },
+  communityInsightsCard: { padding: 14, borderRadius: 18, backgroundColor: COLORS.purplePale, borderWidth: 1, borderColor: '#D9D0FF' }, communityHeroRow: { flexDirection: 'row', alignItems: 'center', gap: 11 }, communityHeroIcon: { width: 42, height: 42, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.white }, communityHeroCopy: { flex: 1 }, communityHeroLabel: { color: COLORS.purpleDark, fontSize: 9, letterSpacing: 0.8, fontWeight: '900' }, communityHeroValue: { marginTop: 1, color: COLORS.ink, fontSize: 23, letterSpacing: -0.4, fontWeight: '900' }, communityHeroText: { marginTop: 2, color: COLORS.muted, fontSize: 10, lineHeight: 14, fontWeight: '700' }, communityMetricGrid: { marginTop: 13, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#DED7F5', flexDirection: 'row' }, communitySafetyText: { marginTop: 12, color: COLORS.muted, fontSize: 9, lineHeight: 13, fontWeight: '700' }, reportCard: { marginTop: 9, padding: 12, borderRadius: 18, backgroundColor: COLORS.white, ...SOFT_SHADOW }, reportRow: { minHeight: 66, borderTopWidth: 1, borderTopColor: COLORS.border, flexDirection: 'row', alignItems: 'center', gap: 9 }, reportIcon: { width: 30, height: 30, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.orangePale }, reportCopy: { flex: 1 }, reportName: { color: COLORS.ink, fontSize: 12, fontWeight: '900' }, reportDetail: { marginTop: 2, color: COLORS.muted, fontSize: 9, fontWeight: '700', textTransform: 'capitalize' }, reportActions: { alignItems: 'flex-end', gap: 4 }, resolveButton: { paddingHorizontal: 9, paddingVertical: 6, borderRadius: 9, backgroundColor: COLORS.tealPale }, resolveText: { color: COLORS.greenDark, fontSize: 9, fontWeight: '900' }, reportAction: { paddingHorizontal: 9, paddingVertical: 5, borderRadius: 8, backgroundColor: COLORS.purplePale }, reportActionText: { color: COLORS.purpleDark, fontSize: 8, fontWeight: '900' }, reportActionDanger: { paddingHorizontal: 9, paddingVertical: 5, borderRadius: 8, backgroundColor: COLORS.redPale }, reportActionDangerText: { color: COLORS.red, fontSize: 8, fontWeight: '900' },
   usageLeadersCard: { padding: 12, borderRadius: 18, backgroundColor: COLORS.white, ...SOFT_SHADOW }, usageLeadersNote: { marginBottom: 8, color: COLORS.muted, fontSize: 9, lineHeight: 13, fontWeight: '700' }, usageLeaderRow: { minHeight: 60, paddingVertical: 8, borderTopWidth: 1, borderTopColor: COLORS.border, flexDirection: 'row', alignItems: 'center', gap: 9 }, usageLeaderRank: { width: 25, height: 25, borderRadius: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.purplePale }, usageLeaderRankText: { color: COLORS.purpleDark, fontSize: 11, fontWeight: '900' }, usageLeaderCopy: { flex: 1 }, usageLeaderName: { color: COLORS.ink, fontSize: 12, fontWeight: '900' }, usageLeaderDetail: { marginTop: 2, color: COLORS.muted, fontSize: 9, fontWeight: '700' }, usageLeaderTotal: { minWidth: 46, alignItems: 'flex-end' }, usageLeaderTotalValue: { color: COLORS.teal, fontSize: 16, fontWeight: '900' }, usageLeaderTotalLabel: { marginTop: 1, color: COLORS.muted, fontSize: 7, letterSpacing: 0.5, fontWeight: '900' },
   safetyNote: { padding: 12, borderRadius: 14, flexDirection: 'row', gap: 8, backgroundColor: COLORS.purplePale }, safetyText: { flex: 1, color: COLORS.purpleDark, fontSize: 10, lineHeight: 14, fontWeight: '800' }, searchWrap: { height: 48, marginTop: 11, marginBottom: 10, paddingHorizontal: 13, borderWidth: 1, borderColor: COLORS.border, borderRadius: 15, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: COLORS.white }, searchInput: { flex: 1, color: COLORS.ink, fontSize: 13, fontWeight: '700' },
   userCard: { marginBottom: 9, borderWidth: 1, borderColor: COLORS.border, borderRadius: 18, backgroundColor: COLORS.white, overflow: 'hidden' }, userCardExpanded: { borderColor: '#D9D0FF' }, userTop: { minHeight: 76, padding: 12, flexDirection: 'row', alignItems: 'center', gap: 10 }, userAvatar: { width: 36, height: 36, borderRadius: 13, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.bluePale }, userAvatarText: { color: COLORS.blue, fontSize: 15, fontWeight: '900' }, userCopy: { flex: 1 }, userName: { color: COLORS.ink, fontSize: 13, fontWeight: '900' }, userEmail: { marginTop: 1, color: COLORS.muted, fontSize: 10, fontWeight: '700' }, userActivity: { marginTop: 4, color: COLORS.muted, fontSize: 9, fontWeight: '700' }, userStatus: { alignItems: 'flex-end', gap: 5 }, accessPill: { paddingHorizontal: 6, paddingVertical: 3, borderRadius: 7, borderWidth: 1, overflow: 'hidden', fontSize: 7, fontWeight: '900', letterSpacing: 0.35 }, userControls: { padding: 12, paddingTop: 0, borderTopWidth: 1, borderTopColor: COLORS.border }, userStats: { paddingVertical: 10, flexDirection: 'row', flexWrap: 'wrap', gap: 7 }, userStat: { paddingHorizontal: 7, paddingVertical: 4, borderRadius: 8, color: COLORS.muted, backgroundColor: COLORS.background, fontSize: 9, fontWeight: '800' }, controlRow: { flexDirection: 'row', gap: 7 }, communityControlRow: { marginTop: 8, flexDirection: 'row', alignItems: 'center', gap: 8 }, communityStatus: { flex: 1, color: COLORS.muted, fontSize: 9, fontWeight: '800' }, control: { flex: 1, minHeight: 36, borderWidth: 1, borderColor: '#DCD4FF', borderRadius: 11, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, backgroundColor: COLORS.purplePale }, controlDanger: { borderColor: '#FFC8D6', backgroundColor: COLORS.redPale }, controlText: { color: COLORS.purpleDark, fontSize: 9, fontWeight: '900' }, controlDangerText: { color: COLORS.red }, busyLine: { marginTop: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 }, busyText: { color: COLORS.purpleDark, fontSize: 10, fontWeight: '800' }, noUsers: { paddingVertical: 25, textAlign: 'center', color: COLORS.muted, fontSize: 12, fontWeight: '700' }, pagination: { marginTop: 8, marginBottom: 4, minHeight: 42, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }, pageButton: { minHeight: 38, paddingHorizontal: 10, borderWidth: 1, borderColor: '#DCD4FF', borderRadius: 12, flexDirection: 'row', alignItems: 'center', gap: 2, backgroundColor: COLORS.purplePale }, pageButtonDisabled: { opacity: 0.4 }, pageButtonText: { color: COLORS.purpleDark, fontSize: 9, fontWeight: '900' }, pageStatus: { flex: 1, color: COLORS.muted, fontSize: 9, textAlign: 'center', fontWeight: '800' },

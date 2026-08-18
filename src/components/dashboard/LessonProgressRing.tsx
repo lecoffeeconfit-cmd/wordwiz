@@ -401,7 +401,7 @@ function SegmentArc({
         opacity={glowOpacity}
         style="stroke"
         strokeCap="butt"
-        strokeWidth={STROKE_WIDTH + 3}
+        strokeWidth={STROKE_WIDTH}
       />
       <Path
         path={circlePath}

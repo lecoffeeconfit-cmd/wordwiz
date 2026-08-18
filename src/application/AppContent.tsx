@@ -27,6 +27,7 @@ import {
   CardsScreen,
   AdminScreen,
   DashboardScreen,
+  FeedbackScreen,
   CommunityScreen,
   HomeScreen,
   type PausedQuizSession,
@@ -79,6 +80,7 @@ import {
   setSentryUser,
   trackEvent,
   type StatsSectionInteraction,
+  type FeedbackContext,
   getStartupFailureCode,
   beginStartupAttempt,
   completeStartup,
@@ -180,6 +182,8 @@ export default function AppContent() {
     useState<AchievementWallet>(EMPTY_ACHIEVEMENT_WALLET);
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [feedbackContext, setFeedbackContext] = useState<FeedbackContext | null>(null);
+  const [feedbackReturnTab, setFeedbackReturnTab] = useState<Tab>('dashboard');
   const [communityUnreadNudges, setCommunityUnreadNudges] = useState(0);
   const [isPasswordRecovery, setIsPasswordRecovery] = useState(false);
   const [reminderSettings, setReminderSettings] =
@@ -194,6 +198,10 @@ export default function AppContent() {
   const [appNotice, setAppNotice] = useState<string | null>(null);
   const [currentDayKey, setCurrentDayKey] = useState(getDayKey());
   const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState(false);
+  const [onboardingCacheState, setOnboardingCacheState] = useState<
+    'loading' | 'ready' | 'unavailable'
+  >('loading');
+  const [onboardingCacheUserId, setOnboardingCacheUserId] = useState<string | null>(null);
   const [showOnboardingGuide, setShowOnboardingGuide] = useState(false);
   const [showAddWord, setShowAddWord] = useState(false);
   const [wordToEdit, setWordToEdit] = useState<Word | null>(null);
@@ -360,7 +368,7 @@ export default function AppContent() {
   }, [currentUser?.id]);
 
   const beginScreenTime = useCallback((tab: Tab) => {
-    if (!currentUser || !isReady || tab === 'admin') return;
+    if (!currentUser || !isReady || tab === 'admin' || tab === 'feedback') return;
     activeScreenTimeSession.current = {
       screen: tab,
       userId: currentUser.id,
@@ -696,6 +704,8 @@ export default function AppContent() {
       setTimeBasedLearningSettings(DEFAULT_TIME_BASED_LEARNING_SETTINGS);
       setQuizPreferences(DEFAULT_QUIZ_PREFERENCES);
       setHasCompletedOnboarding(false);
+      setOnboardingCacheState('loading');
+      setOnboardingCacheUserId(null);
       setShowOnboardingGuide(false);
       return;
     }
@@ -706,6 +716,7 @@ export default function AppContent() {
   }, [currentUser?.id, isReady]);
 
   async function loadUserCache(userId: string, throwOnFailure = false) {
+    setOnboardingCacheState('loading');
     try {
       achievementWalletLoadedUserId.current = null;
       setAchievementWallet(EMPTY_ACHIEVEMENT_WALLET);
@@ -780,6 +791,8 @@ export default function AppContent() {
         );
       }
       setShowOnboardingGuide(false);
+      setOnboardingCacheUserId(userId);
+      setOnboardingCacheState('ready');
       achievementWalletLoadedUserId.current = userId;
     } catch (error) {
       reportError(error, { area: 'load_user_cache' });
@@ -788,6 +801,8 @@ export default function AppContent() {
       setAnalytics(EMPTY_ANALYTICS);
       setAchievementWallet(EMPTY_ACHIEVEMENT_WALLET);
       setHasCompletedOnboarding(false);
+      setOnboardingCacheUserId(userId);
+      setOnboardingCacheState('unavailable');
       achievementWalletLoadedUserId.current = userId;
       setReminderSettings(DEFAULT_REMINDER);
       setDailyQuizGoal(1);
@@ -2728,8 +2743,24 @@ export default function AppContent() {
           onReview={recordCardReview}
           onToggleFlag={toggleWordFlag}
           onOpenStudySetBuilder={openStudySetBuilder}
+          onReportIncorrectInfo={(word, section) => {
+            setFeedbackContext({ screen: 'Flashcards', wordId: word.id, word: word.term, section });
+            setFeedbackReturnTab('cards');
+            setActiveTab('feedback');
+          }}
         />
       );
+    }
+
+    if (activeTab === 'feedback') {
+      return <FeedbackScreen
+        accessStatus={subscription.accessSource}
+        initialContext={feedbackContext}
+        onClose={() => {
+          setFeedbackContext(null);
+          setActiveTab(feedbackReturnTab);
+        }}
+      />;
     }
 
     if (activeTab === 'quiz') {
@@ -2804,6 +2835,11 @@ export default function AppContent() {
         onOpenAdmin={() => setActiveTab('admin')}
         onOpenOnboardingGuide={() => setShowOnboardingGuide(true)}
         onOpenPlus={() => presentPlusPaywall('premium-feature')}
+        onOpenFeedback={() => {
+          setFeedbackContext({ screen: 'Profile & Settings' });
+          setFeedbackReturnTab('dashboard');
+          setActiveTab('feedback');
+        }}
         onTrackStatsSectionInteraction={trackStatsSectionInteraction}
       />
     );
@@ -2846,6 +2882,10 @@ export default function AppContent() {
     );
   }
 
+  const isOnboardingCacheReadyForUser =
+    onboardingCacheUserId === currentUser?.id &&
+    onboardingCacheState !== 'loading';
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar style="dark" />
@@ -2866,7 +2906,10 @@ export default function AppContent() {
         />
       ) : (
         <>
-          {!hasCompletedOnboarding || showOnboardingGuide ? (
+          {!isOnboardingCacheReadyForUser ? (
+            <WordSyncLoadingScreen stage="profile_data" />
+          ) : onboardingCacheState === 'ready' &&
+            (!hasCompletedOnboarding || showOnboardingGuide) ? (
             <OnboardingScreen
               isReplay={showOnboardingGuide}
               onComplete={completeOnboarding}

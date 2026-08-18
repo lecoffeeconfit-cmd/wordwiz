@@ -12,9 +12,11 @@ import {
 export function WordInfoPanel({
   word,
   onEdit,
+  onReportIncorrectInfo,
 }: {
   word: Word;
   onEdit?: (word: Word) => void;
+  onReportIncorrectInfo?: (word: Word, section: string) => void;
 }) {
   const hasInfo =
     word.partOfSpeech ||
@@ -33,10 +35,21 @@ export function WordInfoPanel({
     word.synonyms?.length ||
     word.antonyms?.length;
 
-  if (!hasInfo) return null;
+  if (!hasInfo && !onReportIncorrectInfo) return null;
 
   return (
     <View style={styles.wordInfoPanel}>
+      {onReportIncorrectInfo && (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`More actions for ${word.term}`}
+          onPress={() => onReportIncorrectInfo(word, 'Word details')}
+          style={({ pressed }) => [styles.wordInfoReportButton, pressed && styles.pressed]}
+        >
+          <Ionicons name="ellipsis-horizontal" size={18} color={COLORS.purpleDark} />
+          <Text style={styles.wordInfoReportButtonText}>Report incorrect information</Text>
+        </Pressable>
+      )}
       {hasBasicInfo && (
         <InfoSection
           title="BASIC WORD INFO"
