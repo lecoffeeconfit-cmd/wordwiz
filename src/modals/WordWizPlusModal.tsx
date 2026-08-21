@@ -166,10 +166,12 @@ export function WordWizPlusModal({
                 />
               </> : <View style={styles.plusMessage}>
                 <Ionicons name="cloud-offline-outline" size={18} color={COLORS.purpleDark} />
-                <Text style={styles.plusMessageText}>WordWiz Plus plans are unavailable right now. Please check your connection and try again.</Text>
+                <Text style={styles.plusMessageText}>
+                  {subscription.statusMessage ?? 'WordWiz Plus plans are unavailable right now. Please check your connection and try again.'}
+                </Text>
               </View>}
 
-              {message ?? subscription.statusMessage ? (
+              {hasPurchasablePlan && (message ?? subscription.statusMessage) ? (
                 <View style={styles.plusMessage}>
                   <Ionicons name="information-circle-outline" size={18} color={COLORS.purpleDark} />
                   <Text style={styles.plusMessageText}>{message ?? subscription.statusMessage}</Text>

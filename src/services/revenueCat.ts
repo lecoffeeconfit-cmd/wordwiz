@@ -114,7 +114,7 @@ class RevenueCatService {
     });
 
     try {
-      let customerInfo: CustomerInfo;
+      let customerInfoRequest: Promise<CustomerInfo>;
       if (!this.isConfigured) {
         Purchases.configure({
           apiKey: env.revenueCatIosApiKey!.trim(),
@@ -123,20 +123,45 @@ class RevenueCatService {
         this.isConfigured = true;
         this.configuredUserId = userId;
         this.attachCustomerInfoListener();
-        customerInfo = await Purchases.getCustomerInfo();
+        customerInfoRequest = Purchases.getCustomerInfo();
       } else if (this.configuredUserId !== userId) {
         const result = await Purchases.logIn(userId);
         this.configuredUserId = userId;
-        customerInfo = result.customerInfo;
+        customerInfoRequest = Promise.resolve(result.customerInfo);
       } else {
-        customerInfo = await Purchases.getCustomerInfo();
+        customerInfoRequest = Purchases.getCustomerInfo();
       }
       this.attachCustomerInfoListener();
 
-      const offering = await Purchases.getOfferings();
+      // Loading account state and the catalog are independent requests. Do not
+      // hide purchasable plans merely because the customer-info request has a
+      // transient failure (this happens more often in Apple sandbox testing).
+      const [customerResult, offeringResult] = await Promise.allSettled([
+        customerInfoRequest,
+        Purchases.getOfferings(),
+      ]);
       if (generation !== this.syncGeneration) return;
-      this.updateCustomerInfo(customerInfo, offering.current);
-      this.setSnapshot({ ...this.snapshot, isLoading: false, statusMessage: null });
+
+      if (customerResult.status === 'rejected') {
+        reportError(customerResult.reason, { area: 'revenuecat_customer_info' });
+      }
+      if (offeringResult.status === 'rejected') {
+        reportError(offeringResult.reason, { area: 'revenuecat_offerings' });
+      }
+
+      this.updateSubscriptionState(
+        customerResult.status === 'fulfilled'
+          ? customerResult.value
+          : this.snapshot.customerInfo,
+        offeringResult.status === 'fulfilled'
+          ? offeringResult.value.current
+          : this.snapshot.currentOffering,
+      );
+      this.setSnapshot({
+        ...this.snapshot,
+        isLoading: false,
+        statusMessage: getLoadStatusMessage(customerResult, offeringResult),
+      });
     } catch (error) {
       reportError(error, { area: 'revenuecat_sync_user' });
       if (generation !== this.syncGeneration) return;
@@ -152,17 +177,30 @@ class RevenueCatService {
   async refresh() {
     if (!this.isConfigured || !this.snapshot.userId || !this.isNativeAvailable()) return;
 
-    try {
-      const customerInfo = await Purchases.getCustomerInfo();
-      const offering = await Purchases.getOfferings();
-      this.updateCustomerInfo(customerInfo, offering.current);
-    } catch (error) {
-      reportError(error, { area: 'revenuecat_refresh' });
-      this.setSnapshot({
-        ...this.snapshot,
-        statusMessage: 'Subscription status is temporarily unavailable. Your last verified access is still being used.',
-      });
+    const [customerResult, offeringResult] = await Promise.allSettled([
+      Purchases.getCustomerInfo(),
+      Purchases.getOfferings(),
+    ]);
+
+    if (customerResult.status === 'rejected') {
+      reportError(customerResult.reason, { area: 'revenuecat_customer_info_refresh' });
     }
+    if (offeringResult.status === 'rejected') {
+      reportError(offeringResult.reason, { area: 'revenuecat_offerings_refresh' });
+    }
+
+    this.updateSubscriptionState(
+      customerResult.status === 'fulfilled'
+        ? customerResult.value
+        : this.snapshot.customerInfo,
+      offeringResult.status === 'fulfilled'
+        ? offeringResult.value.current
+        : this.snapshot.currentOffering,
+    );
+    this.setSnapshot({
+      ...this.snapshot,
+      statusMessage: getLoadStatusMessage(customerResult, offeringResult),
+    });
   }
 
   async purchase(aPackage: PurchasesPackage): Promise<PurchaseResult> {
@@ -263,6 +301,13 @@ class RevenueCatService {
     customerInfo: CustomerInfo,
     currentOffering: PurchasesOffering | null,
   ) {
+    this.updateSubscriptionState(customerInfo, currentOffering);
+  }
+
+  private updateSubscriptionState(
+    customerInfo: CustomerInfo | null,
+    currentOffering: PurchasesOffering | null,
+  ) {
     this.setSnapshot({
       ...this.snapshot,
       customerInfo,
@@ -296,6 +341,19 @@ function getUnsupportedMessage() {
     return 'Apple in-app purchases are available in the WordWiz iOS app.';
   }
   return 'Purchases need an EAS development build or TestFlight build. They are not available in Expo Go.';
+}
+
+function getLoadStatusMessage(
+  customerResult: PromiseSettledResult<CustomerInfo>,
+  offeringResult: PromiseSettledResult<{ current: PurchasesOffering | null }>,
+) {
+  if (customerResult.status === 'fulfilled' && offeringResult.status === 'fulfilled') {
+    return null;
+  }
+  if (offeringResult.status === 'rejected') {
+    return 'WordWiz Plus plans are temporarily unavailable. Please check your connection and try again.';
+  }
+  return 'Subscription status is temporarily unavailable. You can still choose a plan.';
 }
 
 function isPurchaseCancelled(error: unknown) {

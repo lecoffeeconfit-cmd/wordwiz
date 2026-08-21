@@ -545,6 +545,7 @@ export function CardsScreen({
         eyebrow="FLASHCARDS"
         title="Practice makes progress"
         subtitle="Tap the card, then tell us how it felt."
+        textCardBottomPadding={31}
       />
 
       {categorySelector}

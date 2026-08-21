@@ -821,7 +821,7 @@ export const styles = StyleSheet.create({
     fontWeight: '900',
   },
   homeAllTimeSummaryHeader: {
-    marginTop: 15,
+    marginTop: 5,
     marginBottom: 2,
     flexDirection: 'row',
     alignItems: 'center',
@@ -844,7 +844,7 @@ export const styles = StyleSheet.create({
     letterSpacing: 0.8,
   },
   homeIdeaGrid: {
-    marginTop: 11,
+    marginTop: 6,
     flexDirection: 'row',
     gap: 10,
   },
@@ -875,7 +875,7 @@ export const styles = StyleSheet.create({
     fontWeight: '700',
   },
   homeSkillCard: {
-    marginTop: 17,
+    marginTop: 8,
     padding: 17,
     borderRadius: 22,
     borderWidth: 1.5,
@@ -1547,7 +1547,7 @@ export const styles = StyleSheet.create({
   },
   listToolbar: {
     marginTop: 18,
-    marginBottom: 5,
+    marginBottom: 10,
     flexDirection: 'row',
     alignItems: 'center',
     minWidth: 0,
@@ -4243,18 +4243,18 @@ export const styles = StyleSheet.create({
     marginTop: 4,
     color: COLORS.ink,
     textAlign: 'center',
-    fontSize: 27,
-    lineHeight: 34,
+    fontSize: 30,
+    lineHeight: 38,
     fontWeight: '900',
     letterSpacing: -0.35,
   },
   questionDetailMeaningLong: {
-    fontSize: 23,
-    lineHeight: 30,
+    fontSize: 26,
+    lineHeight: 33,
   },
   questionDetailMeaningExtraLong: {
-    fontSize: 20,
-    lineHeight: 27,
+    fontSize: 22,
+    lineHeight: 29,
   },
   questionContextBlock: {
     width: '100%',

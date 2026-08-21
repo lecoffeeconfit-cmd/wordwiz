@@ -2,6 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  AccessibilityInfo,
   Alert,
   Animated,
   Easing,
@@ -158,6 +159,24 @@ function formatPublicStat(value: number | null | undefined) {
   return typeof value === 'number' && Number.isFinite(value) ? value.toLocaleString() : '—';
 }
 
+function useReducedMotionPreference() {
+  const [reduceMotion, setReduceMotion] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+    void AccessibilityInfo.isReduceMotionEnabled().then((enabled) => {
+      if (mounted) setReduceMotion(enabled);
+    });
+    const subscription = AccessibilityInfo.addEventListener('reduceMotionChanged', setReduceMotion);
+    return () => {
+      mounted = false;
+      subscription.remove();
+    };
+  }, []);
+
+  return reduceMotion;
+}
+
 function cacheKey(period: CommunityPeriod, page: number, level: CommunityLevel | null) {
   return `${period}:${level ?? 'all'}:${page}`;
 }
@@ -211,10 +230,16 @@ function CommunityAvatar({
   );
 }
 
-function TierBadge({ level, compact = false }: { level: CommunityLevel; compact?: boolean }) {
+function TierBadge({ level, compact = false, modal = false }: { level: CommunityLevel; compact?: boolean; modal?: boolean }) {
   const tier = levelPresentation(level);
   return (
-    <View style={[community.tierBadge, compact && community.tierBadgeCompact, { backgroundColor: tier.background }]}>
+    <View style={[
+      community.tierBadge,
+      compact && community.tierBadgeCompact,
+      modal && community.tierBadgeModal,
+      { backgroundColor: tier.background },
+      modal && { borderColor: level === 'Grandmaster' ? '#E9CF89' : tier.background },
+    ]}>
       <LevelPresentationIcon level={level} size={compact ? 12 : 13} />
       <Text style={[community.tierBadgeText, compact && community.tierBadgeTextCompact, { color: tier.color }]}>{tier.name}</Text>
     </View>
@@ -226,16 +251,25 @@ function Preference({
   detail,
   value,
   onChange,
+  status,
 }: {
   label: string;
   detail: string;
   value: boolean;
   onChange: (value: boolean) => void;
+  status?: string;
 }) {
   return (
     <View style={community.preference}>
       <View style={community.preferenceCopy}>
-        <Text style={community.preferenceTitle}>{label}</Text>
+        <View style={community.preferenceTitleRow}>
+          <Text style={community.preferenceTitle}>{label}</Text>
+          {status ? (
+            <Text style={[community.preferenceStatus, value ? community.preferenceStatusActive : community.preferenceStatusInactive]}>
+              {status}
+            </Text>
+          ) : null}
+        </View>
         <Text style={community.preferenceDetail}>{detail}</Text>
       </View>
       <Switch
@@ -385,6 +419,7 @@ function SocialXpExplainerSheet({ visible, onClose }: { visible: boolean; onClos
 }
 
 export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange?: (count: number) => void }) {
+  const reduceMotion = useReducedMotionPreference();
   const [section, setSection] = useState<CommunitySection>('leaderboard');
   const [period, setPeriod] = useState<CommunityPeriod>('weekly');
   const [leaderboardMode, setLeaderboardMode] = useState<'social' | 'collectors'>('social');
@@ -414,6 +449,7 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
   const [selectedLevel, setSelectedLevel] = useState<CommunityLevel | null>(null);
   const [friendCode, setFriendCode] = useState('');
   const [profileName, setProfileName] = useState('');
+  const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [profileVisible, setProfileVisible] = useState(true);
   const [leaderboardOptIn, setLeaderboardOptIn] = useState(true);
   const [requestsEnabled, setRequestsEnabled] = useState(true);
@@ -802,6 +838,7 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
         await deactivateCommunityPushTokens().catch(() => undefined);
       }
       await refreshCommunity();
+      setIsEditingProfile(false);
     } catch (error) {
       Alert.alert('Could not save profile', error instanceof Error ? error.message : 'Please try again.');
     } finally {
@@ -911,9 +948,16 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
   }, [selectedLeaderboardEntry]);
 
   const openProfileEditor = useCallback(() => {
-    setProfileName(context?.profile?.displayName ?? '');
+    if (!context?.profile) return;
+    setProfileName(context.profile.displayName);
+    setProfileVisible(context.profile.profileVisible);
+    setLeaderboardOptIn(context.profile.leaderboardOptIn);
+    setRequestsEnabled(context.profile.friendRequestsEnabled);
+    setNudgesEnabled(context.profile.nudgesEnabled);
+    setPushEnabled(context.profile.pushNudgesEnabled);
+    setIsEditingProfile(true);
     setContext(null);
-  }, [context?.profile?.displayName]);
+  }, [context?.profile]);
 
   const selectedConnection = selectedLeaderboardEntry
     ? connections.find((connection) => connection.publicId === selectedLeaderboardEntry.publicId)
@@ -1277,7 +1321,7 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
           </Text>
           {leaderboardLoading ? <ActivityIndicator size="small" color={COLORS.purple} /> : null}
         </View>
-        {leaderboard.map((entry) => {
+        {leaderboard.map((entry, index) => {
           const tier = levelPresentation(entry.level);
           return (
             <Pressable
@@ -1285,7 +1329,7 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
               accessibilityRole="button"
               accessibilityLabel={`Open ${entry.displayName}'s Connect profile`}
               onPress={() => setSelectedLeaderboardEntry(entry)}
-              style={({ pressed }) => [community.rankRow, entry.isMe && community.rankRowMe, pressed && community.rankRowPressed]}
+              style={({ pressed }) => [community.rankRow, index > 0 && community.rankRowAfter, entry.isMe && community.rankRowMe, pressed && community.rankRowPressed]}
             >
               <MiniLeaderboardCrest
                 rank={entry.rank}
@@ -1587,18 +1631,32 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
       <ScrollView contentContainerStyle={community.container}>
         <View style={community.hero}>
           <Ionicons name="people" size={28} color={COLORS.purpleDark} />
-          <Text style={community.heroTitle}>Connect with learners</Text>
-          <Text style={community.heroText}>Create a public display name to join optional rankings and connect with friends. Your words, definitions, and learning data stay private.</Text>
+          <Text style={community.heroTitle}>{isEditingProfile ? 'Connect profile settings' : 'Connect with learners'}</Text>
+          <Text style={community.heroText}>
+            {isEditingProfile
+              ? 'Choose what other learners can see. Your words, definitions, and learning data always stay private.'
+              : 'Create a public display name to join optional rankings and connect with friends. Your words, definitions, and learning data stay private.'}
+          </Text>
         </View>
         <Text style={community.fieldLabel}>Display name</Text>
         <TextInput value={profileName} onChangeText={setProfileName} placeholder="3–24 characters" placeholderTextColor={COLORS.muted} style={community.input} maxLength={24} />
-        <Preference label="Show my Connect profile" detail="Turn this off to stay out of public profiles and leaderboards. Friends can still connect privately." value={profileVisible} onChange={setProfileVisible} />
+        <Preference
+          label="Show my Connect profile"
+          detail={profileVisible
+            ? 'Visible to people browsing Connect. Turn this off to use private mode.'
+            : 'Hidden from public browsing. Friends can still connect using your code.'}
+          value={profileVisible}
+          onChange={setProfileVisible}
+          status={profileVisible ? 'PUBLIC' : 'PRIVATE'}
+        />
         <Preference label="Appear on leaderboards" detail="Optional. You can still use friends privately." value={leaderboardOptIn} onChange={setLeaderboardOptIn} />
         <Preference label="Allow friend requests" detail="People need your code to find you." value={requestsEnabled} onChange={setRequestsEnabled} />
         <Preference label="Allow study nudges" detail="Friends can send a gentle reminder." value={nudgesEnabled} onChange={setNudgesEnabled} />
         <Preference label="Push nudges" detail="We will ask for notification permission only after setup." value={pushEnabled} onChange={setPushEnabled} />
         <Pressable disabled={saving || profileName.trim().length < 3} style={[community.primaryButton, (saving || profileName.trim().length < 3) && community.disabledButton]} onPress={() => void saveProfile()}>
-          <Text style={community.primaryButtonText}>{saving ? 'Creating profile…' : 'Create Connect profile'}</Text>
+          <Text style={community.primaryButtonText}>
+            {saving ? (isEditingProfile ? 'Saving settings…' : 'Creating profile…') : isEditingProfile ? 'Save Connect settings' : 'Create Connect profile'}
+          </Text>
         </Pressable>
       </ScrollView>
     );
@@ -1709,44 +1767,66 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
       <Modal
         visible={Boolean(selectedLeaderboardEntry)}
         transparent
-        animationType="fade"
+        animationType={reduceMotion ? 'none' : 'slide'}
         onRequestClose={() => setSelectedLeaderboardEntry(null)}
       >
         <View style={community.memberSheetBackdrop}>
-          <View style={community.memberSheet}>
+          <ScrollView style={community.memberSheetScroll} contentContainerStyle={community.memberSheet} showsVerticalScrollIndicator={false} bounces={false}>
+            <View pointerEvents="none" accessible={false} style={community.memberSheetHandle} />
             <Pressable onPress={() => setSelectedLeaderboardEntry(null)} accessibilityLabel="Close profile" style={community.memberSheetClose}>
               <Ionicons name="close" size={20} color={COLORS.muted} />
             </Pressable>
             {selectedLeaderboardEntry && selectedTier ? (
               <>
-                <CommunityAvatar name={selectedLeaderboardEntry.displayName} avatarPath={selectedLeaderboardEntry.avatarPath} large />
-                <Text style={community.memberSheetName}>{selectedLeaderboardEntry.displayName}{selectedLeaderboardEntry.isMe ? ' (you)' : ''}</Text>
-                <TierBadge level={selectedLeaderboardEntry.level} />
-                <Text style={community.memberSheetScore}>#{selectedLeaderboardEntry.rank} · {selectedLeaderboardEntry.xp.toLocaleString()} Social XP</Text>
+                <View style={community.memberSheetIdentity}>
+                  <View
+                    style={[
+                      community.memberSheetAvatarRing,
+                      { borderColor: selectedTier.color },
+                      selectedLeaderboardEntry.level === 'Grandmaster' && community.memberSheetAvatarRingGrandmaster,
+                    ]}
+                  >
+                    <CommunityAvatar name={selectedLeaderboardEntry.displayName} avatarPath={selectedLeaderboardEntry.avatarPath} large />
+                  </View>
+                  <Text style={community.memberSheetName}>{selectedLeaderboardEntry.displayName}{selectedLeaderboardEntry.isMe ? ' (you)' : ''}</Text>
+                  <TierBadge level={selectedLeaderboardEntry.level} modal />
+                  <Text style={community.memberSheetScore}>
+                    <Text style={community.memberSheetRank}>#{selectedLeaderboardEntry.rank}</Text>
+                    <Text style={community.memberSheetScoreSeparator}> · </Text>
+                    <Text>{selectedLeaderboardEntry.xp.toLocaleString()} Social XP</Text>
+                  </Text>
+                </View>
                 <View style={community.memberSheetStats}>
-                  <View style={community.memberSheetStat}>
-                    <Text style={community.memberSheetStatValue}>{formatPublicStat(selectedLeaderboardEntry.wordCount)}</Text>
-                    <Text style={community.memberSheetStatLabel}>WORDS</Text>
-                  </View>
-                  <View style={community.memberSheetStat}>
-                    <Text style={community.memberSheetStatValue}>{formatPublicStat(selectedLeaderboardEntry.achievementsUnlocked)}</Text>
-                    <Text style={community.memberSheetStatLabel}>UNLOCKED</Text>
-                  </View>
-                  <View style={community.memberSheetStat}>
-                    <Text style={community.memberSheetStatValue}>{formatPublicStat(selectedLeaderboardEntry.quizCount)}</Text>
-                    <Text style={community.memberSheetStatLabel}>QUIZZES</Text>
-                  </View>
-                  <View style={community.memberSheetStat}>
-                    <Text style={community.memberSheetStatValue}>{formatPublicStat(selectedLeaderboardEntry.flashcardReviewCount)}</Text>
-                    <Text style={community.memberSheetStatLabel}>CARD REVIEWS</Text>
-                  </View>
-                  <View style={community.memberSheetStat}>
-                    <Text style={community.memberSheetStatValue}>{formatPublicStat(selectedLeaderboardEntry.activeStudyDays30d)}</Text>
-                    <Text style={community.memberSheetStatLabel}>ACTIVE DAYS · 30D</Text>
+                  <Text style={community.memberSheetStatsTitle}>LEARNING SNAPSHOT</Text>
+                  <View style={community.memberSheetStatsGrid}>
+                    <View style={community.memberSheetStat}>
+                      <Text style={community.memberSheetStatValue}>{formatPublicStat(selectedLeaderboardEntry.wordCount)}</Text>
+                      <Text style={community.memberSheetStatLabel}>WORDS</Text>
+                    </View>
+                    <View style={community.memberSheetStat}>
+                      <Text style={community.memberSheetStatValue}>{formatPublicStat(selectedLeaderboardEntry.achievementsUnlocked)}</Text>
+                      <Text style={community.memberSheetStatLabel}>UNLOCKED</Text>
+                    </View>
+                    <View style={community.memberSheetStat}>
+                      <Text style={community.memberSheetStatValue}>{formatPublicStat(selectedLeaderboardEntry.quizCount)}</Text>
+                      <Text style={community.memberSheetStatLabel}>QUIZZES</Text>
+                    </View>
+                    <View style={community.memberSheetStat}>
+                      <Text style={community.memberSheetStatValue}>{formatPublicStat(selectedLeaderboardEntry.flashcardReviewCount)}</Text>
+                      <Text style={community.memberSheetStatLabel}>CARD REVIEWS</Text>
+                    </View>
+                    <View style={community.memberSheetStat}>
+                      <Text style={community.memberSheetStatValue}>{formatPublicStat(selectedLeaderboardEntry.activeStudyDays30d)}</Text>
+                      <Text style={community.memberSheetStatLabel}>ACTIVE DAYS</Text>
+                      <Text style={community.memberSheetStatCaption}>Last 30 days</Text>
+                    </View>
                   </View>
                 </View>
                 {selectedLeaderboardEntry.isMe ? (
-                  <Text style={community.memberSheetHelp}>This is your public Connect profile. Keep learning anywhere in WordWiz to grow your Social XP.</Text>
+                  <View style={[community.memberSheetInfo, community.memberSheetInfoOwn]}>
+                    <Ionicons name="sparkles-outline" size={15} color={COLORS.purpleDark} />
+                    <Text style={community.memberSheetInfoText}>This is your public Connect profile. Keep learning anywhere in WordWiz to grow your Social XP.</Text>
+                  </View>
                 ) : selectedConnection?.status === 'accepted' ? (
                   <View style={community.nudgePicker}>
                     <Text style={community.nudgePickerTitle}>Send a nudge</Text>
@@ -1799,8 +1879,15 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
                   </View>
                 ) : (
                   <>
-                    <Text style={community.memberSheetHelp}>Connect first, then you can send friendly study nudges whenever it makes sense.</Text>
-                    <Pressable disabled={leaderboardActionLoading} onPress={() => void addLeaderboardFriend()} style={[community.memberSheetPrimary, leaderboardActionLoading && community.disabledButton]}>
+                    <View style={community.memberSheetInfo}>
+                      <Ionicons name="people-outline" size={15} color={COLORS.purpleDark} />
+                      <Text style={community.memberSheetInfoText}>Connect first, then you can send friendly study nudges whenever it makes sense.</Text>
+                    </View>
+                    <Pressable
+                      disabled={leaderboardActionLoading}
+                      onPress={() => void addLeaderboardFriend()}
+                      style={({ pressed }) => [community.memberSheetPrimary, pressed && community.memberSheetPrimaryPressed, leaderboardActionLoading && community.disabledButton]}
+                    >
                       {leaderboardActionLoading ? <ActivityIndicator color={COLORS.white} /> : <><Ionicons name="person-add-outline" size={18} color={COLORS.white} /><Text style={community.memberSheetPrimaryText}>Connect</Text></>}
                     </Pressable>
                   </>
@@ -1817,7 +1904,7 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
                         { text: 'Block', style: 'destructive', onPress: () => void blockLeaderboardMember() },
                       ],
                     )}
-                    style={[community.memberSheetBlock, leaderboardActionLoading && community.disabledButton]}
+                    style={({ pressed }) => [community.memberSheetBlock, pressed && community.memberSheetBlockPressed, leaderboardActionLoading && community.disabledButton]}
                 >
                   <Ionicons name="ban-outline" size={17} color="#D9627C" />
                   <Text style={community.memberSheetBlockText}>Block user</Text>
@@ -1836,7 +1923,7 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
                       { text: 'Other', onPress: () => void reportLeaderboardMember('other') },
                     ],
                   )}
-                  style={[community.memberSheetReport, leaderboardActionLoading && community.disabledButton]}
+                  style={({ pressed }) => [community.memberSheetReport, pressed && community.memberSheetReportPressed, leaderboardActionLoading && community.disabledButton]}
                 >
                   <Ionicons name="flag-outline" size={17} color={COLORS.muted} />
                   <Text style={community.memberSheetReportText}>Report user</Text>
@@ -1845,7 +1932,7 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
               ) : null}
               </>
             ) : null}
-          </View>
+          </ScrollView>
         </View>
       </Modal>
     </>
@@ -1863,7 +1950,11 @@ const community = StyleSheet.create({
   input: { minHeight: 52, paddingHorizontal: 16, borderWidth: 1.5, borderColor: COLORS.border, borderRadius: 16, backgroundColor: COLORS.white, color: COLORS.ink, fontSize: 16, fontWeight: '700' },
   preference: { flexDirection: 'row', alignItems: 'center', padding: 16, borderRadius: 18, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, gap: 12 },
   preferenceCopy: { flex: 1, gap: 3 },
-  preferenceTitle: { color: COLORS.ink, fontSize: 16, fontWeight: '800' },
+  preferenceTitleRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
+  preferenceTitle: { flex: 1, color: COLORS.ink, fontSize: 16, fontWeight: '800' },
+  preferenceStatus: { alignSelf: 'flex-start', marginTop: 2, paddingHorizontal: 9, paddingVertical: 4, borderRadius: 9, overflow: 'hidden', borderWidth: 1, fontSize: 9, lineHeight: 11, fontWeight: '900', letterSpacing: 0.8 },
+  preferenceStatusActive: { color: '#237C63', backgroundColor: '#E2F8EF', borderColor: '#C5F0E1' },
+  preferenceStatusInactive: { color: '#655D85', backgroundColor: '#F0EDF8', borderColor: '#E3DDF2' },
   preferenceDetail: { color: COLORS.muted, fontSize: 13, lineHeight: 18, fontWeight: '600' },
   primaryButton: { minHeight: 54, marginTop: 8, alignItems: 'center', justifyContent: 'center', borderRadius: 18, backgroundColor: COLORS.blue, ...SOFT_SHADOW },
   primaryButtonText: { color: COLORS.white, fontSize: 16, fontWeight: '900', letterSpacing: 0.3 },
@@ -1995,6 +2086,7 @@ const community = StyleSheet.create({
   leaderboardStatus: { minHeight: 20, flexDirection: 'row', alignItems: 'center', gap: 7, paddingHorizontal: 3 },
   leaderboardStatusText: { color: COLORS.muted, fontSize: 12, fontWeight: '800' },
   rankRow: { minHeight: 68, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, borderWidth: 1, borderColor: COLORS.border, borderRadius: 18, backgroundColor: COLORS.surface },
+  rankRowAfter: { marginTop: 5 },
   rankRowMe: { borderColor: '#B6DBFF', backgroundColor: '#F3F9FF' },
   rankRowPressed: { opacity: 0.78, transform: [{ scale: 0.992 }] },
   rankOneAvatarFrame: { padding: 2, borderRadius: 16, backgroundColor: '#D9A72B', boxShadow: '0 4px 12px rgba(185, 132, 22, 0.22)' },
@@ -2009,6 +2101,7 @@ const community = StyleSheet.create({
   xp: { color: COLORS.blue, fontSize: 16, fontWeight: '900' },
   tierBadge: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 8, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 12 },
   tierBadgeCompact: { marginTop: 0, paddingHorizontal: 7, paddingVertical: 4, borderRadius: 9 },
+  tierBadgeModal: { marginTop: 0, paddingHorizontal: 11, paddingVertical: 5, borderWidth: 1, borderRadius: 13 },
   tierBadgeText: { fontSize: 12, fontWeight: '900' },
   tierBadgeTextCompact: { fontSize: 10 },
   empty: { alignItems: 'center', padding: 26, borderRadius: 20, borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.surface, gap: 8 },
@@ -2025,22 +2118,37 @@ const community = StyleSheet.create({
   loadMoreText: { marginTop: 2, color: COLORS.muted, fontSize: 10, fontWeight: '700' },
   leaderboardEnd: { marginTop: 13, color: COLORS.muted, fontSize: 11, fontWeight: '700', textAlign: 'center' },
   memberSheetBackdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(31, 33, 70, 0.33)' },
-  memberSheet: { maxHeight: '84%', alignItems: 'center', padding: 22, paddingTop: 28, borderTopLeftRadius: 30, borderTopRightRadius: 30, backgroundColor: COLORS.surface, gap: 7 },
+  memberSheetScroll: { maxHeight: '84%', flexGrow: 0, flexShrink: 1, alignSelf: 'stretch', overflow: 'hidden', borderTopLeftRadius: 30, borderTopRightRadius: 30, backgroundColor: COLORS.surface, boxShadow: '0 -8px 22px rgba(41, 35, 80, 0.10)' },
+  memberSheet: { alignItems: 'center', padding: 22, paddingTop: 27, paddingBottom: 40, gap: 7 },
+  memberSheetHandle: { position: 'absolute', top: 10, width: 38, height: 4, borderRadius: 2, backgroundColor: '#D8D2E8' },
   memberSheetClose: { position: 'absolute', top: 13, right: 14, width: 34, height: 34, alignItems: 'center', justifyContent: 'center', borderRadius: 12, backgroundColor: '#F4F1FA' },
-  memberSheetName: { marginTop: 7, color: COLORS.ink, fontSize: 22, fontWeight: '900', textAlign: 'center' },
-  memberSheetScore: { color: COLORS.muted, fontSize: 13, fontWeight: '800' },
-  memberSheetStats: { width: '100%', flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 7, marginTop: 5, padding: 9, borderRadius: 16, backgroundColor: '#F8F5FF' },
-  memberSheetStat: { minWidth: '28%', flexGrow: 1, alignItems: 'center', paddingHorizontal: 4, paddingVertical: 5 },
-  memberSheetStatValue: { color: COLORS.greenDark, fontSize: 18, fontWeight: '900' },
-  memberSheetStatLabel: { marginTop: 2, color: COLORS.muted, fontSize: 8, fontWeight: '900', letterSpacing: 0.35, textAlign: 'center' },
-  memberSheetHelp: { marginTop: 8, color: COLORS.muted, fontSize: 13, lineHeight: 19, fontWeight: '600', textAlign: 'center' },
-  memberSheetPrimary: { width: '100%', minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, marginTop: 10, borderRadius: 16, backgroundColor: COLORS.purpleDark },
+  memberSheetIdentity: { alignItems: 'center', gap: 5 },
+  memberSheetAvatarRing: { padding: 2, borderWidth: 2, borderRadius: 29, backgroundColor: COLORS.white, boxShadow: '0 4px 12px rgba(72, 61, 135, 0.10)' },
+  memberSheetAvatarRingGrandmaster: { borderColor: '#D9A72B', boxShadow: '0 5px 15px rgba(185, 132, 22, 0.20)' },
+  memberSheetName: { color: COLORS.ink, fontSize: 22, lineHeight: 27, fontWeight: '900', textAlign: 'center' },
+  memberSheetScore: { color: COLORS.muted, fontSize: 13, lineHeight: 17, fontWeight: '800' },
+  memberSheetRank: { color: COLORS.ink, fontWeight: '900' },
+  memberSheetScoreSeparator: { color: '#B3ABC9', fontWeight: '700' },
+  memberSheetStats: { width: '100%', marginTop: 4, padding: 10, borderWidth: 1, borderColor: '#E9E2F7', borderRadius: 20, backgroundColor: '#F8F5FF', gap: 7 },
+  memberSheetStatsTitle: { marginLeft: 3, color: COLORS.purple, fontSize: 9, fontWeight: '900', letterSpacing: 1 },
+  memberSheetStatsGrid: { width: '100%', flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 7 },
+  memberSheetStat: { minWidth: '28%', minHeight: 53, flexGrow: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4, paddingVertical: 6, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.72)' },
+  memberSheetStatValue: { color: COLORS.greenDark, fontSize: 20, lineHeight: 24, fontWeight: '900' },
+  memberSheetStatLabel: { marginTop: 2, color: COLORS.muted, fontSize: 8, lineHeight: 10, fontWeight: '900', letterSpacing: 0.45, textAlign: 'center' },
+  memberSheetStatCaption: { marginTop: 1, color: '#9A92B3', fontSize: 7, lineHeight: 9, fontWeight: '700', textAlign: 'center' },
+  memberSheetInfo: { width: '100%', flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 5, paddingHorizontal: 12, paddingVertical: 9, borderRadius: 14, backgroundColor: '#F7F4FF' },
+  memberSheetInfoOwn: { backgroundColor: '#F4F7FF' },
+  memberSheetInfoText: { flex: 1, color: COLORS.muted, fontSize: 11, lineHeight: 16, fontWeight: '700', textAlign: 'center' },
+  memberSheetPrimary: { width: '100%', minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, marginTop: 2, borderRadius: 16, backgroundColor: COLORS.purpleDark, ...SOFT_SHADOW },
+  memberSheetPrimaryPressed: { opacity: 0.94, transform: [{ scale: 0.986 }] },
   memberSheetPrimaryText: { color: COLORS.white, fontSize: 15, fontWeight: '900' },
   memberSheetNotice: { width: '100%', flexDirection: 'row', alignItems: 'center', gap: 9, marginTop: 10, padding: 13, borderRadius: 15, backgroundColor: COLORS.purplePale },
   memberSheetNoticeText: { flex: 1, color: COLORS.purpleDark, fontSize: 12, lineHeight: 17, fontWeight: '700' },
-  memberSheetBlock: { width: '100%', minHeight: 42, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, marginTop: 6, borderRadius: 14, borderWidth: 1, borderColor: '#F4C6D1', backgroundColor: '#FFF4F6' },
+  memberSheetBlock: { width: '100%', minHeight: 40, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, marginTop: 10, borderRadius: 14, borderWidth: 1, borderColor: '#F0CBD4', backgroundColor: '#FFF7F8' },
+  memberSheetBlockPressed: { opacity: 0.76 },
   memberSheetBlockText: { color: '#C94D69', fontSize: 13, fontWeight: '900' },
-  memberSheetReport: { width: '100%', minHeight: 42, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, marginTop: 2, borderRadius: 14 },
+  memberSheetReport: { width: '100%', minHeight: 40, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, marginTop: 8, borderRadius: 14 },
+  memberSheetReportPressed: { opacity: 0.62 },
   memberSheetReportText: { color: COLORS.muted, fontSize: 13, fontWeight: '800' },
   nudgePicker: { width: '100%', marginTop: 8, gap: 8 },
   nudgePickerTitle: { color: COLORS.ink, fontSize: 16, fontWeight: '900', textAlign: 'center' },

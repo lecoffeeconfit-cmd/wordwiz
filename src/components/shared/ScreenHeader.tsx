@@ -12,6 +12,7 @@ export function ScreenHeader({
   action,
   meta,
   bottomPadding,
+  textCardBottomPadding,
 }: {
   eyebrow: string;
   title: string;
@@ -19,6 +20,7 @@ export function ScreenHeader({
   action?: ReactNode;
   meta?: ReactNode;
   bottomPadding?: number;
+  textCardBottomPadding?: number;
 }) {
   const theme = getHeaderTheme(eyebrow);
 
@@ -59,7 +61,12 @@ export function ScreenHeader({
         </View>
         {action ? <View style={styles.screenHeaderAction}>{action}</View> : null}
         {meta && !action ? <View style={styles.screenHeaderMeta}>{meta}</View> : null}
-        <View style={styles.headerTextCard}>
+        <View
+          style={[
+            styles.headerTextCard,
+            textCardBottomPadding !== undefined && { paddingBottom: textCardBottomPadding },
+          ]}
+        >
           <Text style={[styles.eyebrow, { color: theme.accent }]}>
             {eyebrow}
           </Text>

@@ -2069,7 +2069,7 @@ export function QuizScreen({
           </View>
         ) : (
           <Text
-            adjustsFontSizeToFit
+            adjustsFontSizeToFit={isQuestionStatement}
             minimumFontScale={0.62}
             style={[
               styles.questionWord,

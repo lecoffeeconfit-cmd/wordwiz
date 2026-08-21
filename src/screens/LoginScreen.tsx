@@ -53,7 +53,9 @@ export function LoginScreen({
   const emailInputRef = useRef<TextInput>(null);
   const passwordInputRef = useRef<TextInput>(null);
   const passwordConfirmationInputRef = useRef<TextInput>(null);
+  const primaryActionRef = useRef<View>(null);
   const focusedInputRef = useRef<TextInput | null>(null);
+  const focusedVisibilityTargetRef = useRef<TextInput | View | null>(null);
   const scrollOffsetRef = useRef(0);
   const keyboardHeightRef = useRef(0);
   const focusScrollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -61,6 +63,7 @@ export function LoginScreen({
   const isCreateMode = mode === 'create';
   const isForgotMode = mode === 'forgot';
   const isRecoveryMode = isPasswordRecovery;
+  const keepsLoginActionVisible = !isCreateMode && !isForgotMode && !isRecoveryMode;
 
   useEffect(() => {
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
@@ -71,12 +74,16 @@ export function LoginScreen({
       // the visibility check after the keyboard reports its final height so
       // the focused field (especially Password) stays above it.
       if (focusedInputRef.current) {
-        keepFocusedInputVisible(focusedInputRef.current);
+        keepFocusedInputVisible(
+          focusedInputRef.current,
+          focusedVisibilityTargetRef.current,
+        );
       }
     });
     const keyboardHideSubscription = Keyboard.addListener(hideEvent, () => {
       keyboardHeightRef.current = 0;
       focusedInputRef.current = null;
+      focusedVisibilityTargetRef.current = null;
     });
 
     return () => {
@@ -88,16 +95,20 @@ export function LoginScreen({
     };
   }, []);
 
-  function keepFocusedInputVisible(input: TextInput | null) {
+  function keepFocusedInputVisible(
+    input: TextInput | null,
+    visibilityTarget: TextInput | View | null = input,
+  ) {
     focusedInputRef.current = input;
+    focusedVisibilityTargetRef.current = visibilityTarget;
     if (focusScrollTimer.current) {
       clearTimeout(focusScrollTimer.current);
     }
 
     focusScrollTimer.current = setTimeout(() => {
-      if (!input || keyboardHeightRef.current === 0) return;
+      if (!visibilityTarget || keyboardHeightRef.current === 0) return;
 
-      input.measureInWindow((_x, y, _width, height) => {
+      visibilityTarget.measureInWindow((_x, y, _width, height) => {
         const keyboardTop = Dimensions.get('window').height - keyboardHeightRef.current;
         const inputBottom = y + height;
         const spaceAboveKeyboard = 20;
@@ -352,7 +363,10 @@ export function LoginScreen({
             autoCapitalize="none"
             keyboardType="email-address"
             inputRef={emailInputRef}
-            onFocus={() => keepFocusedInputVisible(emailInputRef.current)}
+            onFocus={() => keepFocusedInputVisible(
+              emailInputRef.current,
+              keepsLoginActionVisible ? primaryActionRef.current : emailInputRef.current,
+            )}
             returnKeyType={isForgotMode ? 'done' : 'next'}
             blurOnSubmit={isForgotMode}
             onSubmitEditing={isForgotMode
@@ -368,7 +382,10 @@ export function LoginScreen({
               placeholder="Your password"
               secureTextEntry
               inputRef={passwordInputRef}
-              onFocus={() => keepFocusedInputVisible(passwordInputRef.current)}
+              onFocus={() => keepFocusedInputVisible(
+                passwordInputRef.current,
+                keepsLoginActionVisible ? primaryActionRef.current : passwordInputRef.current,
+              )}
               returnKeyType="done"
               onSubmitEditing={() => { void submit(); }}
             />
@@ -417,28 +434,30 @@ export function LoginScreen({
             </Pressable>
           )}
 
-          <Pressable
-            onPress={submit}
-            disabled={isSubmitting}
-            style={({ pressed }) => [
-              styles.authPrimaryButton,
-              isSubmitting && styles.authPrimaryButtonDisabled,
-              pressed && !isSubmitting && styles.primaryButtonPressed,
-            ]}
-          >
-            <Text style={styles.authPrimaryButtonText}>
-              {isSubmitting
-                ? 'One moment...'
-                : isCreateMode
-                  ? 'Create account'
-                  : isRecoveryMode
-                    ? 'Save new password'
-                  : isForgotMode
-                    ? 'Send reset link'
-                    : 'Log in'}
-            </Text>
-            <Ionicons name="arrow-forward" size={20} color={COLORS.white} />
-          </Pressable>
+          <View ref={primaryActionRef}>
+            <Pressable
+              onPress={submit}
+              disabled={isSubmitting}
+              style={({ pressed }) => [
+                styles.authPrimaryButton,
+                isSubmitting && styles.authPrimaryButtonDisabled,
+                pressed && !isSubmitting && styles.primaryButtonPressed,
+              ]}
+            >
+              <Text style={styles.authPrimaryButtonText}>
+                {isSubmitting
+                  ? 'One moment...'
+                  : isCreateMode
+                    ? 'Create account'
+                    : isRecoveryMode
+                      ? 'Save new password'
+                      : isForgotMode
+                        ? 'Send reset link'
+                        : 'Log in'}
+              </Text>
+              <Ionicons name="arrow-forward" size={20} color={COLORS.white} />
+            </Pressable>
+          </View>
 
           {!isRecoveryMode && <View style={styles.authSwitchRow}>
             <Text style={styles.authSwitchText}>

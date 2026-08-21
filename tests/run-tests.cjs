@@ -227,6 +227,8 @@ test('subscription access uses the configured public iOS key and active plus ent
   assert.match(envSource, /EXPO_PUBLIC_REVENUECAT_IOS_API_KEY/);
   assert.match(revenueCatSource, /env\.revenueCatIosApiKey/);
   assert.match(revenueCatSource, /entitlements\.active\[PLUS_ENTITLEMENT_ID\]/);
+  assert.match(revenueCatSource, /Promise\.allSettled/);
+  assert.match(revenueCatSource, /revenuecat_offerings/);
   assert.doesNotMatch(revenueCatSource, /test[_-]?store/i);
 });
 
