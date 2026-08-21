@@ -5,7 +5,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import * as WebBrowser from 'expo-web-browser';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, AppState, Platform, Pressable, Text, View } from 'react-native';
+import { Alert, AppState, PanResponder, Platform, Pressable, Text, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BottomTabs } from '../components';
 import {
@@ -3059,6 +3059,24 @@ function OnboardingScreen({
   ];
   const currentPage = pages[page];
   const isLastPage = page === pages.length - 1;
+  const onboardingSwipeResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_, gestureState) =>
+          Math.abs(gestureState.dx) > 12 &&
+          Math.abs(gestureState.dx) > Math.abs(gestureState.dy),
+        onPanResponderRelease: (_, gestureState) => {
+          if (isSaving) return;
+
+          if (gestureState.dx < -40 && !isLastPage) {
+            setPage((current) => current + 1);
+          } else if (gestureState.dx > 40 && page > 0) {
+            setPage((current) => current - 1);
+          }
+        },
+      }),
+    [isLastPage, isSaving, page],
+  );
 
   async function finish(enableReminder: boolean) {
     setIsSaving(true);
@@ -3087,48 +3105,50 @@ function OnboardingScreen({
           </Pressable>
         ) : null}
       </View>
-      <View style={styles.onboardingHero}>
-        <View style={styles.onboardingIcon}>
-          <Ionicons name={currentPage.icon} size={34} color={COLORS.white} />
-        </View>
-        <Text style={styles.onboardingEyebrow}>{currentPage.eyebrow}</Text>
-        <Text style={styles.onboardingTitle}>{currentPage.title}</Text>
-        <Text style={styles.onboardingText}>
-          {currentPage.text}
-        </Text>
-      </View>
-
-      <View style={styles.onboardingSteps}>
-        {currentPage.steps.map(([icon, title, text], index) => (
-          <View key={title} style={styles.onboardingStep}>
-            <View style={styles.onboardingStepMarker}>
-              <Text style={styles.onboardingStepNumber}>{index + 1}</Text>
-            </View>
-            <View style={styles.onboardingStepIcon}>
-              <Ionicons
-                name={icon as keyof typeof Ionicons.glyphMap}
-                size={20}
-                color={COLORS.purpleDark}
-              />
-            </View>
-            <View style={styles.onboardingStepCopy}>
-              <Text style={styles.onboardingStepTitle}>{title}</Text>
-              <Text style={styles.onboardingStepText}>{text}</Text>
-            </View>
+      <View {...onboardingSwipeResponder.panHandlers}>
+        <View style={styles.onboardingHero}>
+          <View style={styles.onboardingIcon}>
+            <Ionicons name={currentPage.icon} size={34} color={COLORS.white} />
           </View>
-        ))}
-      </View>
+          <Text style={styles.onboardingEyebrow}>{currentPage.eyebrow}</Text>
+          <Text style={styles.onboardingTitle}>{currentPage.title}</Text>
+          <Text style={styles.onboardingText}>
+            {currentPage.text}
+          </Text>
+        </View>
 
-      <View style={styles.onboardingPageDots}>
-        {pages.map((item, index) => (
-          <View
-            key={item.title}
-            style={[
-              styles.onboardingPageDot,
-              index === page && styles.onboardingPageDotActive,
-            ]}
-          />
-        ))}
+        <View style={styles.onboardingSteps}>
+          {currentPage.steps.map(([icon, title, text], index) => (
+            <View key={title} style={styles.onboardingStep}>
+              <View style={styles.onboardingStepMarker}>
+                <Text style={styles.onboardingStepNumber}>{index + 1}</Text>
+              </View>
+              <View style={styles.onboardingStepIcon}>
+                <Ionicons
+                  name={icon as keyof typeof Ionicons.glyphMap}
+                  size={20}
+                  color={COLORS.purpleDark}
+                />
+              </View>
+              <View style={styles.onboardingStepCopy}>
+                <Text style={styles.onboardingStepTitle}>{title}</Text>
+                <Text style={styles.onboardingStepText}>{text}</Text>
+              </View>
+            </View>
+          ))}
+        </View>
+
+        <View style={styles.onboardingPageDots}>
+          {pages.map((item, index) => (
+            <View
+              key={item.title}
+              style={[
+                styles.onboardingPageDot,
+                index === page && styles.onboardingPageDotActive,
+              ]}
+            />
+          ))}
+        </View>
       </View>
       <Pressable
         disabled={isSaving}

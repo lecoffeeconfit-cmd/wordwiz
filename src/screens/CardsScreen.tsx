@@ -5,7 +5,7 @@ import { COLORS } from '../constants/theme';
 import type { AnalyticsData, LegalPage, QuizAnswer, QuizProgress, QuizQuestion, ReminderSettings, SortMode, Word } from '../types';
 import { styles } from '../styles';
 import { buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, formatWordAddedDate, formatWordFlaggedDate, getCardSwipeDirection, getCompleteFlashcardDefinition, getDayKey, getNewStudyWords, getRecentDays, getStreakMessage, getStreakWeek, getStudySets, getWordLearningContexts, getWordMastery, getWordMasteryCategoryForWord, isHorizontalCardGesture, isPersonalLibraryWord, NEW_STUDY_GROUP, shuffle, sortWordsAlphabetically, WORD_MASTERY_CATEGORIES, type WordMasteryCategoryId } from '../utils';
-import { DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, ProgressFill, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, SpeakButton, SpeakDefinitionButton, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
+import { DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, ProgressFill, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, SpeakButton, SpeakDefinitionButton, StreakDay, WordInfoPanel, WordInfoReportButton, WordRow, SortButton } from '../components';
 
 type CardsStudyGroupId = WordMasteryCategoryId | 'new' | 'flagged' | 'sets' | `set:${string}`;
 
@@ -779,7 +779,7 @@ export function CardsScreen({
                   Full meaning: {current.definition}
                 </Text>
               )}
-              <WordInfoPanel word={current} onEdit={onEditWord} onReportIncorrectInfo={onReportIncorrectInfo} />
+              <WordInfoPanel word={current} onEdit={onEditWord} />
               <View style={styles.exampleBox}>
                 <Ionicons
                   name="chatbox-ellipses-outline"
@@ -796,6 +796,12 @@ export function CardsScreen({
                   ))}
                 </View>
               </View>
+              {onReportIncorrectInfo ? (
+                <WordInfoReportButton
+                  word={current}
+                  onReportIncorrectInfo={onReportIncorrectInfo}
+                />
+              ) : null}
             </>
           ) : (
             <View style={styles.tapHint}>

@@ -23,8 +23,12 @@ export function HomeMiniCard({
       <View style={styles.homeMiniIcon}>
         <Ionicons name={icon} size={18} color={accent} />
       </View>
-      <Text style={styles.homeMiniTitle}>{title}</Text>
-      <Text style={styles.homeMiniSubtitle}>{subtitle}</Text>
+      <Text maxFontSizeMultiplier={1.15} numberOfLines={1} style={styles.homeMiniTitle}>
+        {title}
+      </Text>
+      <Text maxFontSizeMultiplier={1.15} numberOfLines={1} style={styles.homeMiniSubtitle}>
+        {subtitle}
+      </Text>
     </View>
   );
 }

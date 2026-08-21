@@ -406,7 +406,13 @@ export function HomeScreen({
             <View style={[styles.overviewTitleIcon, styles.wordWizHatBadge]}>
               <WordWizHatIcon />
             </View>
-            <Text maxFontSizeMultiplier={1.2} style={styles.homeSectionTitle}>
+            <Text
+              adjustsFontSizeToFit
+              maxFontSizeMultiplier={1.1}
+              minimumFontScale={0.82}
+              numberOfLines={1}
+              style={styles.homeSectionTitle}
+            >
               Today’s learning
             </Text>
           </View>

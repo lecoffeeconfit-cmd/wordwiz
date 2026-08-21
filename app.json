@@ -5,7 +5,7 @@
     "scheme": "wordwiz",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/splash-icon.png",
     "userInterfaceStyle": "light",
     "backgroundColor": "#F2EFFF",
     "plugins": [

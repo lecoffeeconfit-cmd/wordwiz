@@ -11,20 +11,34 @@ export function DashboardStat({
   background,
   value,
   label,
+  onPress,
 }: {
   icon: keyof typeof Ionicons.glyphMap;
   color: string;
   background: string;
   value: string;
   label: string;
+  onPress?: () => void;
 }) {
   return (
-    <View style={[styles.dashboardStat, { backgroundColor: background }]}>
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`View ${label.toLowerCase()} details`}
+      accessibilityHint="Opens a detailed learning summary"
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.dashboardStat,
+        styles.dashboardStatInteractive,
+        { backgroundColor: background },
+        pressed && styles.dashboardStatPressed,
+      ]}
+    >
       <View style={[styles.dashboardStatIcon, { backgroundColor: COLORS.white }]}>
         <Ionicons name={icon} size={20} color={color} />
       </View>
       <Text style={styles.dashboardStatValue}>{value}</Text>
       <Text style={styles.dashboardStatLabel}>{label}</Text>
-    </View>
+      <Ionicons name="chevron-forward" size={14} color={color} style={styles.dashboardStatChevron} />
+    </Pressable>
   );
 }

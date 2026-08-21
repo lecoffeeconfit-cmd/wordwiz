@@ -34,6 +34,7 @@ const DAILY_ACTIVITY_TARGET_STUDY_SECONDS = 10 * 60;
 const QUIZ_ACCURACY_RING_SIZE = 116;
 const QUIZ_ACCURACY_RING_STROKE = 14;
 const QUIZ_ACCURACY_RING_RADIUS = (QUIZ_ACCURACY_RING_SIZE - QUIZ_ACCURACY_RING_STROKE) / 2;
+type DashboardDetailKind = 'study-time' | 'quizzes' | 'missed' | 'streak';
 const QUIZ_DIFFICULTY_OPTIONS: {
   id: QuizDifficultyPreference;
   label: string;
@@ -229,6 +230,7 @@ export function DashboardScreen({
 }) {
   const subscription = useSubscription();
   const [isPasswordEditorOpen, setIsPasswordEditorOpen] = useState(false);
+  const [dashboardDetail, setDashboardDetail] = useState<DashboardDetailKind | null>(null);
   const [newPassword, setNewPassword] = useState('');
   const [passwordConfirmation, setPasswordConfirmation] = useState('');
   const [isChangingPassword, setIsChangingPassword] = useState(false);
@@ -1173,6 +1175,7 @@ export function DashboardScreen({
         background="#F3F7FF"
         value={formatStudyTime(totalSeconds)}
         label="Study time"
+        onPress={() => setDashboardDetail('study-time')}
       />
       <DashboardStat
         icon="trophy"
@@ -1180,6 +1183,7 @@ export function DashboardScreen({
         background="#FFF7EB"
         value={`${analytics.quizHistory.length}`}
         label="Quizzes"
+        onPress={() => setDashboardDetail('quizzes')}
       />
       <DashboardStat
         icon="close-circle"
@@ -1187,11 +1191,26 @@ export function DashboardScreen({
         background="#FFF5F8"
         value={`${totalWrong}`}
         label="Missed"
+        onPress={() => setDashboardDetail('missed')}
       />
-      <StreakHistoryStat current={streak} recent={recentStreakLengths} />
+      <StreakHistoryStat
+        current={streak}
+        recent={recentStreakLengths}
+        onPress={() => setDashboardDetail('streak')}
+      />
       </View>
 
       <View style={styles.streakReminderGrid}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="View learning streak details"
+          accessibilityHint="Opens your streak history and activity summary"
+          onPress={() => setDashboardDetail('streak')}
+          style={({ pressed }) => [
+            styles.streakCardInteractive,
+            pressed && styles.streakCardPressed,
+          ]}
+        >
         <View style={styles.streakCard}>
           <View style={styles.streakCardHeader}>
             <View style={styles.streakFlame}>
@@ -1233,6 +1252,7 @@ export function DashboardScreen({
             ))}
           </View>
         </View>
+        </Pressable>
 
       </View>
 
@@ -3417,6 +3437,12 @@ export function DashboardScreen({
       analytics={analytics}
       onDismiss={() => setMasteryOverviewWordId(null)}
     />
+    <DashboardDetailModal
+      detail={dashboardDetail}
+      analytics={analytics}
+      words={words}
+      onDismiss={() => setDashboardDetail(null)}
+    />
     <CommunityGuidelinesModal visible={communityGuidelinesOpen} onClose={() => setCommunityGuidelinesOpen(false)} />
     </>
   );
@@ -3425,12 +3451,24 @@ export function DashboardScreen({
 function StreakHistoryStat({
   current,
   recent,
+  onPress,
 }: {
   current: number;
   recent: number[];
+  onPress: () => void;
 }) {
   return (
-    <View style={styles.streakHistoryStat}>
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel="View current streak details"
+      accessibilityHint="Opens your streak history and activity summary"
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.streakHistoryStat,
+        styles.streakHistoryStatInteractive,
+        pressed && styles.streakHistoryStatPressed,
+      ]}
+    >
       <View style={styles.streakHistoryStatTopRow}>
         <View style={styles.streakHistoryStatIcon}>
           <Ionicons name="flame" size={20} color={COLORS.teal} />
@@ -3450,8 +3488,377 @@ function StreakHistoryStat({
       ) : (
         <Text style={styles.streakHistoryStatEmpty}>Your streak story starts here</Text>
       )}
+      <Ionicons name="chevron-forward" size={14} color={COLORS.teal} style={styles.streakHistoryStatChevron} />
+    </Pressable>
+  );
+}
+
+function DashboardDetailModal({
+  detail,
+  analytics,
+  words,
+  onDismiss,
+}: {
+  detail: DashboardDetailKind | null;
+  analytics: AnalyticsData;
+  words: Word[];
+  onDismiss: () => void;
+}) {
+  if (!detail) return null;
+
+  const quizStudySeconds = analytics.quizHistory.reduce(
+    (total, attempt) => total + attempt.durationSeconds,
+    0,
+  );
+  const cardStudySeconds = analytics.cardHistory.reduce(
+    (total, event) => total + event.durationSeconds,
+    0,
+  );
+  const totalStudySeconds = quizStudySeconds + cardStudySeconds;
+  const totalQuizQuestions = analytics.quizHistory.reduce(
+    (total, attempt) => total + attempt.total,
+    0,
+  );
+  const totalCorrect = analytics.quizHistory.reduce(
+    (total, attempt) => total + attempt.score,
+    0,
+  );
+  const totalWrong = Math.max(0, totalQuizQuestions - totalCorrect);
+  const accuracy = totalQuizQuestions
+    ? Math.round((totalCorrect / totalQuizQuestions) * 100)
+    : 0;
+  const streakStats = calculateStreakStats(analytics);
+  const streakMilestone = getStreakMilestone(streakStats);
+  const streakWeek = getStreakWeek(streakStats);
+  const recentStreakLengths = getRecentStreakLengths(streakStats);
+  const recentStudyDays = getRecentDays(7).map((day) => {
+    const cardSeconds = analytics.cardHistory
+      .filter((event) => event.date === day.key)
+      .reduce((total, event) => total + event.durationSeconds, 0);
+    const quizSeconds = analytics.quizHistory
+      .filter((attempt) => attempt.date === day.key)
+      .reduce((total, attempt) => total + attempt.durationSeconds, 0);
+    return { ...day, seconds: cardSeconds + quizSeconds };
+  });
+  const maxRecentStudySeconds = Math.max(
+    1,
+    ...recentStudyDays.map((day) => day.seconds),
+  );
+  const missedCardReviews = analytics.cardHistory.filter(
+    (event) => !event.remembered,
+  ).length;
+  const missedWords = words
+    .map((word) => {
+      const quizMisses = analytics.quizHistory
+        .flatMap((attempt) => attempt.answers)
+        .filter((answer) => answer.wordId === word.id && !answer.correct).length;
+      const cardMisses = analytics.cardHistory.filter(
+        (event) => event.wordId === word.id && !event.remembered,
+      ).length;
+      return { word, quizMisses, cardMisses, totalMisses: quizMisses + cardMisses };
+    })
+    .filter((item) => item.totalMisses > 0)
+    .sort(
+      (first, second) =>
+        second.totalMisses - first.totalMisses ||
+        first.word.term.localeCompare(second.word.term, undefined, {
+          sensitivity: 'base',
+        }),
+    )
+    .slice(0, 6);
+
+  const details: Record<
+    DashboardDetailKind,
+    {
+      eyebrow: string;
+      title: string;
+      value: string;
+      subtitle: string;
+      icon: keyof typeof Ionicons.glyphMap;
+      color: string;
+      background: string;
+    }
+  > = {
+    'study-time': {
+      eyebrow: 'LEARNING TIME',
+      title: 'Study time',
+      value: formatStudyTime(totalStudySeconds),
+      subtitle: `${analytics.cardHistory.length + analytics.quizHistory.length} learning sessions recorded`,
+      icon: 'time-outline',
+      color: COLORS.blue,
+      background: '#EEF5FF',
+    },
+    quizzes: {
+      eyebrow: 'QUIZ HISTORY',
+      title: 'Quizzes',
+      value: String(analytics.quizHistory.length),
+      subtitle: totalQuizQuestions
+        ? `${totalQuizQuestions} questions answered at ${accuracy}% accuracy`
+        : 'Your completed quizzes will appear here.',
+      icon: 'trophy-outline',
+      color: COLORS.orange,
+      background: '#FFF5E3',
+    },
+    missed: {
+      eyebrow: 'REVIEW SIGNALS',
+      title: 'Missed answers',
+      value: String(totalWrong),
+      subtitle: totalQuizQuestions
+        ? 'Quiz answers that guide your future review plan'
+        : 'Complete a quiz to see the words that need another look.',
+      icon: 'close-circle-outline',
+      color: COLORS.red,
+      background: '#FFF0F5',
+    },
+    streak: {
+      eyebrow: 'LEARNING STREAK',
+      title: streakMilestone.title,
+      value: `${streakStats.current} day${streakStats.current === 1 ? '' : 's'}`,
+      subtitle: getStreakMessage(streakStats),
+      icon: 'flame-outline',
+      color: COLORS.teal,
+      background: '#EAFBF5',
+    },
+  };
+  const activeDetail = details[detail];
+
+  return (
+    <Modal
+      visible
+      transparent
+      animationType="slide"
+      onRequestClose={onDismiss}
+      statusBarTranslucent
+    >
+      <View style={styles.dashboardDetailBackdrop}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Close learning detail"
+          onPress={onDismiss}
+          style={styles.dashboardDetailDismiss}
+        />
+        <View style={styles.dashboardDetailSheet}>
+          <View style={styles.dashboardDetailHandle} />
+          <View style={styles.dashboardDetailHeader}>
+            <View>
+              <Text style={styles.dashboardDetailEyebrow}>{activeDetail.eyebrow}</Text>
+              <Text style={styles.dashboardDetailTitle}>{activeDetail.title}</Text>
+            </View>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Close learning detail"
+              onPress={onDismiss}
+              style={({ pressed }) => [styles.dashboardDetailClose, pressed && styles.pressed]}
+            >
+              <Ionicons name="close" size={20} color={COLORS.ink} />
+            </Pressable>
+          </View>
+
+          <ScrollView
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.dashboardDetailContent}
+          >
+            <View style={[styles.dashboardDetailHero, { backgroundColor: activeDetail.background }]}>
+              <View style={[styles.dashboardDetailHeroIcon, { backgroundColor: COLORS.white }]}>
+                <Ionicons name={activeDetail.icon} size={23} color={activeDetail.color} />
+              </View>
+              <View style={styles.dashboardDetailHeroCopy}>
+                <Text style={[styles.dashboardDetailHeroValue, { color: activeDetail.color }]}>
+                  {activeDetail.value}
+                </Text>
+                <Text style={styles.dashboardDetailHeroText}>{activeDetail.subtitle}</Text>
+              </View>
+            </View>
+
+            {detail === 'study-time' ? (
+              <>
+                <View style={styles.dashboardDetailMetricGrid}>
+                  <DashboardDetailMetric icon="albums-outline" value={formatStudyTime(cardStudySeconds)} label="FLASHCARDS" color={COLORS.purpleDark} />
+                  <DashboardDetailMetric icon="trophy-outline" value={formatStudyTime(quizStudySeconds)} label="QUIZZES" color={COLORS.orange} />
+                  <DashboardDetailMetric icon="calendar-outline" value={formatStudyTime(recentStudyDays.reduce((total, day) => total + day.seconds, 0))} label="LAST 7 DAYS" color={COLORS.blue} />
+                </View>
+                <View style={styles.dashboardDetailCard}>
+                  <Text style={styles.dashboardDetailSectionLabel}>LAST 7 DAYS</Text>
+                  <Text style={styles.dashboardDetailSectionTitle}>Where your time went</Text>
+                  <View style={styles.dashboardDetailTimeline}>
+                    {recentStudyDays.map((day) => (
+                      <View key={day.key} style={styles.dashboardDetailTimelineRow}>
+                        <Text style={styles.dashboardDetailTimelineLabel}>{formatDashboardDetailDate(day.key)}</Text>
+                        <View style={styles.dashboardDetailTimelineTrack}>
+                          <View
+                            style={[
+                              styles.dashboardDetailTimelineFill,
+                              {
+                                width: `${Math.max(4, (day.seconds / maxRecentStudySeconds) * 100)}%`,
+                                backgroundColor: day.key === getDayKey() ? COLORS.teal : COLORS.blue,
+                              },
+                            ]}
+                          />
+                        </View>
+                        <Text style={styles.dashboardDetailTimelineValue}>{formatStudyTime(day.seconds)}</Text>
+                      </View>
+                    ))}
+                  </View>
+                </View>
+              </>
+            ) : null}
+
+            {detail === 'quizzes' ? (
+              <>
+                <View style={styles.dashboardDetailMetricGrid}>
+                  <DashboardDetailMetric icon="checkmark-circle-outline" value={String(totalCorrect)} label="CORRECT" color={COLORS.greenDark} />
+                  <DashboardDetailMetric icon="close-circle-outline" value={String(totalWrong)} label="MISSED" color={COLORS.red} />
+                  <DashboardDetailMetric icon="analytics-outline" value={`${accuracy}%`} label="ACCURACY" color={COLORS.blue} />
+                </View>
+                <View style={styles.dashboardDetailCard}>
+                  <Text style={styles.dashboardDetailSectionLabel}>RECENT QUIZZES</Text>
+                  <Text style={styles.dashboardDetailSectionTitle}>Your latest results</Text>
+                  {analytics.quizHistory.length ? (
+                    <View style={styles.dashboardDetailList}>
+                      {analytics.quizHistory.slice(0, 6).map((attempt) => {
+                        const attemptAccuracy = attempt.total
+                          ? Math.round((attempt.score / attempt.total) * 100)
+                          : 0;
+                        return (
+                          <View key={attempt.id} style={styles.dashboardDetailListRow}>
+                            <View style={styles.dashboardDetailListIcon}>
+                              <Ionicons name="trophy-outline" size={16} color={COLORS.orange} />
+                            </View>
+                            <View style={styles.dashboardDetailListCopy}>
+                              <Text style={styles.dashboardDetailListTitle}>{formatDashboardDetailDate(attempt.date)}</Text>
+                              <Text style={styles.dashboardDetailListText}>{attempt.score} of {attempt.total} correct · {formatStudyTime(attempt.durationSeconds)}</Text>
+                            </View>
+                            <Text style={[styles.dashboardDetailListValue, { color: attemptAccuracy >= 70 ? COLORS.greenDark : COLORS.orange }]}>{attemptAccuracy}%</Text>
+                          </View>
+                        );
+                      })}
+                    </View>
+                  ) : (
+                    <DashboardDetailEmpty icon="trophy-outline" text="Your completed quizzes will show up here." />
+                  )}
+                </View>
+              </>
+            ) : null}
+
+            {detail === 'missed' ? (
+              <>
+                <View style={styles.dashboardDetailMetricGrid}>
+                  <DashboardDetailMetric icon="analytics-outline" value={`${accuracy}%`} label="ACCURACY" color={COLORS.blue} />
+                  <DashboardDetailMetric icon="refresh-outline" value={String(missedCardReviews)} label="CARD RETRIES" color={COLORS.purpleDark} />
+                  <DashboardDetailMetric icon="book-outline" value={String(missedWords.length)} label="WORDS TO WATCH" color={COLORS.red} />
+                </View>
+                <View style={styles.dashboardDetailCard}>
+                  <Text style={styles.dashboardDetailSectionLabel}>WORDS TO REINFORCE</Text>
+                  <Text style={styles.dashboardDetailSectionTitle}>Patterns from your answers</Text>
+                  {missedWords.length ? (
+                    <View style={styles.dashboardDetailList}>
+                      {missedWords.map(({ word, quizMisses, cardMisses, totalMisses }) => (
+                        <View key={word.id} style={styles.dashboardDetailListRow}>
+                          <View style={[styles.dashboardDetailListIcon, styles.dashboardDetailListIconMissed]}>
+                            <Ionicons name="refresh-outline" size={16} color={COLORS.red} />
+                          </View>
+                          <View style={styles.dashboardDetailListCopy}>
+                            <Text style={styles.dashboardDetailListTitle}>{word.term}</Text>
+                            <Text style={styles.dashboardDetailListText}>
+                              {quizMisses ? `${quizMisses} quiz miss${quizMisses === 1 ? '' : 'es'}` : 'No quiz misses'}
+                              {cardMisses ? ` · ${cardMisses} card ${cardMisses === 1 ? 'retry' : 'retries'}` : ''}
+                            </Text>
+                          </View>
+                          <Text style={[styles.dashboardDetailListValue, { color: COLORS.red }]}>{totalMisses}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  ) : (
+                    <DashboardDetailEmpty icon="checkmark-circle-outline" text="No missed answers yet. Keep going—your patterns will appear here." />
+                  )}
+                </View>
+                <View style={styles.dashboardDetailNote}>
+                  <Ionicons name="sparkles-outline" size={16} color={COLORS.purpleDark} />
+                  <Text style={styles.dashboardDetailNoteText}>Misses are useful signals. WordWiz uses them to bring the right words back at the right time.</Text>
+                </View>
+              </>
+            ) : null}
+
+            {detail === 'streak' ? (
+              <>
+                <View style={styles.dashboardDetailMetricGrid}>
+                  <DashboardDetailMetric icon="trophy-outline" value={`${streakStats.longest}d`} label="BEST STREAK" color={COLORS.orange} />
+                  <DashboardDetailMetric icon="calendar-outline" value={String(streakStats.activeDates.size)} label="ACTIVE DAYS" color={COLORS.blue} />
+                  <DashboardDetailMetric icon="flame-outline" value={`${streakWeek.filter((day) => day.active).length}/7`} label="THIS WEEK" color={COLORS.teal} />
+                </View>
+                <View style={styles.dashboardDetailCard}>
+                  <Text style={styles.dashboardDetailSectionLabel}>THIS WEEK</Text>
+                  <Text style={styles.dashboardDetailSectionTitle}>Keep the rhythm going</Text>
+                  <View style={styles.dashboardDetailWeek}>
+                    {streakWeek.map((day) => <StreakDay key={day.key} day={day} />)}
+                  </View>
+                  <Text style={styles.dashboardDetailStreakMessage}>{getStreakMessage(streakStats)} {streakMilestone.description}</Text>
+                </View>
+                <View style={styles.dashboardDetailCard}>
+                  <Text style={styles.dashboardDetailSectionLabel}>RECENT STREAKS</Text>
+                  <Text style={styles.dashboardDetailSectionTitle}>Your completed runs</Text>
+                  {recentStreakLengths.length ? (
+                    <View style={styles.dashboardDetailStreakChips}>
+                      {recentStreakLengths.map((length, index) => (
+                        <View key={`${length}-${index}`} style={styles.dashboardDetailStreakChip}>
+                          <Ionicons name="flame" size={14} color={COLORS.orange} />
+                          <Text style={styles.dashboardDetailStreakChipText}>{length} day{length === 1 ? '' : 's'}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  ) : (
+                    <DashboardDetailEmpty icon="sparkles-outline" text="Finish a few active stretches and they’ll be celebrated here." />
+                  )}
+                </View>
+              </>
+            ) : null}
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function DashboardDetailMetric({
+  icon,
+  value,
+  label,
+  color,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  value: string;
+  label: string;
+  color: string;
+}) {
+  return (
+    <View style={styles.dashboardDetailMetric}>
+      <Ionicons name={icon} size={15} color={color} />
+      <Text style={styles.dashboardDetailMetricValue}>{value}</Text>
+      <Text style={styles.dashboardDetailMetricLabel}>{label}</Text>
     </View>
   );
+}
+
+function DashboardDetailEmpty({
+  icon,
+  text,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  text: string;
+}) {
+  return (
+    <View style={styles.dashboardDetailEmpty}>
+      <Ionicons name={icon} size={20} color={COLORS.purpleDark} />
+      <Text style={styles.dashboardDetailEmptyText}>{text}</Text>
+    </View>
+  );
+}
+
+function formatDashboardDetailDate(dayKey: string) {
+  const date = new Date(`${dayKey}T12:00:00`);
+  return Number.isNaN(date.getTime())
+    ? dayKey
+    : date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
 function FeedbackDistribution({
@@ -3512,7 +3919,12 @@ function FeedbackDistribution({
                     {item.label}
                   </Text>
                 </View>
-                <Text style={styles.feedbackLegendTileValue}>
+                <Text
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.8}
+                  style={styles.feedbackLegendTileValue}
+                >
                   {item.value} · {percent}%
                 </Text>
               </View>
