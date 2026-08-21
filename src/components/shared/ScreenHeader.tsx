@@ -11,17 +11,19 @@ export function ScreenHeader({
   subtitle,
   action,
   meta,
+  bottomPadding,
 }: {
   eyebrow: string;
   title: string;
   subtitle: string;
   action?: ReactNode;
   meta?: ReactNode;
+  bottomPadding?: number;
 }) {
   const theme = getHeaderTheme(eyebrow);
 
   return (
-    <View style={styles.header}>
+    <View style={[styles.header, bottomPadding !== undefined && { paddingBottom: bottomPadding }]}>
       <View
         style={[
           styles.screenHeaderCard,

@@ -74,7 +74,7 @@ export const styles = StyleSheet.create({
   },
   loadingText: {
     maxWidth: 310,
-    marginTop: 12,
+    marginTop: 8,
     color: COLORS.muted,
     fontSize: 15,
     fontWeight: '700',
@@ -371,6 +371,10 @@ export const styles = StyleSheet.create({
   listContentKeyboard: {
     paddingBottom: 320,
   },
+  wordListContent: {
+    // Keep the final word row comfortably clear of the persistent tab bar.
+    paddingBottom: 92,
+  },
   singleScreenContent: {
     flexGrow: 1,
     paddingHorizontal: 20,
@@ -381,7 +385,7 @@ export const styles = StyleSheet.create({
   },
   homeContent: {
     paddingHorizontal: 20,
-    // Keep the final home content clear of the floating Add button.
+    // Keep the final home content clear of the floating action dock.
     paddingBottom: 96,
   },
   homeHero: {
@@ -402,7 +406,8 @@ export const styles = StyleSheet.create({
     backgroundColor: '#F5F1FF',
     borderWidth: 1.5,
     borderColor: '#D6C7FF',
-    ...SOFT_SHADOW,
+    boxShadow: '0 6px 16px rgba(117, 96, 182, 0.10)',
+    elevation: 2,
   },
   homeTrialIcon: {
     position: 'relative',
@@ -541,8 +546,10 @@ export const styles = StyleSheet.create({
     borderColor: '#E6B94F',
   },
   avatarLogo: {
-    width: '100%',
-    height: '100%',
+    // Explicit dimensions keep this bundled image reliably measured by the
+    // native renderer inside its circular badge.
+    width: 48,
+    height: 48,
   },
   homeStatsPill: {
     paddingHorizontal: 11,
@@ -562,10 +569,46 @@ export const styles = StyleSheet.create({
     alignItems: 'flex-end',
     gap: 9,
   },
-  homeFloatingAddButton: {
+  homeFloatingActionDock: {
     position: 'absolute',
+    left: 20,
     right: 20,
-    bottom: 24,
+    bottom: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 9,
+    zIndex: 10,
+  },
+  homeFloatingSecondaryButton: {
+    width: 114,
+    minHeight: 54,
+    paddingHorizontal: 8,
+    borderRadius: 27,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    backgroundColor: '#F1F6FF',
+    borderWidth: 1.5,
+    borderColor: '#B6CEFF',
+    shadowColor: '#5D70B3',
+    shadowOffset: { width: 0, height: 5 },
+    shadowOpacity: 0.15,
+    shadowRadius: 11,
+    elevation: 3,
+  },
+  homeFloatingSecondaryButtonPressed: {
+    opacity: 0.92,
+    transform: [{ translateY: 1 }, { scale: 0.98 }],
+  },
+  homeFloatingSecondaryText: {
+    flexShrink: 1,
+    color: '#4B45C7',
+    fontSize: 11,
+    fontWeight: '900',
+  },
+  homeFloatingAddButton: {
     minHeight: 58,
     paddingLeft: 8,
     paddingRight: 18,
@@ -581,7 +624,7 @@ export const styles = StyleSheet.create({
     shadowOpacity: 0.16,
     shadowRadius: 12,
     elevation: 4,
-    zIndex: 10,
+    flexShrink: 0,
   },
   homeFloatingAddSparkle: {
     position: 'absolute',
@@ -672,6 +715,9 @@ export const styles = StyleSheet.create({
     zIndex: 2,
   },
   homeOverviewCardAfterTrial: {
+    marginTop: 2,
+  },
+  homeOverviewCardAfterComplimentary: {
     marginTop: 4,
   },
   overviewHeader: {
@@ -827,31 +873,6 @@ export const styles = StyleSheet.create({
     color: COLORS.muted,
     fontSize: 10,
     fontWeight: '700',
-  },
-  homeDottedLine: {
-    marginTop: 15,
-    borderTopWidth: 1,
-    borderStyle: 'dashed',
-    borderColor: '#D7DEE8',
-  },
-  homePrimaryButton: {
-    marginTop: 13,
-    height: 50,
-    borderRadius: 17,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    backgroundColor: COLORS.blue,
-    ...FLOATING_SHADOW,
-  },
-  homeDailyQuizSpacer: {
-    width: '100%',
-  },
-  homePrimaryButtonText: {
-    color: COLORS.white,
-    fontSize: 15,
-    fontWeight: '900',
   },
   homeSkillCard: {
     marginTop: 17,
@@ -1310,15 +1331,29 @@ export const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   addButton: {
-    marginTop: 16,
-    minHeight: 74,
+    // Match the visual gap below this card without adding extra empty space
+    // after the collection summary.
+    marginTop: 12,
+    minHeight: 84,
+    paddingVertical: 5,
     paddingHorizontal: 17,
     borderRadius: 24,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: COLORS.teal,
-    boxShadow: '0 8px 20px rgba(48, 58, 72, 0.14)',
-    elevation: 4,
+    backgroundColor: 'rgba(240,246,255,0.96)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(185,207,255,0.83)',
+    shadowColor: '#6574B8',
+    shadowOffset: { width: 0, height: 5 },
+    shadowOpacity: 0.13,
+    shadowRadius: 10,
+    elevation: 3,
+  },
+  addButtonPressFeedback: {
+    alignSelf: 'stretch',
+  },
+  addButtonPressed: {
+    opacity: 0.96,
   },
   addIcon: {
     position: 'relative',
@@ -1327,7 +1362,9 @@ export const styles = StyleSheet.create({
     borderRadius: 13,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.2)',
+    borderWidth: 1,
+    borderColor: 'rgba(91,77,228,0.18)',
+    backgroundColor: '#D7E4FF',
   },
   addButtonEndcap: {
     position: 'relative',
@@ -1344,13 +1381,13 @@ export const styles = StyleSheet.create({
     marginLeft: 13,
   },
   addButtonTitle: {
-    color: COLORS.white,
+    color: COLORS.purpleDark,
     fontSize: 17,
     fontWeight: '900',
   },
   addButtonSubtitle: {
     marginTop: 3,
-    color: '#EAF6FF',
+    color: '#6C79B5',
     fontSize: 12,
     fontWeight: '600',
   },
@@ -1425,7 +1462,7 @@ export const styles = StyleSheet.create({
     fontWeight: '900',
   },
   studySetFilterList: {
-    paddingTop: 10,
+    paddingTop: 14,
     paddingRight: 16,
     gap: 7,
   },
@@ -1509,7 +1546,7 @@ export const styles = StyleSheet.create({
     fontWeight: '900',
   },
   listToolbar: {
-    marginTop: 27,
+    marginTop: 18,
     marginBottom: 5,
     flexDirection: 'row',
     alignItems: 'center',
@@ -1998,7 +2035,8 @@ export const styles = StyleSheet.create({
     paddingBottom: 2,
   },
   wordResourcesRow: {
-    marginTop: 10,
+    // Leave a comfortable, but efficient, gap below the primary action.
+    marginTop: 16,
     flexDirection: 'row',
     gap: 9,
   },

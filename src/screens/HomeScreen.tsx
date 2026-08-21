@@ -1,10 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, FlatList, Image, Pressable, ScrollView, Text, useWindowDimensions, View } from 'react-native';
+import { AccessibilityInfo, Animated, FlatList, Image, Pressable, ScrollView, Text, useWindowDimensions, View } from 'react-native';
 import { COLORS } from '../constants/theme';
 import type { AnalyticsData, LegalPage, QuizAnswer, QuizProgress, QuizQuestion, ReminderSettings, SortMode, Word } from '../types';
 import { styles } from '../styles';
-import { buildAchievements, buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, getDayKey, getProgressColor, getProgressPaleColor, getRecentDays, getStreakMessage, getStreakMilestone, getStreakWeek, getWordMastery, sortWordsForReview, shuffle } from '../utils';
+import { buildAchievements, buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, getDayKey, getDueReviewWords, getProgressColor, getProgressPaleColor, getRecentDays, getStreakMessage, getStreakMilestone, getStreakWeek, getWordMastery, sortWordsForReview, shuffle } from '../utils';
 import { CompactPagination, DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, ProgressFill, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 
 const EXPANDED_REVIEW_WORD_PAGE_SIZE = 8;
@@ -29,7 +29,9 @@ export function HomeScreen({
   onAddWord,
   onStudy,
   onReviewWord,
+  onReviewDue,
   onQuiz,
+  onOmegaTest,
   onStats,
   onOpenPlus,
   complimentaryAccess,
@@ -42,7 +44,9 @@ export function HomeScreen({
   onAddWord: () => void;
   onStudy: () => void;
   onReviewWord: (wordId: string) => void;
+  onReviewDue: () => void;
   onQuiz: () => void;
+  onOmegaTest: () => void;
   onStats: () => void;
   onOpenPlus: () => void;
   complimentaryAccess: { daysRemaining: number; expiresAt: string | null } | null;
@@ -55,6 +59,10 @@ export function HomeScreen({
   const [achievementCarouselWidth, setAchievementCarouselWidth] = useState(0);
   const [showAllReviewWords, setShowAllReviewWords] = useState(false);
   const [reviewWordPage, setReviewWordPage] = useState(0);
+  const [showContextQuickAction, setShowContextQuickAction] = useState(false);
+  const overviewLayout = useRef({ y: 0, height: 0 });
+  const homeScrollY = useRef(0);
+  const contextQuickActionVisible = useRef(false);
   const lastReviewWordTapAt = useRef(0);
   const reviewWordTapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const homeProgressSparkle = useRef(new Animated.Value(0.35)).current;
@@ -115,8 +123,7 @@ export function HomeScreen({
   );
   const todayQuizzes = getTodayQuizCount(analytics);
   const completedDailyQuizzes = Math.min(todayQuizzes, dailyQuizGoal);
-  const homeQuizActionLabel =
-    todayQuizzes > 0 ? 'Practice another quiz' : 'Start daily quiz';
+  const dueReviewCount = getDueReviewWords(words, analytics).length;
   const reviewWords = sortWordsForReview(words, analytics);
   const reviewWordPageCount = Math.max(
     1,
@@ -217,11 +224,56 @@ export function HomeScreen({
     }, 340);
   }
 
+  function updateContextQuickAction(scrollY: number) {
+    homeScrollY.current = scrollY;
+    const { y, height } = overviewLayout.current;
+    if (height <= 0) return;
+
+    const transitionPoint = y + height - windowHeight * 0.55;
+    const hysteresis = Math.max(18, Math.round(windowHeight * 0.025));
+    const nextVisible = contextQuickActionVisible.current
+      ? scrollY > transitionPoint - hysteresis
+      : scrollY > transitionPoint + hysteresis;
+
+    if (nextVisible !== contextQuickActionVisible.current) {
+      contextQuickActionVisible.current = nextVisible;
+      setShowContextQuickAction(nextVisible);
+    }
+  }
+
+  const secondaryQuickAction: HomeQuickAction = showContextQuickAction
+    ? dueReviewCount > 0
+      ? {
+          key: `review-${dueReviewCount}`,
+          label: dueReviewCount < 100 ? `Review ${dueReviewCount}` : `${dueReviewCount} Due`,
+          accessibilityLabel: `Review ${dueReviewCount} due ${dueReviewCount === 1 ? 'word' : 'words'}`,
+          icon: 'albums-outline',
+          onPress: onReviewDue,
+        }
+      : {
+          key: 'omega-test',
+          label: 'Omega Test',
+          accessibilityLabel: 'Open Omega Test',
+          icon: 'planet-outline',
+          onPress: onOmegaTest,
+        }
+    : {
+        key: words.length > 0 ? 'start-quiz-ready' : 'start-quiz-empty',
+        label: 'Start Quiz',
+        accessibilityLabel: words.length > 0 ? 'Start daily quiz' : 'Add your first word',
+        icon: 'trophy-outline',
+        onPress: words.length > 0 ? onQuiz : onAddWord,
+      };
+
   return (
     <View style={styles.homeScreenShell}>
       <ScrollView
         style={styles.screen}
         contentContainerStyle={styles.homeContent}
+        onScroll={({ nativeEvent }) => {
+          updateContextQuickAction(nativeEvent.contentOffset.y);
+        }}
+        scrollEventThrottle={16}
         showsVerticalScrollIndicator={false}
       >
       <View style={[styles.homeHero, { minHeight: 365 + heroAddedHeight }]}>
@@ -231,9 +283,11 @@ export function HomeScreen({
         <View style={styles.homeTopRow}>
           <View style={styles.avatarBadge}>
             <Image
+              accessibilityRole="image"
               accessibilityLabel="WordWiz logo"
               source={require('../../assets/wordwiz-logo.png')}
               style={styles.avatarLogo}
+              resizeMode="cover"
             />
           </View>
           <View style={styles.homeTopActions}>
@@ -336,9 +390,15 @@ export function HomeScreen({
       ) : null}
 
       <View
+        onLayout={(event) => {
+          const { y, height } = event.nativeEvent.layout;
+          overviewLayout.current = { y, height };
+          updateContextQuickAction(homeScrollY.current);
+        }}
         style={[
           styles.homeOverviewCard,
-          (complimentaryAccess || showFreePlanNotice) && styles.homeOverviewCardAfterTrial,
+          complimentaryAccess && styles.homeOverviewCardAfterComplimentary,
+          showFreePlanNotice && styles.homeOverviewCardAfterTrial,
         ]}
       >
           <View style={styles.overviewHeader}>
@@ -399,21 +459,6 @@ export function HomeScreen({
               : 'Take a quiz to begin'}
           />
         </View>
-        <View style={styles.homeDottedLine} />
-        <Pressable
-          onPress={words.length > 0 ? onQuiz : onAddWord}
-          style={({ pressed }) => [
-            styles.homePrimaryButton,
-            pressed && styles.primaryButtonPressed,
-          ]}
-        >
-          {words.length > 0 && (
-            <Ionicons name="trophy-outline" size={19} color={COLORS.white} />
-          )}
-          <Text style={styles.homePrimaryButtonText}>
-            {words.length > 0 ? homeQuizActionLabel : 'Add your first word'}
-          </Text>
-        </Pressable>
       </View>
 
       <View style={styles.homeSkillCard}>
@@ -671,6 +716,90 @@ export function HomeScreen({
       </View>
       </ScrollView>
 
+      <HomeQuickActions
+        secondaryAction={secondaryQuickAction}
+        onAddWord={onAddWord}
+      />
+    </View>
+  );
+}
+
+type HomeQuickAction = {
+  key: string;
+  label: string;
+  accessibilityLabel: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  onPress: () => void;
+};
+
+function HomeQuickActions({
+  secondaryAction,
+  onAddWord,
+}: {
+  secondaryAction: HomeQuickAction;
+  onAddWord: () => void;
+}) {
+  const reduceMotion = useReducedMotionPreference();
+  const [displayedAction, setDisplayedAction] = useState(secondaryAction);
+  const displayedActionKey = useRef(secondaryAction.key);
+  const secondaryOpacity = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    if (displayedActionKey.current === secondaryAction.key) return;
+
+    let cancelled = false;
+    secondaryOpacity.stopAnimation();
+
+    if (reduceMotion) {
+      displayedActionKey.current = secondaryAction.key;
+      setDisplayedAction(secondaryAction);
+      secondaryOpacity.setValue(1);
+      return;
+    }
+
+    Animated.timing(secondaryOpacity, {
+      toValue: 0,
+      duration: 90,
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (!finished || cancelled) return;
+      displayedActionKey.current = secondaryAction.key;
+      setDisplayedAction(secondaryAction);
+      Animated.timing(secondaryOpacity, {
+        toValue: 1,
+        duration: 130,
+        useNativeDriver: true,
+      }).start();
+    });
+
+    return () => {
+      cancelled = true;
+      secondaryOpacity.stopAnimation();
+    };
+  }, [reduceMotion, secondaryAction.key, secondaryOpacity]);
+
+  return (
+    <View pointerEvents="box-none" style={styles.homeFloatingActionDock}>
+      <Animated.View style={{ opacity: secondaryOpacity }}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={displayedAction.accessibilityLabel}
+          onPress={displayedAction.onPress}
+          style={({ pressed }) => [
+            styles.homeFloatingSecondaryButton,
+            pressed && styles.homeFloatingSecondaryButtonPressed,
+          ]}
+        >
+          <Ionicons name={displayedAction.icon} size={18} color="#4B45C7" />
+          <Text
+            maxFontSizeMultiplier={1.15}
+            numberOfLines={1}
+            style={styles.homeFloatingSecondaryText}
+          >
+            {displayedAction.label}
+          </Text>
+        </Pressable>
+      </Animated.View>
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="Quick add word"
@@ -690,6 +819,27 @@ export function HomeScreen({
       </Pressable>
     </View>
   );
+}
+
+function useReducedMotionPreference() {
+  const [reduceMotion, setReduceMotion] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+    void AccessibilityInfo.isReduceMotionEnabled().then((enabled) => {
+      if (mounted) setReduceMotion(enabled);
+    });
+    const subscription = AccessibilityInfo.addEventListener(
+      'reduceMotionChanged',
+      setReduceMotion,
+    );
+    return () => {
+      mounted = false;
+      subscription.remove();
+    };
+  }, []);
+
+  return reduceMotion;
 }
 
 function getReviewReason(word: Word, analytics: AnalyticsData) {

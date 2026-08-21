@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  AccessibilityInfo,
   ActivityIndicator,
   Alert,
   Animated,
@@ -91,9 +92,11 @@ export function WordsScreen({
   const [selectedStudyWordIds, setSelectedStudyWordIds] = useState<string[]>([]);
   const [isSavingStudySet, setIsSavingStudySet] = useState(false);
   const [addingCollectionId, setAddingCollectionId] = useState<string | null>(null);
+  const [reduceMotion, setReduceMotion] = useState(false);
   const listRef = useRef<FlatList<Word>>(null);
   const addingCollectionRef = useRef(false);
   const collectionSetPressRef = useRef<{ id: string; at: number; timer: ReturnType<typeof setTimeout> | null } | null>(null);
+  const addButtonScale = useRef(new Animated.Value(1)).current;
   const searchBoxY = useRef(0);
   const normalizedSearchQuery = searchQuery.trim().toLowerCase();
   const personalWords = useMemo(
@@ -164,6 +167,43 @@ export function WordsScreen({
       clearTimeout(collectionSetPressRef.current.timer);
     }
   }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    void AccessibilityInfo.isReduceMotionEnabled().then((enabled) => {
+      if (mounted) setReduceMotion(enabled);
+    });
+    const subscription = AccessibilityInfo.addEventListener(
+      'reduceMotionChanged',
+      setReduceMotion,
+    );
+
+    return () => {
+      mounted = false;
+      subscription.remove();
+      addButtonScale.stopAnimation();
+    };
+  }, [addButtonScale]);
+
+  function handleAddButtonPressIn() {
+    if (reduceMotion) return;
+    Animated.timing(addButtonScale, {
+      toValue: 0.985,
+      duration: 80,
+      easing: Easing.out(Easing.quad),
+      useNativeDriver: true,
+    }).start();
+  }
+
+  function handleAddButtonPressOut() {
+    if (reduceMotion) return;
+    Animated.timing(addButtonScale, {
+      toValue: 1,
+      duration: 150,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }
   function scrollSearchIntoView() {
     setIsSearchFocused(true);
 
@@ -476,6 +516,7 @@ export function WordsScreen({
         showsVerticalScrollIndicator={false}
         contentContainerStyle={[
           styles.listContent,
+          styles.wordListContent,
           isSearchFocused && styles.listContentKeyboard,
         ]}
         ListHeaderComponent={
@@ -484,6 +525,7 @@ export function WordsScreen({
               eyebrow="MY COLLECTION"
               title="Words worth knowing"
               subtitle="Save new discoveries and make them yours."
+              bottomPadding={12}
             />
 
             <View style={styles.progressCard}>
@@ -521,26 +563,41 @@ export function WordsScreen({
               </Pressable>
             ) : null}
 
-            <Pressable onPress={onAdd} style={styles.addButton}>
-              <View style={styles.addIcon}>
-                <Ionicons name="add" size={25} color={COLORS.white} />
-              </View>
-              <View style={styles.addButtonCopy}>
-                <Text style={styles.addButtonTitle}>Add a new word</Text>
-                <Text style={styles.addButtonSubtitle}>
-                  What did you discover today?
-                </Text>
-              </View>
-              <View style={styles.addButtonEndcap}>
-                <Ionicons
-                  name="sparkles"
-                  size={12}
-                  color="#FFE39A"
-                  style={styles.addButtonSparkle}
-                />
-                <Ionicons name="chevron-forward" size={23} color={COLORS.white} />
-              </View>
-            </Pressable>
+            <Animated.View
+              style={[styles.addButtonPressFeedback, { transform: [{ scale: addButtonScale }] }]}
+            >
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Add a new word"
+                accessibilityHint="Opens the form to save a word to your collection"
+                onPress={onAdd}
+                onPressIn={handleAddButtonPressIn}
+                onPressOut={handleAddButtonPressOut}
+                style={({ pressed }) => [
+                  styles.addButton,
+                  pressed && styles.addButtonPressed,
+                ]}
+              >
+                <View style={styles.addIcon}>
+                  <Ionicons name="add" size={26} color={COLORS.purpleDark} />
+                </View>
+                <View style={styles.addButtonCopy}>
+                  <Text style={styles.addButtonTitle}>Add a new word</Text>
+                  <Text style={styles.addButtonSubtitle}>
+                    What did you discover today?
+                  </Text>
+                </View>
+                <View style={styles.addButtonEndcap}>
+                  <Ionicons
+                    name="sparkles"
+                    size={13}
+                    color="#F4C558"
+                    style={styles.addButtonSparkle}
+                  />
+                  <Ionicons name="chevron-forward" size={24} color="#4034B3" />
+                </View>
+              </Pressable>
+            </Animated.View>
 
             <View style={styles.wordResourcesRow}>
               <Pressable

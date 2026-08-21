@@ -12,6 +12,48 @@ const secureStoreOptions: SecureStore.SecureStoreOptions = {
 };
 
 /**
+ * Supabase Auth logs every rejected fetch before turning it into an auth
+ * error. On React Native, a normal offline transition rejects fetch with a
+ * platform error, which makes an expected connectivity problem appear as a
+ * red console error in development. Returning a retryable HTTP response lets
+ * Supabase handle the failure through its normal error path instead.
+ *
+ * This adapter is scoped to Supabase requests. It does not change successful
+ * responses or cancellation behavior, and callers still receive a normal
+ * Supabase error when the device is offline.
+ */
+const supabaseFetch: typeof fetch = async (input, init) => {
+  try {
+    return await fetch(input, init);
+  } catch (error) {
+    const signal = init?.signal;
+    const errorName = error && typeof error === 'object' && 'name' in error
+      ? String(error.name)
+      : '';
+
+    if (signal?.aborted || errorName === 'AbortError') {
+      throw error;
+    }
+
+    const message = error instanceof Error && error.message
+      ? error.message
+      : 'The Internet connection appears to be offline.';
+
+    return new Response(
+      JSON.stringify({
+        error: 'network_error',
+        error_description: message,
+        message,
+      }),
+      {
+        status: 503,
+        headers: { 'Content-Type': 'application/json' },
+      },
+    );
+  }
+};
+
+/**
  * Keeps Supabase credentials in the operating system's encrypted credential
  * store. The AsyncStorage read is a one-time migration for existing learners
  * updating from older builds; it is deleted immediately after a secure write.
@@ -51,6 +93,9 @@ const nativeAuthStorage = {
 };
 
 export const supabase = createClient(env.supabaseUrl, env.supabaseAnonKey, {
+  global: {
+    fetch: supabaseFetch,
+  },
   auth: {
     ...(Platform.OS !== 'web' ? { storage: nativeAuthStorage } : {}),
     autoRefreshToken: true,

@@ -98,13 +98,39 @@ export function reportStartupFailure(
     reportedStartupFailures.add(error);
   }
   const code = getStartupFailureCode(stage);
-  console.error(`[WordWiz Startup] STARTUP_ERROR ${code}`, {
+  const details = {
     stage,
     required: startupStageRequirement[stage] === 'required',
     error,
-  });
+  };
+  if (isConnectivityFailure(error)) {
+    // Connectivity loss is an expected runtime state. Keep it in the
+    // diagnostic stream without turning it into a red React Native overlay.
+    console.info(`[WordWiz Startup] STARTUP_OFFLINE ${code}`, details);
+  } else {
+    console.error(`[WordWiz Startup] STARTUP_ERROR ${code}`, details);
+  }
   captureStartupException(error, stage, code);
   return code;
+}
+
+function isConnectivityFailure(error: unknown) {
+  if (!error || typeof error !== 'object') {
+    return /offline|network|fetch failed|timed out|timeout/i.test(String(error));
+  }
+
+  const candidate = error as {
+    name?: unknown;
+    message?: unknown;
+    status?: unknown;
+  };
+  const name = typeof candidate.name === 'string' ? candidate.name : '';
+  const message = typeof candidate.message === 'string' ? candidate.message : '';
+  const status = typeof candidate.status === 'number' ? candidate.status : 0;
+
+  return status >= 500 ||
+    /retryablefetcherror/i.test(name) ||
+    /offline|network|fetch failed|timed out|timeout/i.test(message);
 }
 
 export function wasStartupFailureReported(error: unknown) {
@@ -116,6 +142,7 @@ export function wasStartupFailureReported(error: unknown) {
 export async function withStartupTimeout<T>(
   stage: Exclude<StartupStage, 'js_entry' | 'loading_state'>,
   operation: () => Promise<T>,
+  options: { reportFailure?: boolean } = {},
 ): Promise<T> {
   reportStartupStage(stage, 'started');
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -132,7 +159,9 @@ export async function withStartupTimeout<T>(
     reportStartupStage(stage, 'completed');
     return result;
   } catch (error) {
-    reportStartupFailure(error, stage);
+    if (options.reportFailure !== false) {
+      reportStartupFailure(error, stage);
+    }
     throw error;
   } finally {
     if (timeoutId) clearTimeout(timeoutId);

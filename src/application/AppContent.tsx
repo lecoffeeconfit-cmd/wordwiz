@@ -467,7 +467,7 @@ export default function AppContent() {
           showStartupStage('profile_data');
           await withStartupTimeout(
             'profile_data',
-            () => loadUserCache(sessionUser.id, true),
+            () => loadUserCache(sessionUser.id),
           );
         } else {
           setWords([]);
@@ -715,7 +715,7 @@ export default function AppContent() {
     }
   }, [currentUser?.id, isReady]);
 
-  async function loadUserCache(userId: string, throwOnFailure = false) {
+  async function loadUserCache(userId: string) {
     setOnboardingCacheState('loading');
     try {
       achievementWalletLoadedUserId.current = null;
@@ -810,9 +810,6 @@ export default function AppContent() {
       setTimeBasedLearningSettings(DEFAULT_TIME_BASED_LEARNING_SETTINGS);
       setQuizPreferences(DEFAULT_QUIZ_PREFERENCES);
       setAppNotice('Saved data on this device could not be read. Please try again when you are connected.');
-      if (throwOnFailure) {
-        throw error;
-      }
     }
   }
 
@@ -851,6 +848,7 @@ export default function AppContent() {
             userId,
             getScreenContext(activeTab, 'hydrate_learning_data'),
           ),
+          { reportFailure: false },
         );
 
         if (!isActive) {
@@ -2688,7 +2686,9 @@ export default function AppContent() {
           onAddWord={openAddWord}
           onStudy={() => openCards()}
           onReviewWord={(wordId) => openCards(wordId)}
+          onReviewDue={() => openDueReview()}
           onQuiz={() => openQuiz()}
+          onOmegaTest={() => openQuiz()}
           onStats={() => setActiveTab('dashboard')}
           onOpenPlus={() => {
             setPlusPaywallReason('premium-feature');
