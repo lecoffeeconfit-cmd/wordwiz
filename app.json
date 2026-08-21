@@ -18,7 +18,7 @@
         }
       ],
       [
-      "expo-notifications",
+        "expo-notifications",
         {
           "color": "#58CC62",
           "defaultChannel": "daily-review"
@@ -75,7 +75,7 @@
         "NSMicrophoneUsageDescription": "WordWiz uses the microphone only when you choose voice input, so it can transcribe the spoken word and look up its definition.",
         "NSSpeechRecognitionUsageDescription": "WordWiz uses speech recognition only when you choose voice input, so it can convert your spoken word into text for lookup."
       },
-      "buildNumber": "27"
+      "buildNumber": "37"
     },
     "android": {
       "package": "com.lecoffeeconfit.wordwiz",
