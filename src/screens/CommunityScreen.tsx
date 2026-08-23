@@ -41,7 +41,6 @@ import {
   getCommunityExpoPushToken,
   getCommunityLeaderboard,
   getCommunityNudges,
-  getWordCollectorLocationPermission,
   getWordCollectorsContext,
   getWordCollectorsLeaderboard,
   getWordCollectorsMyRank,
@@ -54,7 +53,6 @@ import {
   sendCommunityFriendRequest,
   sendCommunityFriendRequestByPublicId,
   sendCommunityNudge,
-  refreshWordCollectorLocation,
   setCommunityMute,
   setupCommunityProfile,
 } from '../services';
@@ -469,6 +467,7 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
   const contextCacheRef = useRef(new Map<CommunityPeriod, CommunityContext>());
   const leaderboardRequestRef = useRef(0);
   const collectorRequestRef = useRef(0);
+  const collectorSelectionRef = useRef(0);
   const leaderboardLoadMoreRef = useRef(false);
   const collectorLoadMoreRef = useRef(false);
   const initializedRef = useRef(false);
@@ -681,9 +680,10 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
       setCollectorContext(nextContext);
 
       if ((nextAudience === 'nearby' || nextAudience === 'state') && !nextContext.hasLocation) {
-        const permission = await getWordCollectorLocationPermission();
-        if (request !== collectorRequestRef.current) return;
-        setCollectorLocationPermission(permission);
+        // Selecting a location-based audience only changes the view. Keep all
+        // native location calls behind the explicit Enable Location action so
+        // a stale permission/module state cannot take down the screen.
+        setCollectorLocationPermission(null);
         setCollectors([]);
         setCollectorHasMore(false);
         return;
@@ -705,44 +705,41 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
     }
   }, []);
 
-  const selectWordCollectorAudience = useCallback(async (nextAudience: WordCollectorAudience) => {
+  const selectWordCollectorAudience = useCallback((nextAudience: WordCollectorAudience) => {
+    collectorSelectionRef.current += 1;
     setCollectorAudience(nextAudience);
     setCollectorPage(0);
     setCollectorRankView(false);
+    setCollectorLocationLoading(false);
     if (nextAudience === 'all' || nextAudience === 'global') {
       setCollectorLocationPermission(null);
       void loadWordCollectors(collectorPeriod, nextAudience, 0);
       return;
     }
-
-    try {
-      const permission = await getWordCollectorLocationPermission();
-      setCollectorLocationPermission(permission);
-      if (permission === 'granted') {
-        const result = await refreshWordCollectorLocation();
-        if (result === 'ready') collectorCacheRef.current.clear();
-      }
-    } catch {
-      setCollectorLocationPermission('denied');
-    }
     void loadWordCollectors(collectorPeriod, nextAudience, 0, true);
   }, [collectorPeriod, loadWordCollectors]);
 
   const enableCollectorLocation = useCallback(async () => {
+    const selection = collectorSelectionRef.current;
     setCollectorLocationLoading(true);
     try {
       const result = await enableWordCollectorLocation();
+      if (selection !== collectorSelectionRef.current) return;
       if (result === 'ready') {
         collectorCacheRef.current.clear();
         setCollectorLocationPermission('granted');
         void loadWordCollectors(collectorPeriod, collectorAudience, 0, true);
+      } else if (result === 'denied') {
+        setCollectorLocationPermission('denied');
       } else {
-        setCollectorLocationPermission(result === 'denied' ? 'denied' : 'undetermined');
+        Alert.alert('Location unavailable', 'Turn on Location Services and try again to view this ranking.');
       }
     } catch (error) {
-      Alert.alert('Location unavailable', error instanceof Error ? error.message : 'Try again when your device location is available.');
+      if (selection === collectorSelectionRef.current) {
+        Alert.alert('Location unavailable', error instanceof Error ? error.message : 'Try again when your device location is available.');
+      }
     } finally {
-      setCollectorLocationLoading(false);
+      if (selection === collectorSelectionRef.current) setCollectorLocationLoading(false);
     }
   }, [collectorAudience, collectorPeriod, loadWordCollectors]);
 
@@ -1014,6 +1011,10 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
 
   const renderWordCollectors = () => {
     const locationRequired = collectorAudience === 'nearby' || collectorAudience === 'state';
+    const locationAudienceLabel = collectorAudience === 'state' ? 'State' : 'Nearby';
+    const locationAudienceDescription = collectorAudience === 'state'
+      ? 'Allow WordWiz to use your approximate location to place you in a broad state leaderboard. Your exact location is never shown.'
+      : 'Allow WordWiz to use your approximate location to place you in a broad local leaderboard. Your exact location is never shown.';
     const nearbyGroupIsSmall = locationRequired && !collectorLoading && collectors.length > 0 && collectors.length < 2;
     const noCollectorWords = !collectorLoading && !locationRequired && collectors.length === 0;
     const showLocationAccess = locationRequired && !collectorContext?.hasLocation;
@@ -1029,9 +1030,11 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
                 accessibilityRole="button"
                 accessibilityState={{ selected: collectorPeriod === item }}
                 onPress={() => {
+                  collectorSelectionRef.current += 1;
                   setCollectorPeriod(item);
                   setCollectorPage(0);
                   setCollectorRankView(false);
+                  setCollectorLocationLoading(false);
                   void loadWordCollectors(item, collectorAudience, 0);
                 }}
                 style={[community.segment, collectorPeriod === item && community.segmentActive]}
@@ -1094,21 +1097,39 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
             </View>
             <View style={community.collectorLocationCopy}>
               <Text style={community.collectorLocationTitle}>
-                {collectorLocationPermission === 'denied' ? 'Nearby rankings need location access' : 'See how you rank nearby'}
+                {collectorLocationPermission === 'denied'
+                  ? `${locationAudienceLabel} rankings need location access`
+                  : collectorAudience === 'state' ? 'See how you rank in your state' : 'See how you rank nearby'}
               </Text>
-              <Text style={community.collectorLocationText}>Allow WordWiz to use your approximate location to place you in a broad local leaderboard. Your exact location is never shown.</Text>
+              <Text style={community.collectorLocationText}>{locationAudienceDescription}</Text>
             </View>
             <View style={community.collectorLocationActions}>
               {collectorLocationPermission === 'denied' ? (
-                <Pressable onPress={() => { void Linking.openSettings(); }} style={community.collectorLocationPrimary}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Open Settings to enable ${locationAudienceLabel.toLowerCase()} rankings`}
+                  onPress={() => { void Linking.openSettings(); }}
+                  style={community.collectorLocationPrimary}
+                >
                   <Text style={community.collectorLocationPrimaryText}>Open Settings</Text>
                 </Pressable>
               ) : (
-                <Pressable disabled={collectorLocationLoading} onPress={() => void enableCollectorLocation()} style={[community.collectorLocationPrimary, collectorLocationLoading && community.disabledButton]}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Enable location for ${locationAudienceLabel.toLowerCase()} rankings`}
+                  disabled={collectorLocationLoading}
+                  onPress={() => void enableCollectorLocation()}
+                  style={[community.collectorLocationPrimary, collectorLocationLoading && community.disabledButton]}
+                >
                   {collectorLocationLoading ? <ActivityIndicator size="small" color={COLORS.white} /> : <Text style={community.collectorLocationPrimaryText}>Enable Location</Text>}
                 </Pressable>
               )}
-              <Pressable onPress={() => void selectWordCollectorAudience('global')} style={community.collectorLocationSecondary}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Continue with global rankings"
+                onPress={() => void selectWordCollectorAudience('global')}
+                style={community.collectorLocationSecondary}
+              >
                 <Text style={community.collectorLocationSecondaryText}>Not Now</Text>
               </Pressable>
             </View>

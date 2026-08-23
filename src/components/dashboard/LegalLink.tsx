@@ -14,6 +14,8 @@ export function LegalLink({
 }) {
   return (
     <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`Open ${label}`}
       onPress={onPress}
       style={({ pressed }) => [
         styles.legalLink,

@@ -2757,6 +2757,41 @@ export function DashboardScreen({
             ) : null}
           </View>
         ) : null}
+
+        <Pressable
+          accessibilityRole="switch"
+          accessibilityLabel="After-answer check-in"
+          accessibilityHint="Shows or hides the prompt that asks how a correct answer felt"
+          accessibilityState={{ checked: quizPreferences.showReviewRating !== false }}
+          onPress={() => onQuizPreferencesChange({
+            ...quizPreferences,
+            showReviewRating: quizPreferences.showReviewRating === false,
+          })}
+          style={({ pressed }) => [
+            styles.quizPreferenceToggle,
+            styles.reviewRatingToggle,
+            quizPreferences.showReviewRating !== false && styles.reviewRatingToggleActive,
+            pressed && styles.pressed,
+          ]}
+        >
+          <View style={styles.quizPreferenceToggleCopy}>
+            <Text style={styles.quizPreferenceToggleTitle}>After-answer check-in</Text>
+            <Text style={styles.quizPreferenceToggleText}>
+              {quizPreferences.showReviewRating === false
+                ? 'Skip the “How did that feel?” prompt after correct answers'
+                : 'Ask how a correct answer felt to fine-tune review timing'}
+            </Text>
+          </View>
+          <View style={[
+            styles.timedLearningSwitch,
+            quizPreferences.showReviewRating !== false && styles.reviewRatingSwitchActive,
+          ]}>
+            <View style={[
+              styles.timedLearningSwitchKnob,
+              quizPreferences.showReviewRating !== false && styles.reviewRatingSwitchKnobActive,
+            ]} />
+          </View>
+        </Pressable>
       </View>
 
       <DashboardSection
@@ -3411,14 +3446,16 @@ export function DashboardScreen({
       </View>
 
       <View style={styles.legalCard}>
-        <View style={styles.legalHeaderIcon}>
-          <Ionicons name="shield-checkmark-outline" size={22} color={COLORS.blue} />
-        </View>
-        <View style={styles.legalCardCopy}>
-          <Text style={styles.legalCardTitle}>About & legal</Text>
-          <Text style={styles.legalCardText}>
-            Read how WordWiz works and how your learning data is handled.
-          </Text>
+        <View style={styles.legalCardHeader}>
+          <View style={styles.legalHeaderIcon}>
+            <Ionicons name="shield-checkmark-outline" size={22} color={COLORS.blue} />
+          </View>
+          <View style={styles.legalCardCopy}>
+            <Text style={styles.legalCardTitle}>About & legal</Text>
+            <Text style={styles.legalCardText}>
+              Read how WordWiz works and how your learning data is handled.
+            </Text>
+          </View>
         </View>
         <View style={styles.legalLinkStack}>
           <LegalLink label="Community guidelines" onPress={() => setCommunityGuidelinesOpen(true)} />

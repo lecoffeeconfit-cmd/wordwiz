@@ -154,7 +154,7 @@ export function WordInfoReportButton({
       onPress={() => onReportIncorrectInfo(word, 'Word details')}
       style={({ pressed }) => [styles.wordInfoReportButton, pressed && styles.pressed]}
     >
-      <Ionicons name="flag-outline" size={15} color={COLORS.muted} />
+      <Ionicons name="flag-outline" size={15} color={COLORS.red} />
       <Text style={styles.wordInfoReportButtonText}>Report</Text>
     </Pressable>
   );

@@ -299,6 +299,10 @@ export function HomeScreen({
             </View>
           </View>
         </View>
+        <HomeQuickActions
+          secondaryAction={secondaryQuickAction}
+          onAddWord={onAddWord}
+        />
         <View style={styles.paperPlane}>
           <Ionicons name="paper-plane" size={28} color={COLORS.white} />
         </View>
@@ -721,11 +725,6 @@ export function HomeScreen({
         </Text>
       </View>
       </ScrollView>
-
-      <HomeQuickActions
-        secondaryAction={secondaryQuickAction}
-        onAddWord={onAddWord}
-      />
     </View>
   );
 }
@@ -796,7 +795,9 @@ function HomeQuickActions({
             pressed && styles.homeFloatingSecondaryButtonPressed,
           ]}
         >
-          <Ionicons name={displayedAction.icon} size={18} color="#4B45C7" />
+          <View style={styles.homeFloatingSecondaryIcon}>
+            <Ionicons name={displayedAction.icon} size={16} color="#4B45C7" />
+          </View>
           <Text
             maxFontSizeMultiplier={1.15}
             numberOfLines={1}
@@ -816,11 +817,11 @@ function HomeQuickActions({
         ]}
       >
         <View style={styles.homeFloatingAddIcon}>
-          <Ionicons name="add" size={24} color={COLORS.white} />
+          <Ionicons name="add" size={22} color={COLORS.white} />
         </View>
         <Text style={styles.homeFloatingAddText}>Add word</Text>
         <View pointerEvents="none" accessible={false} style={styles.homeFloatingAddSparkle}>
-          <Ionicons name="sparkles" size={11} color="#FFE58A" />
+          <Ionicons name="sparkles" size={9} color="#FFE58A" />
         </View>
       </Pressable>
     </View>

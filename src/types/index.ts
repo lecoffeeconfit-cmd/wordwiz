@@ -39,6 +39,8 @@ export type QuizSessionMode =
 export type QuizPreferences = {
   enabled: boolean;
   difficulty: QuizDifficultyPreference;
+  /** Shows the post-answer prompt that lets learners rate how the recall felt. */
+  showReviewRating?: boolean;
   questionTypes?: QuizQuestionTypePreferences;
 };
 

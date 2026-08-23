@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Animated, FlatList, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, Animated, FlatList, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { COLORS } from '../constants/theme';
 import type { AnalyticsData, LegalPage, QuizAnswer, QuizDifficultyPreference, QuizPreferences, QuizProgress, QuizQuestion, QuizSessionMode, ReminderSettings, ReviewRating, SortMode, TimeBasedLearningSettings, Word } from '../types';
 import { styles } from '../styles';
@@ -236,6 +236,7 @@ export function QuizScreen({
   const omegaPreparationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const omegaPreparationRequest = useRef(0);
   const omegaPreparationStartedAt = useRef<number | null>(null);
+  const quizScrollRef = useRef<ScrollView | null>(null);
   const [finishedTotal, setFinishedTotal] = useState<number | null>(null);
   const [finishedWasDailyRetry, setFinishedWasDailyRetry] = useState(false);
   const [selectedCategory, setSelectedCategory] =
@@ -1971,11 +1972,19 @@ export function QuizScreen({
     sessionMode !== 'omega-test' &&
     quizPreferences.difficulty !== 'ultra';
   return (
-    <ScrollView
-      style={styles.screen}
-      contentContainerStyle={styles.quizContent}
-      showsVerticalScrollIndicator={false}
+    <KeyboardAvoidingView
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 8 : 0}
+      style={styles.quizKeyboardAvoidingView}
     >
+      <ScrollView
+        ref={quizScrollRef}
+        style={styles.screen}
+        contentContainerStyle={styles.quizContent}
+        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
       <ScreenHeader
         eyebrow={sessionMode === 'omega-test' ? 'OMEGA TEST' : 'DAILY QUIZ'}
         title="Answer the prompt"
@@ -2200,6 +2209,13 @@ export function QuizScreen({
             autoCorrect={false}
             editable={!selected}
             onChangeText={setTypedResponse}
+            onFocus={() => {
+              requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                  quizScrollRef.current?.scrollToEnd({ animated: true });
+                });
+              });
+            }}
             onSubmitEditing={submitTypedAnswer}
             placeholder={
               question.mode === 'sentence-completion'
@@ -2401,7 +2417,7 @@ export function QuizScreen({
                 </Text>
               </View>
             ) : null}
-            {selectedIsCorrect ? (
+            {selectedIsCorrect && quizPreferences.showReviewRating !== false ? (
               <View style={styles.reviewRatingArea}>
                 <Text style={styles.reviewRatingLabel}>How did that feel?</Text>
                 <Text style={styles.reviewRatingHint}>
@@ -2454,6 +2470,7 @@ export function QuizScreen({
           <Ionicons name="arrow-forward" size={21} color={COLORS.white} />
         </Pressable>
       ) : null}
-    </ScrollView>
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }

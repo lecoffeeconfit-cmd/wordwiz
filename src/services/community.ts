@@ -132,6 +132,45 @@ async function rpc<T>(name: string, args?: Record<string, unknown>): Promise<T> 
   return data as T;
 }
 
+function finiteNumber(value: unknown, fallback: number | null = null) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+function objectValue(value: unknown): Record<string, unknown> | null {
+  return typeof value === 'object' && value !== null ? value as Record<string, unknown> : null;
+}
+
+function normalizeWordCollectorContext(value: unknown): WordCollectorContext {
+  const record = objectValue(value);
+  return {
+    eligible: record?.eligible === true,
+    hasLocation: record?.hasLocation === true,
+    rank: finiteNumber(record?.rank),
+    wordCount: finiteNumber(record?.wordCount, 0) ?? 0,
+    totalUsers: finiteNumber(record?.totalUsers, 0) ?? 0,
+  };
+}
+
+function normalizeWordCollectorEntries(value: unknown): WordCollectorEntry[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    const record = objectValue(item);
+    const rank = finiteNumber(record?.rank);
+    const wordCount = finiteNumber(record?.wordCount);
+    const publicId = typeof record?.publicId === 'string' ? record.publicId : null;
+    const displayName = typeof record?.displayName === 'string' ? record.displayName : null;
+    if (rank === null || wordCount === null || !publicId || !displayName) return [];
+    return [{
+      rank,
+      publicId,
+      displayName,
+      avatarPath: typeof record?.avatarPath === 'string' ? record.avatarPath : null,
+      wordCount,
+      isMe: record?.isMe === true,
+    }];
+  });
+}
+
 export async function getCommunityContext(period: CommunityPeriod = 'weekly') {
   return rpc<CommunityContext>('community_my_context', { p_period: period });
 }
@@ -154,10 +193,11 @@ export async function getWordCollectorsContext(
   period: WordCollectorPeriod,
   audience: WordCollectorAudience,
 ) {
-  return rpc<WordCollectorContext>('word_collectors_my_context', {
+  const data = await rpc<unknown>('word_collectors_my_context', {
     p_period: period,
     p_scope: audience,
   });
+  return normalizeWordCollectorContext(data);
 }
 
 export async function getWordCollectorsLeaderboard(
@@ -166,29 +206,31 @@ export async function getWordCollectorsLeaderboard(
   limit: number,
   offset: number,
 ) {
-  return rpc<WordCollectorEntry[]>('word_collectors_leaderboard', {
+  const data = await rpc<unknown>('word_collectors_leaderboard', {
     p_period: period,
     p_scope: audience,
     p_limit: limit,
     p_offset: offset,
   });
+  return normalizeWordCollectorEntries(data);
 }
 
 export async function getWordCollectorsMyRank(
   period: WordCollectorPeriod,
   audience: WordCollectorAudience,
 ) {
-  return rpc<WordCollectorEntry[]>('word_collectors_my_rank', {
+  const data = await rpc<unknown>('word_collectors_my_rank', {
     p_period: period,
     p_scope: audience,
     p_radius: 3,
   });
+  return normalizeWordCollectorEntries(data);
 }
 
 export async function getWordCollectorLocationPermission(): Promise<WordCollectorLocationPermission> {
   // Keeping this module dynamic guarantees that optional location support never
-  // participates in app startup. It is checked only after a learner chooses a
-  // location-based Word Collectors filter.
+  // participates in app startup. It is checked only after a learner taps the
+  // explicit location action for a location-based Word Collectors filter.
   const Location = await import('expo-location');
   const permission = await Location.getForegroundPermissionsAsync();
   if (permission.granted) return 'granted';

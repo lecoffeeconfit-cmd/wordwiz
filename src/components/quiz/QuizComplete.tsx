@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, Easing, Text, View } from 'react-native';
+import { AccessibilityInfo, Animated, Easing, Text, View } from 'react-native';
 import { COLORS } from '../../constants/theme';
 import { styles } from '../../styles';
 
@@ -28,6 +28,20 @@ export function QuizComplete({
   const badgeScale = useRef(new Animated.Value(0.5)).current;
   const sparkleProgress = useRef(new Animated.Value(0)).current;
   const sparklePulse = useRef(new Animated.Value(0.45)).current;
+  const scoreBorderPulse = useRef(new Animated.Value(0)).current;
+  const [reduceMotion, setReduceMotion] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+    void AccessibilityInfo.isReduceMotionEnabled().then((enabled) => {
+      if (mounted) setReduceMotion(enabled);
+    });
+    const subscription = AccessibilityInfo.addEventListener('reduceMotionChanged', setReduceMotion);
+    return () => {
+      mounted = false;
+      subscription.remove();
+    };
+  }, []);
 
   useEffect(() => {
     cardEntrance.setValue(0);
@@ -100,6 +114,34 @@ export function QuizComplete({
     animation.start();
     return () => animation.stop();
   }, [sparklePulse]);
+
+  useEffect(() => {
+    scoreBorderPulse.stopAnimation();
+    if (reduceMotion) {
+      scoreBorderPulse.setValue(0.35);
+      return;
+    }
+
+    const animation = Animated.loop(
+      Animated.sequence([
+        Animated.delay(420),
+        Animated.timing(scoreBorderPulse, {
+          toValue: 1,
+          duration: 1250,
+          easing: Easing.inOut(Easing.quad),
+          useNativeDriver: true,
+        }),
+        Animated.timing(scoreBorderPulse, {
+          toValue: 0,
+          duration: 1250,
+          easing: Easing.inOut(Easing.quad),
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    animation.start();
+    return () => animation.stop();
+  }, [reduceMotion, scoreBorderPulse]);
 
   useEffect(() => {
     if (isPractice) {
@@ -229,6 +271,25 @@ export function QuizComplete({
           isStrongScore && styles.completeScoreCardStrong,
         ]}
       >
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.completeScoreCardBorderGlow,
+            {
+              borderColor: scoreColor,
+              opacity: scoreBorderPulse.interpolate({
+                inputRange: [0, 1],
+                outputRange: [0.16, 0.62],
+              }),
+              transform: [{
+                scale: scoreBorderPulse.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [1, 1.018],
+                }),
+              }],
+            },
+          ]}
+        />
         <View style={styles.completeScoreMain}>
           <View style={styles.completeScoreLabelRow}>
             <Ionicons name="ribbon-outline" size={13} color={COLORS.purpleDark} />

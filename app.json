@@ -7,7 +7,7 @@
     "orientation": "portrait",
     "icon": "./assets/splash-icon.png",
     "userInterfaceStyle": "light",
-    "backgroundColor": "#F2EFFF",
+    "backgroundColor": "#F8F4FF",
     "plugins": [
       [
         "@sentry/react-native/expo",
@@ -54,10 +54,10 @@
           "image": "./assets/splash-icon.png",
           "imageWidth": 200,
           "resizeMode": "contain",
-          "backgroundColor": "#F2EFFF",
+          "backgroundColor": "#F8F4FF",
           "dark": {
             "image": "./assets/splash-icon.png",
-            "backgroundColor": "#F2EFFF"
+            "backgroundColor": "#F8F4FF"
           }
         }
       ],
@@ -76,7 +76,7 @@
         "NSSpeechRecognitionUsageDescription": "WordWiz uses speech recognition only when you choose voice input, so it can convert your spoken word into text for lookup.",
         "NSMotionUsageDescription": "WordWiz may access motion data to support interactive device features."
       },
-      "buildNumber": "42"
+      "buildNumber": "43"
     },
     "android": {
       "package": "com.lecoffeeconfit.wordwiz",

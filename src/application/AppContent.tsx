@@ -150,6 +150,7 @@ const CLOUD_SYNC_LOGS_ENABLED =
 const DEFAULT_QUIZ_PREFERENCES: QuizPreferences = {
   enabled: true,
   difficulty: 'automatic',
+  showReviewRating: true,
   questionTypes: normalizeQuestionTypePreferences(undefined),
 };
 const EMPTY_ACHIEVEMENT_WALLET: AchievementWallet = {
