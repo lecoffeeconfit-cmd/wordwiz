@@ -41,6 +41,7 @@ import {
   getCommunityExpoPushToken,
   getCommunityLeaderboard,
   getCommunityNudges,
+  getWordCollectorLocationPermission,
   getWordCollectorsContext,
   getWordCollectorsLeaderboard,
   getWordCollectorsMyRank,
@@ -683,7 +684,11 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
         // Selecting a location-based audience only changes the view. Keep all
         // native location calls behind the explicit Enable Location action so
         // a stale permission/module state cannot take down the screen.
-        setCollectorLocationPermission(null);
+        const permission = await getWordCollectorLocationPermission().catch(
+          (): WordCollectorLocationPermission => 'undetermined',
+        );
+        if (request !== collectorRequestRef.current) return;
+        setCollectorLocationPermission(permission);
         setCollectors([]);
         setCollectorHasMore(false);
         return;
@@ -1015,7 +1020,7 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
     const locationAudienceDescription = collectorAudience === 'state'
       ? 'Allow WordWiz to use your approximate location to place you in a broad state leaderboard. Your exact location is never shown.'
       : 'Allow WordWiz to use your approximate location to place you in a broad local leaderboard. Your exact location is never shown.';
-    const nearbyGroupIsSmall = locationRequired && !collectorLoading && collectors.length > 0 && collectors.length < 2;
+    const locationGroupIsGrowing = locationRequired && !collectorLoading && collectors.length === 0;
     const noCollectorWords = !collectorLoading && !locationRequired && collectors.length === 0;
     const showLocationAccess = locationRequired && !collectorContext?.hasLocation;
 
@@ -1134,7 +1139,7 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
               </Pressable>
             </View>
           </View>
-        ) : nearbyGroupIsSmall ? (
+        ) : locationGroupIsGrowing ? (
           <View style={community.empty}>
             <Ionicons name="people-outline" size={30} color={COLORS.purple} />
             <Text style={community.emptyTitle}>Your local ranking is still growing</Text>

@@ -3057,6 +3057,16 @@ function OnboardingScreen({
         ['ticket-outline', 'Earn useful rewards', 'Achievements earn refreshes for an extra daily quiz or Omega Test.'],
       ],
     },
+    {
+      eyebrow: 'OPTIONAL COMMUNITY',
+      icon: 'location-outline' as const,
+      title: 'See how your words add up',
+      text: 'Word Collectors lets you compare the number of personal words you add with learners nearby, in your state, or around the world.',
+      steps: [
+        ['people-outline', 'Choose your view', 'All and Global work without location. Nearby and State are optional.'],
+        ['location-outline', 'Stay in control', 'When you choose a local view, tap Enable Location. WordWiz uses a broad area; your exact location and saved words stay private.'],
+      ],
+    },
   ];
   const currentPage = pages[page];
   const isLastPage = page === pages.length - 1;

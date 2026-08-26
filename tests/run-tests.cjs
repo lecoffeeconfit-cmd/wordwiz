@@ -3406,6 +3406,7 @@ test('Community safety flow uses consent, content reporting, and server-only mod
 
 test('Word Collectors stays separate from Social XP and protects qualifying counts and coarse location', () => {
   const screen = fs.readFileSync(path.join(projectRoot, 'src/screens/CommunityScreen.tsx'), 'utf8');
+  const appContent = fs.readFileSync(path.join(projectRoot, 'src/application/AppContent.tsx'), 'utf8');
   const communityService = fs.readFileSync(path.join(projectRoot, 'src/services/community.ts'), 'utf8');
   const appConfig = fs.readFileSync(path.join(projectRoot, 'app.json'), 'utf8');
   const migration = fs.readFileSync(
@@ -3420,6 +3421,8 @@ test('Word Collectors stays separate from Social XP and protects qualifying coun
   assert.match(screen, /My Rank/);
   assert.match(screen, /Enable Location/);
   assert.match(screen, /Open Settings/);
+  assert.match(screen, /getWordCollectorLocationPermission/);
+  assert.match(screen, /getWordCollectorLocationPermission\(\)\.catch/);
   assert.match(screen, /entry\.rank === 1 \? '🥇'/);
   assert.match(screen, /loadMoreWordCollectors/);
   assert.match(communityService, /import\('expo-location'\)/);
@@ -3427,6 +3430,7 @@ test('Word Collectors stays separate from Social XP and protects qualifying coun
   assert.match(communityService, /word_collectors_set_my_location/);
   assert.match(communityService, /area-\$\{Math\.floor\(\(latitude \+ 90\) \/ 2\)\}/);
   assert.match(appConfig, /"expo-location"/);
+  assert.match(appConfig, /"NSLocationWhenInUseUsageDescription": "Allow \$\(PRODUCT_NAME\) to use your approximate location to place you in a broad Word Collectors leaderboard\./);
   assert.match(migration, /create table if not exists public\.word_collector_entries/);
   assert.match(migration, /primary key \(user_id, normalized_term\)/);
   assert.match(migration, /word_collector_normalize_term/);
@@ -3440,6 +3444,21 @@ test('Word Collectors stays separate from Social XP and protects qualifying coun
   assert.match(migration, /word_collectors_my_rank/);
   assert.doesNotMatch(migration, /\b(latitude|longitude)\b/i);
   assert.doesNotMatch(migration, /community_leaderboard_level/);
+  assert.match(appContent, /OPTIONAL COMMUNITY/);
+  assert.match(appContent, /All and Global work without location/);
+  assert.match(appContent, /tap Enable Location/);
+  const onboardingSource = appContent.slice(
+    appContent.indexOf('function OnboardingScreen'),
+    appContent.indexOf('async function clearLocalLearningData'),
+  );
+  assert.doesNotMatch(onboardingSource, /enableWordCollectorLocation/);
+});
+
+test('Word Collectors shows a one-person nearby or state ranking', () => {
+  const screen = fs.readFileSync(path.join(projectRoot, 'src/screens/CommunityScreen.tsx'), 'utf8');
+
+  assert.match(screen, /const locationGroupIsGrowing = locationRequired && !collectorLoading && collectors\.length === 0;/);
+  assert.doesNotMatch(screen, /const nearbyGroupIsSmall = locationRequired && !collectorLoading && collectors\.length > 0 && collectors\.length < 2;/);
 });
 
 test('onboarding waits for the signed-in user cache and does not replay on login', () => {
