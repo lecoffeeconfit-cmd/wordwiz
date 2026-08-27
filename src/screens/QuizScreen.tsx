@@ -4,7 +4,7 @@ import { ActivityIndicator, Alert, Animated, FlatList, KeyboardAvoidingView, Pla
 import { COLORS } from '../constants/theme';
 import type { AnalyticsData, GameAttempt, LegalPage, QuizAnswer, QuizDifficultyPreference, QuizPreferences, QuizProgress, QuizQuestion, QuizSessionMode, ReminderSettings, ReviewRating, SortMode, TimeBasedLearningSettings, Word } from '../types';
 import { styles } from '../styles';
-import { buildCategoryPracticeQuiz, buildOmegaTestAsync, buildQuiz, calculateStreakStats, evaluateQuizAnswer, formatReminderTime, formatStudyTime, formatWordFlaggedDate, getAlternateLearningExplanation, getDayKey, getEffectiveQuizDifficulty, getMistakeReviewWordIds, getNewStudyWords, getOmegaTestStatus, getQuizQuestionPace, getQuizRecallPaceSignal, getRecentDays, getStreakMessage, getStreakWeek, getStudySets, getTimedLearningBonusXp, getTypedRecallHint, getWordMastery, getWordMasteryCategoryForWord, isPersonalLibraryWord, NEW_STUDY_GROUP, normalizeTimeBasedLearningSettings, shuffle, TIMED_LEARNING_SECONDS, WORD_MASTERY_CATEGORIES, type WordMasteryCategoryId } from '../utils';
+import { buildCategoryPracticeQuiz, buildOmegaTestAsync, buildQuiz, calculateStreakStats, evaluateQuizAnswer, formatReminderTime, formatStudyTime, formatWordFlaggedDate, getAlternateLearningExplanation, getDayKey, getEffectiveQuizDifficulty, getGameWords, getMistakeReviewWordIds, getNewStudyWords, getOmegaTestStatus, getQuizQuestionPace, getQuizRecallPaceSignal, getRecentDays, getStreakMessage, getStreakWeek, getStudySets, getTimedLearningBonusXp, getTypedRecallHint, getWordMastery, getWordMasteryCategoryForWord, isPersonalLibraryWord, NEW_STUDY_GROUP, normalizeTimeBasedLearningSettings, shuffle, TIMED_LEARNING_SECONDS, WORD_MASTERY_CATEGORIES, type WordMasteryCategoryId } from '../utils';
 import { DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, ProgressFill, QuizComplete, QuizFact, QuizGames, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 import { reportError, trackEvent } from '../services';
 
@@ -240,6 +240,7 @@ export function QuizScreen({
   const omegaPreparationRequest = useRef(0);
   const omegaPreparationStartedAt = useRef<number | null>(null);
   const quizScrollRef = useRef<ScrollView | null>(null);
+  const gamesScrollRef = useRef<ScrollView | null>(null);
   const [finishedTotal, setFinishedTotal] = useState<number | null>(null);
   const [finishedWasDailyRetry, setFinishedWasDailyRetry] = useState(false);
   const [selectedCategory, setSelectedCategory] =
@@ -373,6 +374,10 @@ export function QuizScreen({
             )
             .map((item) => item.word),
     [allStudySetWords, newWords, personalWords, selectedCategory, wordMastery, words],
+  );
+  const gameSelectionWords = useMemo(
+    () => getGameWords(filteredQuizWords),
+    [filteredQuizWords],
   );
   const masteryTestWords = useMemo(
     () =>
@@ -1611,6 +1616,37 @@ export function QuizScreen({
     </>
   );
 
+  const gamesWordChoiceCard = (
+    <View style={styles.gamesWordChoiceCard}>
+      <View pointerEvents="none" style={styles.gamesWordChoiceGlow} />
+      <View pointerEvents="none" style={styles.gamesWordChoiceSparkle}>
+        <Ionicons name="sparkles" size={17} color="#E3A72A" />
+      </View>
+      <View style={styles.gamesWordChoiceHeader}>
+        <View style={styles.gamesWordChoiceIcon}>
+          <Ionicons name="game-controller" size={22} color={COLORS.white} />
+        </View>
+        <View style={styles.gamesWordChoiceCopy}>
+          <Text style={styles.gamesWordChoiceEyebrow}>MAKE YOUR GAME BOARD</Text>
+          <Text style={styles.gamesWordChoiceTitle}>Pick your play words</Text>
+          <Text style={styles.gamesWordChoiceText}>
+            Choose a group below — every game will use it.
+          </Text>
+        </View>
+        <View style={[styles.gamesWordChoiceReadyPill, { borderColor: `${selectedCategoryDetails.color}55` }]}>
+          <Text style={[styles.gamesWordChoiceReadyCount, { color: selectedCategoryDetails.color }]}>
+            {gameSelectionWords.length}
+          </Text>
+          <Text style={[styles.gamesWordChoiceReadyLabel, { color: selectedCategoryDetails.color }]}>READY</Text>
+        </View>
+      </View>
+      <View style={styles.gamesWordChoiceControls}>
+        {categorySelector}
+        {studySetSelector}
+      </View>
+    </View>
+  );
+
   const quizAreaTabs = (
     <View style={styles.quizAreaTabs} accessibilityRole="tablist">
       {(['quizzes', 'games'] as const).map((area) => {
@@ -1644,11 +1680,73 @@ export function QuizScreen({
 
   const gamesView = (
     <QuizGames
-      words={words}
+      words={gameSelectionWords}
       gameHistory={analytics.gameHistory ?? []}
       onComplete={onGameComplete}
+      wordChoicePicker={gamesWordChoiceCard}
+      onInputFocus={() => {
+        requestAnimationFrame(() => gamesScrollRef.current?.scrollToEnd({ animated: true }));
+        setTimeout(() => gamesScrollRef.current?.scrollToEnd({ animated: true }), 250);
+      }}
     />
   );
+
+  const gamesHeader = pausedSession && quiz.length === 0 ? (
+    <ScreenHeader
+      eyebrow={pausedSession.sessionMode === 'omega-test' ? 'OMEGA TEST' : 'DAILY QUIZ'}
+      title="Your quiz is waiting"
+      subtitle="Your place is saved. Pick up exactly where you left off."
+      meta={quizDifficultyBadge}
+    />
+  ) : progress && quiz.length === 0 && !dailyRefreshActive ? (
+    <ScreenHeader
+      eyebrow="DAILY QUIZ"
+      title={dailyRefreshActive ? 'Improve today’s score' : 'Today’s practice'}
+      subtitle={
+        dailyRefreshActive
+          ? 'A fresh Daily Quiz is ready. Correct words move your Daily Learning Goal forward.'
+          : 'A little review each day makes words stick.'
+      }
+      meta={quizDifficultyBadge}
+    />
+  ) : finishedScore !== null ? (
+    <ScreenHeader
+      eyebrow="DAILY QUIZ"
+      title={finishedWasDailyRetry ? 'Daily score refreshed!' : 'Practice complete!'}
+      subtitle="You gave your brain a useful workout."
+      meta={quizDifficultyBadge}
+    />
+  ) : (
+    <ScreenHeader
+      eyebrow="DAILY QUIZ"
+      title="Today’s practice"
+      subtitle="A little review each day makes words stick."
+      meta={quizDifficultyBadge}
+    />
+  );
+
+  if (quizArea === 'games') {
+    return (
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 8 : 0}
+        style={styles.quizKeyboardAvoidingView}
+      >
+        <ScrollView
+          ref={gamesScrollRef}
+          style={styles.screen}
+          contentContainerStyle={styles.singleScreenContent}
+          keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          {gamesHeader}
+          {quizAreaTabs}
+          {gamesView}
+        </ScrollView>
+      </KeyboardAvoidingView>
+    );
+  }
 
   if (pausedSession && quiz.length === 0) {
     const questionNumber = pausedSession.questionIndex + 1;
@@ -1666,8 +1764,7 @@ export function QuizScreen({
           meta={quizDifficultyBadge}
         />
         {quizAreaTabs}
-        {quizArea === 'games' ? gamesView : (
-          <View style={styles.quizPausedCard}>
+        <View style={styles.quizPausedCard}>
             <View pointerEvents="none" style={styles.quizPausedGlow} />
             <View style={styles.quizPausedIcon}>
               <Ionicons name="pause" size={29} color={COLORS.white} />
@@ -1706,8 +1803,7 @@ export function QuizScreen({
                 <Text style={styles.quizPausedDiscardText}>END THIS ATTEMPT</Text>
               </Pressable>
             </View>
-          </View>
-        )}
+        </View>
       </ScrollView>
     );
   }
@@ -1726,8 +1822,7 @@ export function QuizScreen({
           meta={quizDifficultyBadge}
         />
         {quizAreaTabs}
-        {quizArea === 'games' ? gamesView : (
-          <>
+        <>
             <QuizComplete score={progress.score} total={progress.total} />
             <View style={styles.quizRefreshTokenCard}>
           <View pointerEvents="none" style={styles.quizRefreshTokenGlow} />
@@ -1789,8 +1884,7 @@ export function QuizScreen({
                 PRACTICE {getQuizSessionLabel(sessionMode).toUpperCase()} QUIZ
               </Text>
             </Pressable>
-          </>
-        )}
+        </>
       </ScrollView>
     );
   }
@@ -1805,12 +1899,10 @@ export function QuizScreen({
           meta={quizDifficultyBadge}
         />
         {quizAreaTabs}
-        {quizArea === 'games' ? gamesView : (
-          <EmptyPractice
-            icon="help-circle-outline"
-            label="Add a word to unlock your daily quiz."
-          />
-        )}
+        <EmptyPractice
+          icon="help-circle-outline"
+          label="Add a word to unlock your daily quiz."
+        />
       </ScrollView>
     );
   }
@@ -1825,8 +1917,7 @@ export function QuizScreen({
           meta={quizDifficultyBadge}
         />
         {quizAreaTabs}
-        {quizArea === 'games' ? gamesView : (
-          <>
+        <>
             <QuizComplete
               score={finishedScore}
               total={finishedTotal ?? quiz.length}
@@ -1857,8 +1948,7 @@ export function QuizScreen({
                 PRACTICE ANOTHER QUIZ
               </Text>
             </Pressable>
-          </>
-        )}
+        </>
       </ScrollView>
     );
   }
@@ -1873,8 +1963,7 @@ export function QuizScreen({
           meta={quizDifficultyBadge}
         />
         {quizAreaTabs}
-        {quizArea === 'games' ? gamesView : (
-          <View style={styles.quizIntroCard}>
+        <View style={styles.quizIntroCard}>
           <View style={styles.quizIllustration}>
             <Ionicons name="trophy" size={48} color={COLORS.yellow} />
             <View style={styles.sparkleOne}>
@@ -1965,8 +2054,7 @@ export function QuizScreen({
               <Ionicons name="arrow-forward" size={21} color={COLORS.white} />
             )}
           </Pressable>
-          </View>
-        )}
+        </View>
       </ScrollView>
     );
   }

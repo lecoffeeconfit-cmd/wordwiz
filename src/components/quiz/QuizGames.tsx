@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import { Animated, Easing, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { COLORS, SOFT_SHADOW } from '../../constants/theme';
 import type { GameAnswer, GameAttempt, GameType, Word } from '../../types';
@@ -13,6 +14,7 @@ import {
   getGameWords,
   getGameXp,
   getGameXpLabel,
+  getLetterCount,
   getTypedRecallHint,
 } from '../../utils';
 
@@ -29,6 +31,8 @@ type QuizGamesProps = {
   words: Word[];
   gameHistory: GameAttempt[];
   onComplete: (attempt: GameAttempt) => void | Promise<void>;
+  onInputFocus?: () => void;
+  wordChoicePicker: ReactNode;
 };
 
 type GameDefinition = {
@@ -147,6 +151,36 @@ function getHintButtonLabel(hintStep: number, hintCount: number) {
   return 'HIDE HINT';
 }
 
+function getHintButtonAccessibilityLabel(hintStep: number, hintCount: number) {
+  if (hintCount === 0) return 'show hint';
+  if (hintStep === 0) return `show hint 1 of ${hintCount}`;
+  if (hintStep < hintCount) return `show hint ${hintStep + 1} of ${hintCount}`;
+  return 'hide hint';
+}
+
+type GameHintState = {
+  hintStep: number;
+  hintCount: number;
+  visibleHint: string | null;
+  advance: () => void;
+};
+
+function useGameHintState(hints: string[] | undefined, hintKey?: string | number): GameHintState {
+  const [hintStep, setHintStep] = useState(0);
+  const hintCount = hints?.length ?? 0;
+
+  useEffect(() => {
+    setHintStep(0);
+  }, [hintKey]);
+
+  return {
+    hintStep,
+    hintCount,
+    visibleHint: hintStep > 0 ? hints?.[hintStep - 1] ?? null : null,
+    advance: () => setHintStep((current) => current >= hintCount ? 0 : current + 1),
+  };
+}
+
 function triggerGameHaptic(feedback: 'light' | 'success' | 'error') {
   const action = feedback === 'light'
     ? Haptics.selectionAsync()
@@ -203,7 +237,7 @@ function makeAnswer(
   };
 }
 
-export function QuizGames({ words, gameHistory, onComplete }: QuizGamesProps) {
+export function QuizGames({ words, gameHistory, onComplete, onInputFocus, wordChoicePicker }: QuizGamesProps) {
   const [activeGame, setActiveGame] = useState<GameType | null>(null);
   const [result, setResult] = useState<GameAttempt | null>(null);
   const gameWords = useMemo(() => getGameWords(words), [words]);
@@ -279,9 +313,9 @@ export function QuizGames({ words, gameHistory, onComplete }: QuizGamesProps) {
         ) : activeGame === 'word-connections' ? (
           <WordConnectionsGame words={getPlayableGameWords(activeGame, gameWords)} onFinish={finishGame} />
         ) : activeGame === 'crossword' ? (
-          <CrosswordGame words={getPlayableGameWords(activeGame, gameWords)} onFinish={finishGame} />
+          <CrosswordGame words={getPlayableGameWords(activeGame, gameWords)} onFinish={finishGame} onInputFocus={onInputFocus} />
         ) : activeGame === 'word-scramble' ? (
-          <WordScrambleGame words={getPlayableGameWords(activeGame, gameWords)} onFinish={finishGame} />
+          <WordScrambleGame words={getPlayableGameWords(activeGame, gameWords)} onFinish={finishGame} onInputFocus={onInputFocus} />
         ) : (
           <RapidFireGame words={getPlayableGameWords(activeGame, gameWords)} onFinish={finishGame} />
         )}
@@ -302,6 +336,7 @@ export function QuizGames({ words, gameHistory, onComplete }: QuizGamesProps) {
           </Text>
         </View>
       </View>
+      {wordChoicePicker}
       {gameWords.length < 2 ? (
         <View style={gameStyles.emptyCard}>
           <Ionicons name="sparkles-outline" size={24} color={COLORS.purple} />
@@ -426,31 +461,43 @@ function GameResult({ attempt, onBack, onPlayAgain }: { attempt: GameAttempt; on
 function HintButton({
   visible,
   onPress,
-  color = COLORS.orange,
   label,
+  hintStep = 0,
+  hintCount = 0,
 }: {
   visible: boolean;
   onPress: () => void;
-  color?: string;
   label?: string;
+  hintStep?: number;
+  hintCount?: number;
 }) {
   const buttonLabel = label ?? (visible ? 'HIDE HINT' : 'HINT');
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={buttonLabel.toLowerCase()}
+      accessibilityLabel={getHintButtonAccessibilityLabel(hintStep, hintCount)}
       accessibilityState={{ expanded: visible }}
       hitSlop={8}
       onPress={onPress}
       style={({ pressed }) => [gameStyles.hintButton, pressed && gameStyles.pressed]}
     >
-      <Ionicons name={visible ? 'bulb' : 'bulb-outline'} size={14} color={color} />
-      <Text style={[gameStyles.hintButtonText, { color }]}>{buttonLabel}</Text>
+      <Ionicons name={visible ? 'bulb' : 'bulb-outline'} size={14} color={COLORS.blue} />
+      <Text style={gameStyles.hintButtonText}>{buttonLabel}</Text>
     </Pressable>
   );
 }
 
-function HintCard({ hint, color = COLORS.orange }: { hint: string; color?: string }) {
+function HintCard({
+  hint,
+  color = COLORS.orange,
+  step,
+  total,
+}: {
+  hint: string;
+  color?: string;
+  step: number;
+  total: number;
+}) {
   const entrance = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -476,7 +523,10 @@ function HintCard({ hint, color = COLORS.orange }: { hint: string; color?: strin
       ]}
     >
       <Ionicons name="bulb" size={15} color={color} />
-      <Text style={[gameStyles.hintText, { color }]}>{hint}</Text>
+      <View style={gameStyles.hintCardCopy}>
+        <Text style={[gameStyles.hintLevelText, { color }]}>HINT {step} OF {total}</Text>
+        <Text style={[gameStyles.hintText, { color }]}>{hint}</Text>
+      </View>
     </Animated.View>
   );
 }
@@ -511,26 +561,101 @@ function GameFeedback({ text, correct }: { text: string; correct: boolean }) {
   );
 }
 
+function GameLetterCount({
+  answer,
+  response = '',
+  emptyStatus = 'START TYPING',
+}: {
+  answer: string;
+  response?: string;
+  emptyStatus?: string;
+}) {
+  const answerLetterCount = getLetterCount(answer);
+  const typedLetterCount = getLetterCount(response);
+  const wordLengthMeterSlots = Math.min(answerLetterCount, 10);
+  const filledWordLengthMeterSlots = answerLetterCount && typedLetterCount
+    ? Math.min(
+        wordLengthMeterSlots,
+        Math.round((typedLetterCount / answerLetterCount) * wordLengthMeterSlots),
+      )
+    : 0;
+  const wordLengthMatched = typedLetterCount === answerLetterCount;
+  const wordLengthStatus = typedLetterCount === 0
+    ? emptyStatus
+    : wordLengthMatched
+      ? 'LENGTH MATCHED'
+      : typedLetterCount > answerLetterCount
+        ? `${typedLetterCount - answerLetterCount} OVER`
+        : `${answerLetterCount - typedLetterCount} ${
+            answerLetterCount - typedLetterCount === 1 ? 'LETTER' : 'LETTERS'
+          } TO GO`;
+
+  return (
+    <View
+      accessibilityLabel={`Word length: ${answerLetterCount} ${answerLetterCount === 1 ? 'letter' : 'letters'}. ${typedLetterCount} entered.`}
+      style={gameStyles.letterCountBadge}
+    >
+      <View style={gameStyles.letterCountIcon}>
+        <Ionicons
+          name={wordLengthMatched ? 'checkmark' : 'sparkles'}
+          size={16}
+          color={wordLengthMatched ? COLORS.greenDark : COLORS.orange}
+        />
+      </View>
+      <View style={gameStyles.letterCountCopy}>
+        <Text style={gameStyles.letterCountLabel}>WORD LENGTH</Text>
+        <View style={gameStyles.letterCountValueRow}>
+          <Text style={gameStyles.letterCountValue}>{typedLetterCount}</Text>
+          <Text style={gameStyles.letterCountDivider}>/</Text>
+          <Text style={gameStyles.letterCountTotal}>{answerLetterCount}</Text>
+        </View>
+        <Text
+          style={[
+            gameStyles.letterCountStatus,
+            wordLengthMatched && gameStyles.letterCountStatusMatched,
+            typedLetterCount > answerLetterCount && gameStyles.letterCountStatusOver,
+          ]}
+        >
+          {wordLengthStatus}
+        </Text>
+      </View>
+      <View style={gameStyles.letterCountMeter}>
+        {Array.from({ length: wordLengthMeterSlots }).map((_, index) => (
+          <View
+            key={index}
+            style={[
+              gameStyles.letterCountDot,
+              index < filledWordLengthMeterSlots && gameStyles.letterCountDotTyped,
+              wordLengthMatched && index < filledWordLengthMeterSlots && gameStyles.letterCountDotMatched,
+              index === wordLengthMeterSlots - 1 &&
+                filledWordLengthMeterSlots === 0 &&
+                gameStyles.letterCountDotLast,
+            ]}
+          />
+        ))}
+      </View>
+    </View>
+  );
+}
+
 function GamePrompt({
   label,
   prompt,
-  hints,
-  hintKey,
+  promptKey,
+  hintState,
   hintColor,
+  showHintButton = true,
 }: {
   label: string;
   prompt: string;
-  hints?: string[];
-  hintKey?: string | number;
+  promptKey?: string | number;
+  hintState: GameHintState;
   hintColor?: string;
+  showHintButton?: boolean;
 }) {
-  const [hintStep, setHintStep] = useState(0);
-  const hintCount = hints?.length ?? 0;
-  const visibleHint = hintStep > 0 ? hints?.[hintStep - 1] : null;
   const promptEntrance = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    setHintStep(0);
     promptEntrance.setValue(0);
     const animation = Animated.timing(promptEntrance, {
       toValue: 1,
@@ -540,7 +665,7 @@ function GamePrompt({
     });
     animation.start();
     return () => animation.stop();
-  }, [hintKey, prompt, promptEntrance]);
+  }, [promptKey, prompt, promptEntrance]);
 
   return (
     <Animated.View
@@ -554,17 +679,25 @@ function GamePrompt({
     >
       <View style={gameStyles.promptHeader}>
         <Text style={gameStyles.promptLabel}>{label}</Text>
-        {hintCount > 0 ? (
+        {showHintButton && hintState.hintCount > 0 ? (
           <HintButton
-            color={hintColor}
-            label={getHintButtonLabel(hintStep, hintCount)}
-            onPress={() => setHintStep((current) => current >= hintCount ? 0 : current + 1)}
-            visible={hintStep > 0}
+            label={getHintButtonLabel(hintState.hintStep, hintState.hintCount)}
+            onPress={hintState.advance}
+            visible={hintState.hintStep > 0}
+            hintStep={hintState.hintStep}
+            hintCount={hintState.hintCount}
           />
         ) : null}
       </View>
       <Text style={gameStyles.promptText}>{prompt}</Text>
-      {visibleHint ? <HintCard color={hintColor} hint={visibleHint} /> : null}
+      {showHintButton && hintState.visibleHint ? (
+        <HintCard
+          color={hintColor}
+          hint={hintState.visibleHint}
+          step={hintState.hintStep}
+          total={hintState.hintCount}
+        />
+      ) : null}
     </Animated.View>
   );
 }
@@ -639,6 +772,10 @@ function SpeedMatchGame({ words, onFinish }: { words: Word[]; onFinish: GameFini
     [gameKey, roundWords],
   );
   const nextHintWord = roundWords.find((word) => !matched.includes(word.id));
+  const hintState = useGameHintState(
+    nextHintWord ? getHintLevels(nextHintWord) : undefined,
+    nextHintWord?.id,
+  );
 
   useEffect(() => () => {
     if (wrongResetTimeout.current) clearTimeout(wrongResetTimeout.current);
@@ -677,8 +814,8 @@ function SpeedMatchGame({ words, onFinish }: { words: Word[]; onFinish: GameFini
     <View style={gameStyles.playArea}>
       <GameProgress current={matched.length} total={roundWords.length} color="#4F78D8" />
       <GamePrompt
-        hintKey={nextHintWord?.id}
-        hints={nextHintWord ? getHintLevels(nextHintWord) : undefined}
+        promptKey={nextHintWord?.id}
+        hintState={hintState}
         hintColor="#4F78D8"
         label="MATCH THE PAIRS"
         prompt="Tap a word, then tap the meaning that belongs to it."
@@ -715,6 +852,7 @@ function FillGapGame({ words, onFinish }: { words: Word[]; onFinish: GameFinish 
   const [score, setScore] = useState(0);
   const [answers, setAnswers] = useState<GameAnswer[]>([]);
   const word = roundWords[index];
+  const hintState = useGameHintState(word ? getHintLevels(word) : undefined, word?.id);
   const options = useMemo(
     () => word ? getOptions(word.term, words, 3, `${gameKey}:${word.id}`) : [],
     [gameKey, word, words],
@@ -744,8 +882,8 @@ function FillGapGame({ words, onFinish }: { words: Word[]; onFinish: GameFinish 
     <View style={gameStyles.playArea}>
       <GameProgress current={index} total={roundWords.length} color="#2A9C79" />
       <GamePrompt
-        hintKey={word.id}
-        hints={getHintLevels(word)}
+        promptKey={word.id}
+        hintState={hintState}
         hintColor="#2A9C79"
         label="CHOOSE THE BEST FIT"
         prompt={getExampleWithGap(word)}
@@ -756,6 +894,7 @@ function FillGapGame({ words, onFinish }: { words: Word[]; onFinish: GameFinish 
           {word.partOfSpeech ?? 'Choose the word that makes the sentence sound natural.'}
         </Text>
       </View>
+      <GameLetterCount answer={word.term} response={selected ?? ''} emptyStatus="SELECT AN ANSWER" />
       <OptionList options={options} selected={selected} correct={word.term} onSelect={answer} />
       {selected ? <GameFeedback correct={normalizeWord(selected) === normalizeWord(word.term)} text={normalizeWord(selected) === normalizeWord(word.term) ? 'Nice fit.' : `The best fit is ${word.term}.`} /> : null}
     </View>
@@ -772,6 +911,7 @@ function WordConnectionsGame({ words, onFinish }: { words: Word[]; onFinish: Gam
   const [answers, setAnswers] = useState<GameAnswer[]>([]);
   const word = roundWords[index];
   const correct = word?.synonyms?.find((item) => item.trim()) ?? word?.commonWords?.find((item) => item.trim()) ?? '';
+  const hintState = useGameHintState(word && correct ? getHintLevels(word, correct) : undefined, word?.id);
   const options = useMemo(
     () => word && correct ? getOptions(correct, words, 3, `${gameKey}:${word.id}`) : [],
     [correct, gameKey, word, words],
@@ -801,8 +941,8 @@ function WordConnectionsGame({ words, onFinish }: { words: Word[]; onFinish: Gam
     <View style={gameStyles.playArea}>
       <GameProgress current={index} total={roundWords.length} color="#8B65D9" />
       <GamePrompt
-        hintKey={word.id}
-        hints={correct ? getHintLevels(word, correct) : undefined}
+        promptKey={word.id}
+        hintState={hintState}
         hintColor="#8B65D9"
         label="FIND THE CONNECTION"
         prompt={`Which word is closest in meaning to “${word.term}”?`}
@@ -888,7 +1028,7 @@ function buildCrossword(words: Word[]) {
   return placements;
 }
 
-function CrosswordGame({ words, onFinish }: { words: Word[]; onFinish: GameFinish }) {
+function CrosswordGame({ words, onFinish, onInputFocus }: { words: Word[]; onFinish: GameFinish; onInputFocus?: () => void }) {
   const orderedWords = useMemo(() => getGameRoundWords('crossword', words), [words]);
   const placements = useMemo(() => buildCrossword(orderedWords), [orderedWords]);
   const startedAt = useRef(Date.now()).current;
@@ -897,14 +1037,10 @@ function CrosswordGame({ words, onFinish }: { words: Word[]; onFinish: GameFinis
   const [solved, setSolved] = useState<number[]>([]);
   const [response, setResponse] = useState('');
   const [feedback, setFeedback] = useState<string | null>(null);
-  const [hintStep, setHintStep] = useState(0);
   const answersRef = useRef<GameAnswer[]>([]);
   const active = placements[activeIndex];
   const activeHints = active ? getHintLevels(active.word) : [];
-
-  useEffect(() => {
-    setHintStep(0);
-  }, [activeIndex]);
+  const hintState = useGameHintState(activeHints, active?.word.id);
 
   function checkAnswer() {
     if (!active || !response.trim() || solved.includes(activeIndex)) return;
@@ -963,7 +1099,7 @@ function CrosswordGame({ words, onFinish }: { words: Word[]; onFinish: GameFinis
       </View>
       <View style={gameStyles.crosswordClues}>
         {placements.map((placement, index) => (
-          <Pressable key={placement.word.id} onPress={() => { if (!solved.includes(index)) { setActiveIndex(index); setFeedback(null); } }} style={({ pressed }) => [gameStyles.crosswordClue, activeIndex === index && gameStyles.crosswordClueActive, solved.includes(index) && gameStyles.crosswordClueSolved, pressed && !solved.includes(index) && gameStyles.pressed]}>
+          <Pressable key={placement.word.id} onPress={() => { if (!solved.includes(index)) { setActiveIndex(index); setResponse(''); setFeedback(null); } }} style={({ pressed }) => [gameStyles.crosswordClue, activeIndex === index && gameStyles.crosswordClueActive, solved.includes(index) && gameStyles.crosswordClueSolved, pressed && !solved.includes(index) && gameStyles.pressed]}>
             <Text style={gameStyles.crosswordClueNumber}>{placement.number}</Text>
             <View style={gameStyles.crosswordClueCopy}>
               <Text style={gameStyles.crosswordClueDirection}>{placement.direction.toUpperCase()} · {placement.letters.length} LETTERS</Text>
@@ -973,28 +1109,35 @@ function CrosswordGame({ words, onFinish }: { words: Word[]; onFinish: GameFinis
           </Pressable>
         ))}
       </View>
-      <View style={gameStyles.crosswordHintRow}>
-        <HintButton
-          color="#B57924"
-          label={getHintButtonLabel(hintStep, activeHints.length)}
-          onPress={() => setHintStep((current) => current >= activeHints.length ? 0 : current + 1)}
-          visible={hintStep > 0}
-        />
-      </View>
-      {activeHints[hintStep - 1] ? (
-        <HintCard color="#B57924" hint={activeHints[hintStep - 1]} />
-      ) : null}
-      <TextInput autoCapitalize="none" autoCorrect={false} onChangeText={setResponse} onSubmitEditing={checkAnswer} placeholder="Type the answer" placeholderTextColor={COLORS.muted} returnKeyType="done" style={gameStyles.textInput} value={response} />
+      <TextInput autoCapitalize="none" autoCorrect={false} onChangeText={setResponse} onFocus={onInputFocus} onSubmitEditing={checkAnswer} placeholder="Type the answer" placeholderTextColor={COLORS.muted} returnKeyType="done" style={gameStyles.textInput} value={response} />
+      <GameLetterCount answer={active.letters} response={response} />
       <Pressable disabled={!response.trim()} onPress={checkAnswer} style={({ pressed }) => [gameStyles.primaryButton, !response.trim() && gameStyles.disabledButton, pressed && gameStyles.pressed]}>
         <Text style={gameStyles.primaryButtonText}>CHECK ENTRY</Text>
         <Ionicons name="checkmark" size={18} color={COLORS.white} />
       </Pressable>
+      <View style={gameStyles.belowSubmitHintRow}>
+        <HintButton
+          label={getHintButtonLabel(hintState.hintStep, hintState.hintCount)}
+          onPress={hintState.advance}
+          visible={hintState.hintStep > 0}
+          hintStep={hintState.hintStep}
+          hintCount={hintState.hintCount}
+        />
+      </View>
+      {hintState.visibleHint ? (
+        <HintCard
+          color="#B57924"
+          hint={hintState.visibleHint}
+          step={hintState.hintStep}
+          total={hintState.hintCount}
+        />
+      ) : null}
       {feedback ? <GameFeedback correct={feedback === 'Entry locked in.'} text={feedback} /> : null}
     </View>
   );
 }
 
-function WordScrambleGame({ words, onFinish }: { words: Word[]; onFinish: GameFinish }) {
+function WordScrambleGame({ words, onFinish, onInputFocus }: { words: Word[]; onFinish: GameFinish; onInputFocus?: () => void }) {
   const roundWords = useMemo(() => getGameRoundWords('word-scramble', words, 5), [words]);
   const startedAt = useRef(Date.now()).current;
   const gameKey = useMemo(() => createGameKey('word-scramble', roundWords), [roundWords]);
@@ -1004,6 +1147,7 @@ function WordScrambleGame({ words, onFinish }: { words: Word[]; onFinish: GameFi
   const [feedback, setFeedback] = useState<string | null>(null);
   const [answers, setAnswers] = useState<GameAnswer[]>([]);
   const word = roundWords[index];
+  const hintState = useGameHintState(word ? getHintLevels(word) : undefined, word?.id);
   const scrambled = useMemo(
     () => word
       ? deterministicShuffle(Array.from(normalizeWord(word.term)), `${gameKey}:${word.id}:letters`).join('').toUpperCase()
@@ -1036,9 +1180,10 @@ function WordScrambleGame({ words, onFinish }: { words: Word[]; onFinish: GameFi
     <View style={gameStyles.playArea}>
       <GameProgress current={index} total={roundWords.length} color="#D36B89" />
       <GamePrompt
-        hintKey={word.id}
-        hints={getHintLevels(word)}
+        promptKey={word.id}
+        hintState={hintState}
         hintColor="#B95372"
+        showHintButton={false}
         label="UNSCRAMBLE THE WORD"
         prompt={word.simpleDefinition ?? word.definition}
       />
@@ -1047,11 +1192,29 @@ function WordScrambleGame({ words, onFinish }: { words: Word[]; onFinish: GameFi
         <Text style={gameStyles.scrambleWord}>{scrambled}</Text>
         <Text style={gameStyles.contextDefinition}>{word.partOfSpeech ?? 'Vocabulary word'}</Text>
       </View>
-      <TextInput autoCapitalize="none" autoCorrect={false} onChangeText={setResponse} onSubmitEditing={checkAnswer} placeholder="Rebuild the word" placeholderTextColor={COLORS.muted} returnKeyType="done" style={gameStyles.textInput} value={response} />
+      <TextInput autoCapitalize="none" autoCorrect={false} onChangeText={setResponse} onFocus={onInputFocus} onSubmitEditing={checkAnswer} placeholder="Rebuild the word" placeholderTextColor={COLORS.muted} returnKeyType="done" style={gameStyles.textInput} value={response} />
+      <GameLetterCount answer={word.term} response={response} />
       <Pressable disabled={!response.trim()} onPress={checkAnswer} style={({ pressed }) => [gameStyles.primaryButton, !response.trim() && gameStyles.disabledButton, pressed && gameStyles.pressed]}>
         <Text style={gameStyles.primaryButtonText}>CHECK WORD</Text>
         <Ionicons name="checkmark" size={18} color={COLORS.white} />
       </Pressable>
+      <View style={gameStyles.belowSubmitHintRow}>
+        <HintButton
+          label={getHintButtonLabel(hintState.hintStep, hintState.hintCount)}
+          onPress={hintState.advance}
+          visible={hintState.hintStep > 0}
+          hintStep={hintState.hintStep}
+          hintCount={hintState.hintCount}
+        />
+      </View>
+      {hintState.visibleHint ? (
+        <HintCard
+          color="#B95372"
+          hint={hintState.visibleHint}
+          step={hintState.hintStep}
+          total={hintState.hintCount}
+        />
+      ) : null}
       {feedback ? <GameFeedback correct={feedback === 'Correct.'} text={feedback} /> : null}
     </View>
   );
@@ -1070,6 +1233,7 @@ function RapidFireGame({ words, onFinish }: { words: Word[]; onFinish: GameFinis
   const finished = useRef(false);
   const roundWords = useMemo(() => getGameRoundWords('rapid-fire', words), [words]);
   const word = roundWords[index % Math.max(1, roundWords.length)];
+  const hintState = useGameHintState(word ? getHintLevels(word) : undefined, word?.id);
   const options = useMemo(
     () => word ? getOptions(word.term, words, 3, `${gameKey}:${word.id}`) : [],
     [gameKey, word, words],
@@ -1126,8 +1290,8 @@ function RapidFireGame({ words, onFinish }: { words: Word[]; onFinish: GameFinis
       </View>
       <GameProgress current={score} total={Math.max(1, answers.length + 1)} color="#D07B22" />
       <GamePrompt
-        hintKey={word.id}
-        hints={getHintLevels(word)}
+        promptKey={word.id}
+        hintState={hintState}
         hintColor="#D07B22"
         label="GO WITH YOUR FIRST INSTINCT"
         prompt={`Which word matches “${word.simpleDefinition ?? word.definition}”?`}
@@ -1145,8 +1309,8 @@ const gameStyles = StyleSheet.create({
   gameIntroIcon: { width: 45, height: 45, borderRadius: 15, alignItems: 'center', justifyContent: 'center', backgroundColor: '#EAE4FF' },
   gameIntroCopy: { flex: 1 },
   gameIntroTitle: { color: COLORS.ink, fontSize: 15, fontWeight: '900' },
-  gameIntroText: { marginTop: 3, color: COLORS.muted, fontSize: 11, lineHeight: 16, fontWeight: '600' },
-  emptyCard: { alignItems: 'center', gap: 7, padding: 20, borderRadius: 20, backgroundColor: COLORS.white, borderWidth: 1, borderColor: COLORS.border },
+ gameIntroText: { marginTop: 3, color: COLORS.muted, fontSize: 11, lineHeight: 16, fontWeight: '600' },
+ emptyCard: { alignItems: 'center', gap: 7, padding: 20, borderRadius: 20, backgroundColor: COLORS.white, borderWidth: 1, borderColor: COLORS.border },
   emptyTitle: { color: COLORS.ink, fontSize: 15, fontWeight: '900', textAlign: 'center' },
   emptyText: { color: COLORS.muted, fontSize: 12, lineHeight: 17, fontWeight: '600', textAlign: 'center' },
   gameCard: { flexDirection: 'row', alignItems: 'center', gap: 11, minHeight: 84, padding: 13, borderRadius: 20, borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.white, ...SOFT_SHADOW },
@@ -1178,10 +1342,28 @@ const gameStyles = StyleSheet.create({
   promptHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   promptLabel: { color: COLORS.purpleDark, fontSize: 9, fontWeight: '900', letterSpacing: 0.9 },
   promptText: { marginTop: 6, color: COLORS.ink, fontSize: 18, lineHeight: 25, fontWeight: '900' },
-  hintButton: { minHeight: 28, paddingHorizontal: 8, borderRadius: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, backgroundColor: '#FFF2D8' },
-  hintButtonText: { fontSize: 9, fontWeight: '900', letterSpacing: 0.6 },
+  hintButton: { minHeight: 30, paddingHorizontal: 10, borderRadius: 10, borderWidth: 1, borderColor: '#C9DCFF', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, backgroundColor: COLORS.bluePale },
+  hintButtonText: { color: COLORS.blue, fontSize: 9, fontWeight: '900', letterSpacing: 0.6 },
   hintCard: { marginTop: 10, paddingHorizontal: 10, paddingVertical: 8, borderRadius: 12, borderWidth: 1, borderColor: '#F1D9A5', flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: '#FFF8E9' },
+  hintCardCopy: { flex: 1, gap: 2 },
+  hintLevelText: { fontSize: 8, fontWeight: '900', letterSpacing: 0.7 },
   hintText: { flex: 1, fontSize: 11, lineHeight: 16, fontWeight: '800' },
+  letterCountBadge: { width: '100%', minHeight: 52, paddingHorizontal: 10, paddingVertical: 8, borderRadius: 14, borderWidth: 1, borderColor: '#D9CEFF', flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: '#F8F5FF' },
+  letterCountIcon: { width: 31, height: 31, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFF1CF' },
+  letterCountCopy: { gap: 1 },
+  letterCountLabel: { color: COLORS.purpleDark, fontSize: 9, fontWeight: '900', letterSpacing: 1.05 },
+  letterCountValueRow: { flexDirection: 'row', alignItems: 'baseline', gap: 1 },
+  letterCountValue: { color: COLORS.ink, fontSize: 16, fontWeight: '900', lineHeight: 19 },
+  letterCountDivider: { color: COLORS.muted, fontSize: 13, fontWeight: '900', lineHeight: 18 },
+  letterCountTotal: { color: COLORS.muted, fontSize: 14, fontWeight: '900', lineHeight: 18 },
+  letterCountStatus: { color: COLORS.muted, fontSize: 8, fontWeight: '900', letterSpacing: 0.72 },
+  letterCountStatusMatched: { color: COLORS.greenDark },
+  letterCountStatusOver: { color: COLORS.orange },
+  letterCountMeter: { flex: 1, flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', gap: 3 },
+  letterCountDot: { width: 7, height: 7, borderRadius: 3.5, backgroundColor: '#CFC5FF' },
+  letterCountDotTyped: { backgroundColor: COLORS.purple },
+  letterCountDotMatched: { backgroundColor: COLORS.greenDark },
+  letterCountDotLast: { backgroundColor: COLORS.orange },
   matchColumns: { flexDirection: 'row', gap: 9 },
   matchColumn: { flex: 1, gap: 8 },
   columnLabel: { marginLeft: 2, color: COLORS.muted, fontSize: 9, fontWeight: '900', letterSpacing: 0.8 },
@@ -1224,7 +1406,7 @@ const gameStyles = StyleSheet.create({
   crosswordClueCopy: { flex: 1 },
   crosswordClueDirection: { color: COLORS.muted, fontSize: 8, fontWeight: '900', letterSpacing: 0.8 },
   crosswordClueText: { marginTop: 2, color: COLORS.ink, fontSize: 11, lineHeight: 15, fontWeight: '800' },
-  crosswordHintRow: { flexDirection: 'row', justifyContent: 'flex-end' },
+  belowSubmitHintRow: { flexDirection: 'row', justifyContent: 'flex-end' },
   textInput: { minHeight: 53, paddingHorizontal: 15, borderRadius: 16, borderWidth: 1, borderColor: '#DCD3EE', backgroundColor: COLORS.white, color: COLORS.ink, fontSize: 16, fontWeight: '800' },
   primaryButton: { minHeight: 52, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, borderRadius: 16, backgroundColor: COLORS.purple, ...SOFT_SHADOW },
   primaryButtonText: { color: COLORS.white, fontSize: 13, fontWeight: '900', letterSpacing: 0.5 },

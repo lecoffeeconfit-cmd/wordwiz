@@ -30,18 +30,18 @@ function WordWizWidgetView(
       }
     : props.style === 'meadow'
       ? {
-          background: '#174C46',
-          accent: '#A7F0D6',
+          background: '#123B52',
+          accent: '#8EDCFF',
           value: '#FFFFFF',
-          detail: '#D3F5E7',
-          footer: '#A6D7C7',
+          detail: '#B9E7FF',
+          footer: '#70B7DC',
         }
       : {
-          background: '#25234F',
-          accent: '#BDB8FF',
-          value: '#FFFFFF',
-          detail: '#D0CEE8',
-          footer: '#918DB8',
+          background: '#17120A',
+          accent: '#FFD86B',
+          value: '#FFF2A8',
+          detail: '#E8C868',
+          footer: '#B9953F',
         };
   const isAccessory = environment.widgetFamily === 'accessoryInline' ||
     environment.widgetFamily === 'accessoryCircular' ||
@@ -57,6 +57,9 @@ function WordWizWidgetView(
     ? (props.rotationIndex + 1) % props.rotationWords.length
     : 0;
   const nextWord = props.rotationWords[nextIndex] ?? word;
+  const upcomingWords = props.rotationWords
+    .filter((item) => item.id !== word.id || item.term !== word.term)
+    .slice(0, 3);
   const wordMeta = [word.partOfSpeech, word.pronunciation].filter(Boolean).join(' · ');
   const related = word.synonyms.length > 0
     ? `Synonyms · ${word.synonyms.join(', ')}`
@@ -100,12 +103,26 @@ function WordWizWidgetView(
             STREAK
           </Text>
         </HStack>
-        <Text modifiers={[font({ weight: 'black', size: isLarge ? 36 : 29, design: 'rounded' }), foregroundStyle(palette.value)]}>
-          🔥 {props.streakCurrent}
-        </Text>
-        <Text modifiers={[font({ weight: 'semibold', size: 13, design: 'rounded' }), foregroundStyle(palette.detail)]}>
-          day learning streak
-        </Text>
+        <HStack alignment="center" spacing={14}>
+          <VStack spacing={3}>
+            <Text modifiers={[font({ weight: 'black', size: isLarge ? 36 : 29, design: 'rounded' }), foregroundStyle(palette.value)]}>
+              🔥 {props.streakCurrent}
+            </Text>
+            <Text modifiers={[font({ weight: 'semibold', size: 13, design: 'rounded' }), foregroundStyle(palette.detail)]}>
+              day learning streak
+            </Text>
+          </VStack>
+          {(isMedium || isLarge) && upcomingWords.length > 0 ? (
+            <VStack spacing={3}>
+              <Text modifiers={[font({ weight: 'bold', size: 9 }), foregroundStyle(palette.footer)]}>UP NEXT</Text>
+              {upcomingWords.map((item) => (
+                <Text key={item.id || item.term} modifiers={[font({ weight: 'bold', size: 11, design: 'rounded' }), foregroundStyle(palette.detail), lineLimit(1)]}>
+                  {item.term}
+                </Text>
+              ))}
+            </VStack>
+          ) : null}
+        </HStack>
         <Text modifiers={[font({ weight: 'bold', size: 11 }), foregroundStyle(palette.accent)]}>
           {props.activitiesToday} of {props.dailyGoal} activities today
         </Text>
@@ -135,9 +152,26 @@ function WordWizWidgetView(
             RETENTION
           </Text>
         </HStack>
-        <Text modifiers={[font({ weight: 'black', size: isLarge ? 29 : 24, design: 'rounded' }), foregroundStyle(palette.value)]}>
-          🧠 {props.dueCount} words ready
-        </Text>
+        <HStack alignment="center" spacing={14}>
+          <VStack spacing={4}>
+            <Text modifiers={[font({ weight: 'black', size: isLarge ? 29 : 24, design: 'rounded' }), foregroundStyle(palette.value)]}>
+              📖 ✦ {props.dueCount} ready
+            </Text>
+            <Text modifiers={[font({ weight: 'semibold', size: 13, design: 'rounded' }), foregroundStyle(palette.detail)]}>
+              words due for review
+            </Text>
+          </VStack>
+          {(isMedium || isLarge) && upcomingWords.length > 0 ? (
+            <VStack spacing={3}>
+              <Text modifiers={[font({ weight: 'bold', size: 9 }), foregroundStyle(palette.footer)]}>UP NEXT</Text>
+              {upcomingWords.map((item) => (
+                <Text key={item.id || item.term} modifiers={[font({ weight: 'bold', size: 11, design: 'rounded' }), foregroundStyle(palette.detail), lineLimit(1)]}>
+                  {item.term}
+                </Text>
+              ))}
+            </VStack>
+          ) : null}
+        </HStack>
         <Text modifiers={[font({ weight: 'semibold', size: 13, design: 'rounded' }), foregroundStyle(palette.detail)]}>
           {props.retentionHasEvidence ? `${props.retentionPercent}% retention` : 'Build retention with spaced reviews'}
         </Text>
@@ -215,17 +249,31 @@ function WordWizWidgetView(
           {isWordReview ? 'WORD REVIEW' : 'WORD OF THE DAY'}
         </Text>
       </HStack>
-      <Text modifiers={[font({ weight: 'black', size: isLarge ? 30 : isMedium ? 25 : 22, design: 'rounded' }), foregroundStyle(palette.value), lineLimit(1)]}>
-        {word.term}
-      </Text>
-      {wordMeta ? (
-        <Text modifiers={[font({ weight: 'semibold', size: 10, design: 'rounded' }), foregroundStyle(palette.accent), lineLimit(1)]}>
-          {wordMeta}
-        </Text>
-      ) : null}
-      <Text modifiers={[font({ weight: 'semibold', size: 12, design: 'rounded' }), foregroundStyle(palette.detail), lineLimit(showDetails ? 3 : 2)]}>
-        {word.plainDefinition}
-      </Text>
+      <HStack alignment="center" spacing={14}>
+        <VStack spacing={4}>
+          <Text modifiers={[font({ weight: 'black', size: isLarge ? 30 : isMedium ? 25 : 22, design: 'rounded' }), foregroundStyle(palette.value), lineLimit(1)]}>
+            {word.term}
+          </Text>
+          {wordMeta ? (
+            <Text modifiers={[font({ weight: 'semibold', size: 10, design: 'rounded' }), foregroundStyle(palette.accent), lineLimit(1)]}>
+              {wordMeta}
+            </Text>
+          ) : null}
+          <Text modifiers={[font({ weight: 'semibold', size: 12, design: 'rounded' }), foregroundStyle(palette.detail), lineLimit(showDetails ? 3 : 2)]}>
+            {word.plainDefinition}
+          </Text>
+        </VStack>
+        {showDetails && upcomingWords.length > 0 ? (
+          <VStack spacing={3}>
+            <Text modifiers={[font({ weight: 'bold', size: 9 }), foregroundStyle(palette.footer)]}>UP NEXT</Text>
+            {upcomingWords.map((item) => (
+              <Text key={item.id || item.term} modifiers={[font({ weight: 'bold', size: 11, design: 'rounded' }), foregroundStyle(palette.detail), lineLimit(1)]}>
+                {item.term}
+              </Text>
+            ))}
+          </VStack>
+        ) : null}
+      </HStack>
       {isLarge && definitionIsDifferent ? (
         <Text modifiers={[font({ size: 11 }), foregroundStyle(palette.detail), lineLimit(3)]}>
           Definition · {word.definition}

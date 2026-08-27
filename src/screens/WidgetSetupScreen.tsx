@@ -69,7 +69,7 @@ const WIDGET_TYPES: Array<{
     id: 'words-due',
     title: 'Words Due',
     detail: 'See today’s queue',
-    icon: 'albums-outline',
+    icon: 'book-outline',
     color: COLORS.purpleDark,
     background: COLORS.purplePale,
   },
@@ -100,17 +100,17 @@ const WIDGET_STYLES: Array<{
   {
     id: 'midnight',
     label: 'Midnight',
-    detail: 'High contrast',
+    detail: 'Golden glow',
     icon: 'moon-outline',
     stageBackground: '#DDE9FF',
     stageBorder: '#D4E1FF',
-    cardBackground: '#25234F',
-    accent: COLORS.purple,
-    titleColor: '#BDB8FF',
-    valueColor: COLORS.white,
-    detailColor: '#D0CEE8',
-    footerColor: '#918DB8',
-    quickAddColor: '#A7F0D6',
+    cardBackground: '#17120A',
+    accent: '#FFD86B',
+    titleColor: '#FFD86B',
+    valueColor: '#FFF2A8',
+    detailColor: '#E8C868',
+    footerColor: '#B9953F',
+    quickAddColor: '#FFE9A3',
   },
   {
     id: 'notebook',
@@ -130,17 +130,17 @@ const WIDGET_STYLES: Array<{
   {
     id: 'meadow',
     label: 'Meadow',
-    detail: 'Fresh + bright',
+    detail: 'Cool + airy',
     icon: 'leaf-outline',
     stageBackground: '#E8FBF4',
     stageBorder: '#CDEFE3',
-    cardBackground: '#174C46',
-    accent: COLORS.teal,
-    titleColor: '#A7F0D6',
+    cardBackground: '#123B52',
+    accent: '#8EDCFF',
+    titleColor: '#8EDCFF',
     valueColor: COLORS.white,
-    detailColor: '#D3F5E7',
-    footerColor: '#A6D7C7',
-    quickAddColor: COLORS.yellow,
+    detailColor: '#B9E7FF',
+    footerColor: '#70B7DC',
+    quickAddColor: '#DDF5FF',
   },
 ];
 
@@ -226,8 +226,11 @@ export function WidgetSetupScreen({
   const previewValue = widgetType === 'streak'
     ? `🔥 ${widgetSnapshot.streakCurrent}`
     : widgetType === 'words-due'
-      ? `🧠 ${widgetSnapshot.dueCount}`
+      ? `📖 ✦ ${widgetSnapshot.dueCount}`
       : previewWord.term;
+  const previewUpcoming = widgetSnapshot.rotationWords
+    .filter((item) => item.id !== previewWord.id || item.term !== previewWord.term)
+    .slice(0, 3);
   const previewMeta = [previewWord.partOfSpeech, previewWord.pronunciation].filter(Boolean).join(' · ');
   const previewDetail = widgetType === 'daily-challenge'
     ? 'Definition hidden · tap to review'
@@ -345,15 +348,29 @@ export function WidgetSetupScreen({
               </View>
               <Ionicons name={selectedWidget.icon} size={17} color={selectedWidgetStyle.titleColor} />
             </View>
-            <Text style={[styles.widgetPreviewTitle, { marginTop: selectedWidgetSize.titleTop, color: selectedWidgetStyle.titleColor }]}>{previewTitle}</Text>
-            <Text
-              adjustsFontSizeToFit
-              minimumFontScale={0.7}
-              numberOfLines={1}
-              style={[styles.widgetPreviewValue, { color: selectedWidgetStyle.valueColor, fontSize: selectedWidgetSize.valueSize }]}
-            >
-              {previewValue}
-            </Text>
+            <View style={[styles.widgetPreviewMainRow, { marginTop: selectedWidgetSize.titleTop }]}>
+              <View style={styles.widgetPreviewMainCopy}>
+                <Text style={[styles.widgetPreviewTitle, { color: selectedWidgetStyle.titleColor }]}>{previewTitle}</Text>
+                <Text
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.7}
+                  numberOfLines={1}
+                  style={[styles.widgetPreviewValue, { color: selectedWidgetStyle.valueColor, fontSize: selectedWidgetSize.valueSize }]}
+                >
+                  {previewValue}
+                </Text>
+              </View>
+              {widgetSize !== 'small' && previewUpcoming.length > 0 ? (
+                <View style={styles.widgetPreviewUpcoming}>
+                  <Text style={[styles.widgetPreviewUpcomingLabel, { color: selectedWidgetStyle.footerColor }]}>UP NEXT</Text>
+                  {previewUpcoming.map((item) => (
+                    <Text key={item.id || item.term} numberOfLines={1} style={[styles.widgetPreviewUpcomingWord, { color: selectedWidgetStyle.detailColor }]}>
+                      {item.term}
+                    </Text>
+                  ))}
+                </View>
+              ) : null}
+            </View>
             {previewMeta && widgetType !== 'streak' && widgetType !== 'words-due' ? (
               <Text numberOfLines={1} style={[styles.widgetPreviewMeta, { color: selectedWidgetStyle.titleColor }]}>{previewMeta}</Text>
             ) : null}

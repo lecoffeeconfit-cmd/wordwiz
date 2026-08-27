@@ -2871,7 +2871,7 @@ function getHintPattern(answer: string) {
     .join(' ');
 }
 
-function getLetterCount(value: string) {
+export function getLetterCount(value: string) {
   return Array.from(value).filter((character) => /\p{L}/u.test(character)).length;
 }
 

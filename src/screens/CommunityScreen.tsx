@@ -727,6 +727,13 @@ export function CommunityScreen({
     void loadLeaderboard(nextPeriod, nextPage, nextLevel);
   }, [applyContext, loadLeaderboard, selectedLevel]);
 
+  const returnToMainLeaderboard = useCallback(() => {
+    setSection('leaderboard');
+    setLeaderboardMode('social');
+    setCollectorRankView(false);
+    selectLeaderboard(period, null);
+  }, [period, selectLeaderboard]);
+
   const loadMoreLeaderboard = useCallback(async () => {
     if (leaderboardLoading || leaderboardLoadingMore || !leaderboardHasMore || leaderboardLoadMoreRef.current) return;
     leaderboardLoadMoreRef.current = true;
@@ -1142,13 +1149,25 @@ export function CommunityScreen({
 
     return (
       <View style={[community.collectorHero, { borderColor: `${metric.color}45`, backgroundColor: metric.background }]}>
-        <View style={[community.collectorHeroIcon, { backgroundColor: `${metric.color}20` }]}>
-          <Ionicons name={metric.icon} size={23} color={metric.color} />
+        <View style={community.collectorHeroHeading}>
+          <View style={[community.collectorHeroIcon, { backgroundColor: `${metric.color}20` }]}>
+            <Ionicons name={metric.icon} size={23} color={metric.color} />
+          </View>
+          <View style={community.collectorHeroCopy}>
+            <Text style={[community.collectorHeroEyebrow, { color: metric.color }]}>{metric.label.toUpperCase()}</Text>
+            <Text style={community.collectorHeroTitle}>{copy}</Text>
+          </View>
         </View>
-        <View style={community.collectorHeroCopy}>
-          <Text style={[community.collectorHeroEyebrow, { color: metric.color }]}>{metric.label.toUpperCase()}</Text>
-          <Text style={community.collectorHeroTitle}>{copy}</Text>
-        </View>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Return to main leaderboard"
+          accessibilityHint="Shows the Connect leaderboard with all levels"
+          onPress={returnToMainLeaderboard}
+          style={({ pressed }) => [community.collectorBackButton, pressed && community.collectorBackButtonPressed]}
+        >
+          <Ionicons name="arrow-back" size={15} color={COLORS.purpleDark} />
+          <Text style={community.collectorBackButtonText}>Back to leaderboard</Text>
+        </Pressable>
       </View>
     );
   };
@@ -1964,7 +1983,13 @@ export function CommunityScreen({
             key={item}
             accessibilityRole="tab"
             accessibilityState={{ selected: section === item }}
-            onPress={() => setSection(item)}
+            onPress={() => {
+              if (item === 'leaderboard') {
+                returnToMainLeaderboard();
+                return;
+              }
+              setSection(item);
+            }}
             style={({ pressed }) => [community.navItem, section === item && community.navItemActive, pressed && community.navItemPressed]}
           >
             <View style={[community.navIcon, section === item && community.navIconActive]}>
@@ -2248,11 +2273,15 @@ const community = StyleSheet.create({
   collectorDestinationTextActive: { color: '#4E719B' },
   collectorDestinationCountActive: { color: '#7695B4' },
   collectorDestinationSparkle: { width: 17, height: 17, position: 'relative', flexShrink: 0 },
-  collectorHero: { flexDirection: 'row', alignItems: 'center', gap: 11, padding: 15, borderRadius: 20, borderWidth: 1, borderColor: '#D8D0FF', backgroundColor: '#F8F5FF' },
+  collectorHero: { gap: 11, padding: 15, borderRadius: 20, borderWidth: 1, borderColor: '#D8D0FF', backgroundColor: '#F8F5FF' },
+  collectorHeroHeading: { flexDirection: 'row', alignItems: 'center', gap: 11 },
   collectorHeroIcon: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center', borderRadius: 15, backgroundColor: '#EAE4FF' },
   collectorHeroCopy: { flex: 1 },
   collectorHeroEyebrow: { color: COLORS.purple, fontSize: 10, letterSpacing: 1, fontWeight: '900' },
   collectorHeroTitle: { marginTop: 2, color: COLORS.ink, fontSize: 15, lineHeight: 20, fontWeight: '900' },
+  collectorBackButton: { alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 5, minHeight: 34, paddingHorizontal: 10, borderRadius: 11, backgroundColor: COLORS.white },
+  collectorBackButtonPressed: { opacity: 0.72 },
+  collectorBackButtonText: { color: COLORS.purpleDark, fontSize: 12, fontWeight: '900' },
   metricTabs: { flexDirection: 'row', gap: 6, padding: 4, borderRadius: 18, borderWidth: 1, borderColor: '#E3DDF5', backgroundColor: '#F0EDF8' },
   metricTab: { flex: 1, minHeight: 43, alignItems: 'center', justifyContent: 'center', gap: 2, paddingHorizontal: 3, borderRadius: 14 },
   metricTabActive: { backgroundColor: COLORS.white, ...SOFT_SHADOW },
