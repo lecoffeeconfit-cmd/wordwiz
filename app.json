@@ -98,7 +98,7 @@
         "NSMotionUsageDescription": "WordWiz may access motion data to support interactive device features.",
         "NSLocationWhenInUseUsageDescription": "Allow $(PRODUCT_NAME) to use your approximate location to place you in a broad Word Collectors leaderboard. Your exact location is never shown to other learners."
       },
-      "buildNumber": "46"
+      "buildNumber": "48"
     },
     "android": {
       "package": "com.lecoffeeconfit.wordwiz",

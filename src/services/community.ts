@@ -530,8 +530,6 @@ async function confirmAvatarModerationNotice(): Promise<boolean> {
 
 /** Pick any supported image, crop it, and convert it to a moderated JPEG avatar. */
 export async function pickAndUploadCommunityAvatar() {
-  if (!await confirmAvatarModerationNotice()) return null;
-
   // Both modules require a matching native binary. Keep them out of the app's
   // import path so an optional avatar capability can never prevent startup.
   const [imagePickerModule, imageManipulatorModule] = await Promise.all([
@@ -552,6 +550,11 @@ export async function pickAndUploadCommunityAvatar() {
     selectionLimit: 1,
   });
   if (result.canceled || !result.assets[0]) return null;
+
+  // Ask for consent only after the learner has actually chosen a photo. This
+  // keeps the tap-to-pick flow intuitive while still requiring consent before
+  // any image is sent for moderation or uploaded.
+  if (!await confirmAvatarModerationNotice()) return null;
 
   const image = await manipulateAsync(
     result.assets[0].uri,

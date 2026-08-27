@@ -3549,7 +3549,10 @@ function WordSyncLoadingScreen({
 }) {
   return (
     <SafeAreaView style={styles.loadingScreen}>
-      <Ionicons name="sparkles" size={34} color={COLORS.purpleDark} />
+      <View style={styles.loadingSparkleCluster} pointerEvents="none">
+        <Text style={styles.loadingSparkleMain}>✦</Text>
+        <Text style={styles.loadingSparkleAccent}>✧</Text>
+      </View>
       <Text style={styles.loadingTitle}>Getting your words ready...</Text>
       <Text style={styles.startupStageText}>
         {getStartupStageLabel(stage)}

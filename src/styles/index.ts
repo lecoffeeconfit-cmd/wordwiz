@@ -58,6 +58,28 @@ export const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: COLORS.background,
   },
+  loadingSparkleCluster: {
+    width: 66,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: -2,
+  },
+  loadingSparkleMain: {
+    color: COLORS.purpleDark,
+    fontSize: 34,
+    fontWeight: '900',
+    lineHeight: 40,
+  },
+  loadingSparkleAccent: {
+    position: 'absolute',
+    top: 1,
+    right: 9,
+    color: COLORS.purple,
+    fontSize: 15,
+    fontWeight: '900',
+    lineHeight: 18,
+  },
   logoBadge: {
     width: 66,
     height: 66,

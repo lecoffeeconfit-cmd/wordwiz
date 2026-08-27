@@ -1051,7 +1051,7 @@ export function CommunityScreen({
   }, [refreshCommunity, selectedLeaderboardEntry]);
 
   const updateAvatar = useCallback(async () => {
-    if (!context?.profile) return;
+    if (!context?.profile || avatarUpdating) return;
     setAvatarUpdating(true);
     try {
       const uploaded = await pickAndUploadCommunityAvatar();
@@ -1061,7 +1061,7 @@ export function CommunityScreen({
     } finally {
       setAvatarUpdating(false);
     }
-  }, [context?.profile, refreshCommunity]);
+  }, [avatarUpdating, context?.profile, refreshCommunity]);
 
   const runConnectionAction = useCallback(async (action: () => Promise<void>, title: string) => {
     try {
@@ -1942,7 +1942,13 @@ export function CommunityScreen({
           <Ionicons name="settings-outline" size={23} color={COLORS.purpleDark} />
         </Pressable>
         <View style={community.profileHeaderTop}>
-          <Pressable onPress={() => void updateAvatar()} accessibilityLabel="Add or update profile picture" style={community.avatarPress}>
+          <Pressable
+            disabled={avatarUpdating}
+            onPress={() => void updateAvatar()}
+            accessibilityLabel="Add or update profile picture"
+            accessibilityState={{ busy: avatarUpdating, disabled: avatarUpdating }}
+            style={community.avatarPress}
+          >
             <CommunityAvatar name={context.profile.displayName} avatarPath={context.profile.avatarPath} large />
             <View style={community.avatarEdit}>
               <Ionicons name={avatarUpdating ? 'hourglass-outline' : 'camera'} size={13} color={COLORS.white} />
