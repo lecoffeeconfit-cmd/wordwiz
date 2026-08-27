@@ -10,6 +10,7 @@ export * from './words/WordRow';
 export * from './flashcards/WordInfoPanel';
 export * from './quiz/QuizFact';
 export * from './quiz/QuizComplete';
+export * from './quiz/QuizGames';
 export * from './dashboard/DashboardStat';
 export * from './dashboard/LegalLink';
 export * from './dashboard/StreakDay';

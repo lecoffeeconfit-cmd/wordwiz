@@ -64,6 +64,7 @@ const dictionary = loadTsModule('src/services/dictionary.ts');
 const wordnik = loadTsModule('src/services/wordnik.ts');
 const startupCoordinator = loadTsModule('src/services/startupCoordinator.ts');
 const cards = loadTsModule('src/utils/cards.ts');
+const games = loadTsModule('src/utils/games.ts');
 
 function makeWord(id, term, definition, reviews = 0) {
   return {
@@ -656,6 +657,30 @@ test('flashcards use the complete definition when a saved summary ends mid-sente
       'A combination of events which have come together by chance to make a surprisingly good or wonde',
     ),
     definition,
+  );
+});
+
+test('Lock It In uses an alternate explanation instead of repeating the quiz cue', () => {
+  const word = {
+    term: 'Empathetic',
+    definition: 'Able to understand another person’s feelings.',
+    simpleDefinition: 'In plain English, able to understand another person’s feelings.',
+    definitionVariants: [
+      {
+        text: 'Able to put yourself in someone else’s shoes.',
+        source: 'WordWiz teaching note',
+      },
+    ],
+    example: 'She understood why her friend felt upset.',
+  };
+
+  assert.equal(
+    dictionaryUtils.getAlternateLearningExplanation(word),
+    'Able to put yourself in someone else’s shoes.',
+  );
+  assert.notEqual(
+    dictionaryUtils.getAlternateLearningExplanation(word),
+    dictionaryUtils.getCompleteFlashcardDefinition(word.definition, word.simpleDefinition),
   );
 });
 
@@ -3445,7 +3470,7 @@ test('Word Collectors stays separate from Social XP and protects qualifying coun
   assert.doesNotMatch(migration, /\b(latitude|longitude)\b/i);
   assert.doesNotMatch(migration, /community_leaderboard_level/);
   assert.match(appContent, /OPTIONAL COMMUNITY/);
-  assert.match(appContent, /All and Global work without location/);
+  assert.match(appContent, /Global works without location/);
   assert.match(appContent, /tap Enable Location/);
   const onboardingSource = appContent.slice(
     appContent.indexOf('function OnboardingScreen'),
@@ -3461,6 +3486,131 @@ test('Word Collectors shows a one-person nearby or state ranking', () => {
   assert.doesNotMatch(screen, /const nearbyGroupIsSmall = locationRequired && !collectorLoading && collectors\.length > 0 && collectors\.length < 2;/);
 });
 
+test('daily learning goals count completed activities instead of unique words', () => {
+  const day = '2026-08-20';
+  const analytics = {
+    quizHistory: [
+      {
+        id: 'quiz-1',
+        date: day,
+        score: 0,
+        total: 1,
+        durationSeconds: 20,
+        completedAt: `${day}T10:00:00.000Z`,
+        completed: true,
+        answers: [{ wordId: 'word-1', correct: false }],
+      },
+      {
+        id: 'quiz-2',
+        date: day,
+        score: 1,
+        total: 1,
+        durationSeconds: 20,
+        completedAt: `${day}T11:00:00.000Z`,
+        completed: true,
+        answers: [{ wordId: 'word-2', correct: true }],
+      },
+      {
+        id: 'quiz-incomplete',
+        date: day,
+        score: 1,
+        total: 2,
+        durationSeconds: 20,
+        completedAt: `${day}T12:00:00.000Z`,
+        completed: false,
+        answers: [{ wordId: 'word-3', correct: true, attemptStatus: 'incomplete' }],
+      },
+    ],
+    gameHistory: [
+      {
+        id: 'game-1',
+        date: day,
+        gameType: 'crossword',
+        gameKey: `${day}:crossword`,
+        score: 0,
+        total: 1,
+        durationSeconds: 20,
+        completedAt: `${day}T13:00:00.000Z`,
+        completed: true,
+        answers: [{ wordId: 'word-1', correct: false, gameType: 'crossword', gameKey: `${day}:crossword` }],
+      },
+    ],
+    cardHistory: [
+      {
+        id: 'card-1',
+        wordId: 'word-1',
+        date: day,
+        studiedAt: `${day}T14:00:00.000Z`,
+        remembered: false,
+        durationSeconds: 8,
+      },
+    ],
+  };
+
+  const progress = learning.getDailyLearningProgress(analytics, day);
+  assert.deepEqual(
+    {
+      completed: progress.completed,
+      quizAnswers: progress.quizAnswers,
+      gameAnswers: progress.gameAnswers,
+      cardReviews: progress.cardReviews,
+    },
+    { completed: 4, quizAnswers: 2, gameAnswers: 1, cardReviews: 1 },
+  );
+  assert.equal(learning.getActivityDates(analytics, 4).has(day), true);
+  assert.equal(learning.getActivityDates(analytics, 5).has(day), false);
+});
+
+test('competitive collector hub has separate retention and streak metrics', () => {
+  const screen = fs.readFileSync(path.join(projectRoot, 'src/screens/CommunityScreen.tsx'), 'utf8');
+  const dashboard = fs.readFileSync(path.join(projectRoot, 'src/screens/DashboardScreen.tsx'), 'utf8');
+  const service = fs.readFileSync(path.join(projectRoot, 'src/services/community.ts'), 'utf8');
+  const migration = fs.readFileSync(
+    path.join(projectRoot, 'supabase/migrations/20260826000000_community_competitive_metrics.sql'),
+    'utf8',
+  );
+
+  assert.match(screen, /const COMPETITIVE_METRICS/);
+  assert.match(screen, /key: 'collectors'/);
+  assert.match(screen, /key: 'retention'/);
+  assert.match(screen, /key: 'streaks'/);
+  assert.match(screen, /RETENTION WINDOW/);
+  assert.match(screen, /LEARNING STREAK/);
+  assert.match(screen, /ranking score considers volume/);
+  assert.match(dashboard, /View Retention ranking/);
+  assert.match(dashboard, /View Learning Streaks ranking/);
+  assert.match(service, /community_competitive_metric_context/);
+  assert.match(service, /community_competitive_metric_leaderboard/);
+  assert.match(migration, /review_count >= 40/);
+  assert.match(migration, /sqrt\(r\.review_count::numeric \/ 250\)/);
+  assert.match(migration, /current_streaks/);
+  assert.match(migration, /country_key/);
+});
+
+test('Learning Streaks use each learner daily goal and current completed-day runs', () => {
+  const screen = fs.readFileSync(path.join(projectRoot, 'src/screens/CommunityScreen.tsx'), 'utf8');
+  const dashboard = fs.readFileSync(path.join(projectRoot, 'src/screens/DashboardScreen.tsx'), 'utf8');
+  const appContent = fs.readFileSync(path.join(projectRoot, 'src/application/AppContent.tsx'), 'utf8');
+  const service = fs.readFileSync(path.join(projectRoot, 'src/services/community.ts'), 'utf8');
+  const learningSource = fs.readFileSync(path.join(projectRoot, 'src/utils/learning.ts'), 'utf8');
+  const migration = fs.readFileSync(
+    path.join(projectRoot, 'supabase/migrations/20260826000002_learning_streak_goal_completion.sql'),
+    'utf8',
+  );
+
+  assert.match(screen, /label: 'Learning Streaks'/);
+  assert.match(screen, /Current Learning Streak/);
+  assert.match(dashboard, /Daily goal: \{completedActivitiesToday\}\/\{dailyLearningGoal\} activities today/);
+  assert.match(appContent, /setCommunityDailyLearningGoal\(dailyLearningGoal, currentDayKey\)/);
+  assert.match(service, /community_set_daily_learning_goal/);
+  assert.match(learningSource, /Counts completed learning activities/);
+  assert.match(migration, /community_daily_learning_goals/);
+  assert.match(migration, /activity_count >= goal_count/);
+  assert.match(migration, /current_streaks/);
+  assert.match(migration, /total_goal_days/);
+  assert.match(migration, /latest_completion/);
+});
+
 test('onboarding waits for the signed-in user cache and does not replay on login', () => {
   const appContent = fs.readFileSync(
     path.join(projectRoot, 'src/application/AppContent.tsx'),
@@ -3473,4 +3623,62 @@ test('onboarding waits for the signed-in user cache and does not replay on login
   assert.match(appContent, /onboardingCacheUserId === currentUser\?\.id/);
   assert.match(appContent, /!isOnboardingCacheReadyForUser/);
   assert.match(appContent, /onboardingCacheState === 'ready' &&/);
+});
+
+test('dated game rounds are deterministic and XP is bounded by the round total', () => {
+  const words = [
+    makeWord('one', 'Alpha', 'First'),
+    makeWord('two', 'Bravo', 'Second'),
+    makeWord('three', 'Charlie', 'Third'),
+    makeWord('four', 'Delta', 'Fourth'),
+  ];
+  const firstOrder = games.getGameRoundWords('fill-gap', words, 4).map((word) => word.id);
+  const secondOrder = games.getGameRoundWords('fill-gap', [...words].reverse(), 4).map((word) => word.id);
+
+  assert.deepEqual(firstOrder, secondOrder);
+  assert.equal(
+    games.getGameXp({ gameType: 'fill-gap', gameKey: '2026-08-26:fill-gap', score: 99, total: 5 }),
+    19,
+  );
+});
+
+test('games and widgets participate in retention, time, and persisted app flows', () => {
+  const analytics = {
+    quizHistory: [],
+    cardHistory: [],
+    gameHistory: [{
+      id: 'game-1',
+      date: '2026-08-26',
+      gameType: 'fill-gap',
+      gameKey: '2026-08-26:fill-gap',
+      score: 1,
+      total: 1,
+      durationSeconds: 18,
+      completedAt: '2026-08-26T12:00:00.000Z',
+      answers: [{ wordId: 'one', correct: true }],
+    }],
+  };
+  const retention = learning.getCompetitiveRetention(analytics);
+
+  assert.equal(retention.reviewCount, 1);
+  assert.equal(learning.getTotalLearningSeconds(analytics), 18);
+  assert.equal(learning.getLearningSessionCount(analytics), 1);
+
+  const gameSource = fs.readFileSync(path.join(projectRoot, 'src/components/quiz/QuizGames.tsx'), 'utf8');
+  const widgetService = fs.readFileSync(path.join(projectRoot, 'src/services/widgets.ts'), 'utf8');
+  const widgetSetup = fs.readFileSync(path.join(projectRoot, 'src/screens/WidgetSetupScreen.tsx'), 'utf8');
+  const appConfig = fs.readFileSync(path.join(projectRoot, 'app.json'), 'utf8');
+  const validation = fs.readFileSync(
+    path.join(projectRoot, 'supabase/migrations/20260826000004_quiz_attempt_validation_and_goal_read.sql'),
+    'utf8',
+  );
+
+  assert.match(gameSource, /wrongResetTimeout/);
+  assert.match(gameSource, /getPlayableGameWords/);
+  assert.match(widgetService, /saveWordWizWidgetConfig/);
+  assert.match(widgetService, /updateTimeline/);
+  assert.match(widgetSetup, /loadWordWizWidgetConfig/);
+  assert.match(appConfig, /"expo-widgets"/);
+  assert.match(validation, /community_validate_quiz_attempt/);
+  assert.match(validation, /quiz_score_does_not_match_answers/);
 });

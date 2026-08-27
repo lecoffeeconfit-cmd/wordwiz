@@ -9,8 +9,8 @@ export type ReminderContext = {
   longestStreak: number;
   hasPracticedToday: boolean;
   dueReviewCount: number;
-  quizzesToday: number;
-  dailyQuizGoal: number;
+  learningActivitiesToday: number;
+  dailyLearningGoal: number;
   totalQuizSessions: number;
   totalQuizQuestions: number;
   overallAccuracy: number | null;
@@ -118,8 +118,8 @@ export async function scheduleDailyReminder(
     longestStreak: 0,
     hasPracticedToday: false,
     dueReviewCount: 0,
-    quizzesToday: 0,
-    dailyQuizGoal: 1,
+    learningActivitiesToday: 0,
+    dailyLearningGoal: 1,
     totalQuizSessions: 0,
     totalQuizQuestions: 0,
     overallAccuracy: null,
@@ -223,13 +223,13 @@ export function buildSmartReminderMessages(
     });
   }
 
-  if (context.quizzesToday < context.dailyQuizGoal) {
-    const quizzesLeft = context.dailyQuizGoal - context.quizzesToday;
+  if (context.learningActivitiesToday < context.dailyLearningGoal) {
+    const activitiesLeft = context.dailyLearningGoal - context.learningActivitiesToday;
 
     messages.push({
       kind: 'quiz',
-      title: `${quizzesLeft} quiz${quizzesLeft === 1 ? '' : 'zes'} left today`,
-      body: `Finish ${quizzesLeft} to hit your ${context.dailyQuizGoal}-quiz daily goal.`,
+      title: `${activitiesLeft} ${activitiesLeft === 1 ? 'activity' : 'activities'} left today`,
+      body: `Complete ${activitiesLeft} more to hit your ${context.dailyLearningGoal}-activity learning goal.`,
     });
   }
 

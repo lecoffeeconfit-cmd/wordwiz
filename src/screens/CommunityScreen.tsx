@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   AccessibilityInfo,
@@ -9,6 +9,7 @@ import {
   Image,
   Linking,
   Modal,
+  PanResponder,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -28,6 +29,7 @@ import {
   type CommunityLevel,
   type CommunityNudge,
   type CommunityPeriod,
+  type CompetitiveMetric,
   type WordCollectorAudience,
   type WordCollectorContext,
   type WordCollectorEntry,
@@ -41,10 +43,10 @@ import {
   getCommunityExpoPushToken,
   getCommunityLeaderboard,
   getCommunityNudges,
+  getCompetitiveMetricContext,
+  getCompetitiveMetricLeaderboard,
+  getCompetitiveMetricMyRank,
   getWordCollectorLocationPermission,
-  getWordCollectorsContext,
-  getWordCollectorsLeaderboard,
-  getWordCollectorsMyRank,
   markCommunityNudgeRead,
   pickAndUploadCommunityAvatar,
   registerCommunityPushToken,
@@ -61,6 +63,7 @@ import {
 type CommunitySection = 'leaderboard' | 'friends' | 'nudges';
 
 const PAGE_SIZE = 10;
+const RAPID_ACCORDION_TOGGLE_GUARD_MS = 400;
 const PERIODS: CommunityPeriod[] = ['daily', 'weekly', 'all_time'];
 const WORD_COLLECTOR_PERIODS: WordCollectorPeriod[] = ['week', 'month', 'all_time'];
 const WORD_COLLECTOR_AUDIENCES: WordCollectorAudience[] = ['all', 'nearby', 'state', 'global'];
@@ -75,11 +78,22 @@ const WORD_COLLECTOR_PERIOD_LABELS: Record<WordCollectorPeriod, string> = {
   all_time: 'All Time',
 };
 const WORD_COLLECTOR_AUDIENCE_LABELS: Record<WordCollectorAudience, string> = {
-  all: 'All',
+  all: 'Country',
   nearby: 'Nearby',
   state: 'State',
   global: 'Global',
 };
+const COMPETITIVE_METRICS: Array<{
+  key: CompetitiveMetric;
+  label: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  color: string;
+  background: string;
+}> = [
+  { key: 'collectors', label: 'Collectors', icon: 'library-outline', color: COLORS.blue, background: '#EAF6FF' },
+  { key: 'retention', label: 'Retention', icon: 'bulb-outline', color: COLORS.purpleDark, background: '#EEE9FF' },
+  { key: 'streaks', label: 'Learning Streaks', icon: 'flame-outline', color: '#C88612', background: '#FFF1CB' },
+];
 type NudgeOption = {
   key: string;
   type: CommunityNudge['nudgeType'];
@@ -180,8 +194,8 @@ function cacheKey(period: CommunityPeriod, page: number, level: CommunityLevel |
   return `${period}:${level ?? 'all'}:${page}`;
 }
 
-function wordCollectorCacheKey(period: WordCollectorPeriod, audience: WordCollectorAudience, page: number) {
-  return `${period}:${audience}:${page}`;
+function wordCollectorCacheKey(metric: CompetitiveMetric, period: WordCollectorPeriod, audience: WordCollectorAudience, page: number) {
+  return `${metric}:${period}:${audience}:${page}`;
 }
 
 function levelPresentation(level: CommunityLevel) {
@@ -282,13 +296,24 @@ function Preference({
 }
 
 function ScoreExplainer({ expanded, onToggle }: { expanded: boolean; onToggle: () => void }) {
+  const lastCollapseAtRef = useRef(0);
+
+  const handleTriggerPress = () => {
+    const now = Date.now();
+    if (now - lastCollapseAtRef.current < RAPID_ACCORDION_TOGGLE_GUARD_MS) return;
+
+    if (expanded) lastCollapseAtRef.current = now;
+    onToggle();
+  };
+
   return (
     <View style={community.scoreExplainer}>
       <Pressable
         accessibilityRole="button"
         accessibilityState={{ expanded }}
-        accessibilityHint="Opens details about how Social XP is earned"
-        onPress={onToggle}
+        accessibilityLabel={expanded ? 'Collapse How Social XP works' : 'Expand How Social XP works'}
+        accessibilityHint={expanded ? 'Hides details about how Social XP is earned' : 'Shows details about how Social XP is earned'}
+        onPress={handleTriggerPress}
         style={community.scoreExplainerTrigger}
       >
         <View style={community.scoreExplainerIcon}>
@@ -348,15 +373,75 @@ function ScoreExplainer({ expanded, onToggle }: { expanded: boolean; onToggle: (
 }
 
 function SocialXpExplainerSheet({ visible, onClose }: { visible: boolean; onClose: () => void }) {
+  const sheetTranslateY = useRef(new Animated.Value(0)).current;
+  const sheetHeight = useRef(0);
+
+  useEffect(() => {
+    if (!visible) return;
+    sheetTranslateY.stopAnimation();
+    sheetTranslateY.setValue(0);
+  }, [sheetTranslateY, visible]);
+
+  const panResponder = useMemo(() => PanResponder.create({
+    onMoveShouldSetPanResponderCapture: (_, gestureState) => (
+      gestureState.dy > 8 && Math.abs(gestureState.dy) > Math.abs(gestureState.dx)
+    ),
+    onPanResponderGrant: () => {
+      sheetTranslateY.stopAnimation();
+    },
+    onPanResponderMove: (_, gestureState) => {
+      sheetTranslateY.setValue(Math.max(0, gestureState.dy));
+    },
+    onPanResponderRelease: (_, gestureState) => {
+      const shouldClose = gestureState.dy > 120 || gestureState.vy > 0.8;
+      if (shouldClose) {
+        Animated.timing(sheetTranslateY, {
+          toValue: Math.max(sheetHeight.current, 800),
+          duration: 180,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }).start(({ finished }) => {
+          if (finished) onClose();
+        });
+        return;
+      }
+
+      Animated.spring(sheetTranslateY, {
+        toValue: 0,
+        damping: 22,
+        stiffness: 260,
+        mass: 0.8,
+        useNativeDriver: true,
+      }).start();
+    },
+    onPanResponderTerminate: () => {
+      Animated.spring(sheetTranslateY, {
+        toValue: 0,
+        damping: 22,
+        stiffness: 260,
+        mass: 0.8,
+        useNativeDriver: true,
+      }).start();
+    },
+    onPanResponderTerminationRequest: () => false,
+  }), [onClose, sheetTranslateY]);
+
   return (
     <Modal
       visible={visible}
       transparent
-      animationType="slide"
+      animationType="none"
       onRequestClose={onClose}
     >
       <View style={community.scoreSheetBackdrop}>
-        <View style={community.scoreSheet}>
+        <Animated.View
+          {...panResponder.panHandlers}
+          onLayout={(event) => {
+            sheetHeight.current = event.nativeEvent.layout.height;
+          }}
+          style={[community.scoreSheet, { transform: [{ translateY: sheetTranslateY }] }]}
+          accessibilityHint="Swipe down to close"
+        >
           <View style={community.scoreSheetHandle} />
           <Pressable onPress={onClose} accessibilityLabel="Close Social XP explanation" style={community.scoreSheetClose}>
             <Ionicons name="close" size={20} color={COLORS.muted} />
@@ -411,21 +496,30 @@ function SocialXpExplainerSheet({ visible, onClose }: { visible: boolean; onClos
           <View style={community.scoreSystemNote}>
             <Text style={community.scoreSystemNoteText}>Social XP is one shared score: learning, flashcard practice, regular quizzes, and Omega Tests all add to it automatically.</Text>
           </View>
-        </View>
+        </Animated.View>
       </View>
     </Modal>
   );
 }
 
-export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange?: (count: number) => void }) {
+export function CommunityScreen({
+  onUnreadNudgesChange,
+  initialCompetitiveMetric,
+  onInitialCompetitiveMetricHandled,
+}: {
+  onUnreadNudgesChange?: (count: number) => void;
+  initialCompetitiveMetric?: CompetitiveMetric | null;
+  onInitialCompetitiveMetricHandled?: () => void;
+}) {
   const reduceMotion = useReducedMotionPreference();
   const [section, setSection] = useState<CommunitySection>('leaderboard');
   const [period, setPeriod] = useState<CommunityPeriod>('weekly');
   const [leaderboardMode, setLeaderboardMode] = useState<'social' | 'collectors'>('social');
+  const [collectorMetric, setCollectorMetric] = useState<CompetitiveMetric>(initialCompetitiveMetric ?? 'collectors');
   const [context, setContext] = useState<CommunityContext | null>(null);
   const [leaderboard, setLeaderboard] = useState<CommunityLeaderboardEntry[]>([]);
   const [collectorPeriod, setCollectorPeriod] = useState<WordCollectorPeriod>('week');
-  const [collectorAudience, setCollectorAudience] = useState<WordCollectorAudience>('all');
+  const [collectorAudience, setCollectorAudience] = useState<WordCollectorAudience>('global');
   const [collectorContext, setCollectorContext] = useState<WordCollectorContext | null>(null);
   const [collectors, setCollectors] = useState<WordCollectorEntry[]>([]);
   const [collectorLoading, setCollectorLoading] = useState(false);
@@ -472,6 +566,7 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
   const leaderboardLoadMoreRef = useRef(false);
   const collectorLoadMoreRef = useRef(false);
   const initializedRef = useRef(false);
+  const initialCompetitiveMetricHandledRef = useRef(false);
   const profileEntrance = useRef(new Animated.Value(0)).current;
   const leaderboardEntrance = useRef(new Animated.Value(0)).current;
   const collectorSparkleShimmer = useRef(new Animated.Value(0)).current;
@@ -593,7 +688,7 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
       easing: Easing.out(Easing.quad),
       useNativeDriver: true,
     }).start();
-  }, [collectorPeriod, collectors.length, leaderboard.length, leaderboardEntrance, leaderboardMode, period, section]);
+  }, [collectorMetric, collectorPeriod, collectors.length, leaderboard.length, leaderboardEntrance, leaderboardMode, period, section]);
 
   useEffect(() => {
     collectorSparkleShimmer.stopAnimation();
@@ -614,7 +709,7 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
         useNativeDriver: true,
       }),
     ]).start();
-  }, [collectorSparkleShimmer, leaderboardMode]);
+  }, [collectorMetric, collectorSparkleShimmer, leaderboardMode]);
 
   const selectLeaderboard = useCallback((
     nextPeriod: CommunityPeriod,
@@ -668,19 +763,20 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
     nextAudience: WordCollectorAudience,
     nextPage: number,
     force = false,
+    nextMetric: CompetitiveMetric = collectorMetric,
   ) => {
-    const key = wordCollectorCacheKey(nextPeriod, nextAudience, nextPage);
+    const key = wordCollectorCacheKey(nextMetric, nextPeriod, nextAudience, nextPage);
     const cachedRows = collectorCacheRef.current.get(key);
     const request = ++collectorRequestRef.current;
     setCollectorLoadingMore(false);
     collectorLoadMoreRef.current = false;
     setCollectorLoading(true);
     try {
-      const nextContext = await getWordCollectorsContext(nextPeriod, nextAudience);
+      const nextContext = await getCompetitiveMetricContext(nextMetric, nextPeriod, nextAudience);
       if (request !== collectorRequestRef.current) return;
       setCollectorContext(nextContext);
 
-      if ((nextAudience === 'nearby' || nextAudience === 'state') && !nextContext.hasLocation) {
+      if ((nextAudience === 'nearby' || nextAudience === 'state' || nextAudience === 'all') && !nextContext.hasLocation) {
         // Selecting a location-based audience only changes the view. Keep all
         // native location calls behind the explicit Enable Location action so
         // a stale permission/module state cannot take down the screen.
@@ -696,7 +792,7 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
 
       const rows = !force && cachedRows
         ? cachedRows
-        : await getWordCollectorsLeaderboard(nextPeriod, nextAudience, PAGE_SIZE, nextPage * PAGE_SIZE);
+        : await getCompetitiveMetricLeaderboard(nextMetric, nextPeriod, nextAudience, PAGE_SIZE, nextPage * PAGE_SIZE);
       if (request !== collectorRequestRef.current) return;
       collectorCacheRef.current.set(key, rows);
       setCollectors(rows);
@@ -708,7 +804,34 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
     } finally {
       if (request === collectorRequestRef.current) setCollectorLoading(false);
     }
-  }, []);
+  }, [collectorMetric]);
+
+  useEffect(() => {
+    if (
+      !initialCompetitiveMetric ||
+      initialLoading ||
+      !context?.profile ||
+      initialCompetitiveMetricHandledRef.current
+    ) return;
+
+    initialCompetitiveMetricHandledRef.current = true;
+    setSection('leaderboard');
+    setLeaderboardMode('collectors');
+    setSelectedLevel(null);
+    setCollectorMetric(initialCompetitiveMetric);
+    const nextPeriod: WordCollectorPeriod = initialCompetitiveMetric === 'retention' ? 'all_time' : 'week';
+    setCollectorPeriod(nextPeriod);
+    setCollectorRankView(false);
+    void loadWordCollectors(nextPeriod, collectorAudience, 0, true, initialCompetitiveMetric);
+    onInitialCompetitiveMetricHandled?.();
+  }, [
+    collectorAudience,
+    context?.profile,
+    initialCompetitiveMetric,
+    initialLoading,
+    loadWordCollectors,
+    onInitialCompetitiveMetricHandled,
+  ]);
 
   const selectWordCollectorAudience = useCallback((nextAudience: WordCollectorAudience) => {
     collectorSelectionRef.current += 1;
@@ -716,7 +839,7 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
     setCollectorPage(0);
     setCollectorRankView(false);
     setCollectorLocationLoading(false);
-    if (nextAudience === 'all' || nextAudience === 'global') {
+    if (nextAudience === 'global') {
       setCollectorLocationPermission(null);
       void loadWordCollectors(collectorPeriod, nextAudience, 0);
       return;
@@ -752,12 +875,12 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
     if (collectorLoading || collectorLoadingMore || !collectorHasMore || collectorLoadMoreRef.current || collectorRankView) return;
     collectorLoadMoreRef.current = true;
     const nextPage = collectorPage + 1;
-    const key = wordCollectorCacheKey(collectorPeriod, collectorAudience, nextPage);
+    const key = wordCollectorCacheKey(collectorMetric, collectorPeriod, collectorAudience, nextPage);
     const request = ++collectorRequestRef.current;
     setCollectorLoadingMore(true);
     try {
       const rows = collectorCacheRef.current.get(key)
-        ?? await getWordCollectorsLeaderboard(collectorPeriod, collectorAudience, PAGE_SIZE, nextPage * PAGE_SIZE);
+        ?? await getCompetitiveMetricLeaderboard(collectorMetric, collectorPeriod, collectorAudience, PAGE_SIZE, nextPage * PAGE_SIZE);
       if (request !== collectorRequestRef.current) return;
       collectorCacheRef.current.set(key, rows);
       setCollectors((current) => {
@@ -774,13 +897,20 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
       if (request === collectorRequestRef.current) setCollectorLoadingMore(false);
       collectorLoadMoreRef.current = false;
     }
-  }, [collectorAudience, collectorHasMore, collectorLoading, collectorLoadingMore, collectorPage, collectorPeriod, collectorRankView]);
+  }, [collectorAudience, collectorHasMore, collectorLoading, collectorLoadingMore, collectorMetric, collectorPage, collectorPeriod, collectorRankView]);
 
   const showMyCollectorRank = useCallback(async () => {
     try {
-      const rows = await getWordCollectorsMyRank(collectorPeriod, collectorAudience);
+      const rows = await getCompetitiveMetricMyRank(collectorMetric, collectorPeriod, collectorAudience);
       if (!rows.length) {
-        Alert.alert('Start discovering words', 'Add a new word and it will appear in your Word Collector total.');
+        Alert.alert(
+          collectorMetric === 'retention' ? 'Keep reviewing' : collectorMetric === 'streaks' ? 'Complete your daily goal' : 'Start discovering words',
+          collectorMetric === 'retention'
+            ? 'Complete enough meaningful reviews to qualify for the Retention ranking.'
+            : collectorMetric === 'streaks'
+              ? 'Complete today’s Learning Goal to start a streak and appear in this ranking.'
+              : 'Add a new word and it will appear in your Word Collector total.',
+        );
         return;
       }
       setCollectors(rows);
@@ -789,7 +919,7 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
     } catch (error) {
       Alert.alert('My Rank unavailable', error instanceof Error ? error.message : 'Please try again shortly.');
     }
-  }, [collectorAudience, collectorPeriod]);
+  }, [collectorAudience, collectorMetric, collectorPeriod]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -1002,32 +1132,77 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
     );
   };
 
-  const renderWordCollectorsHero = () => (
-    <View style={community.collectorHero}>
-      <View style={community.collectorHeroIcon}>
-        <Ionicons name="library-outline" size={23} color={COLORS.purpleDark} />
+  const renderWordCollectorsHero = () => {
+    const metric = COMPETITIVE_METRICS.find((item) => item.key === collectorMetric) ?? COMPETITIVE_METRICS[0];
+    const copy = collectorMetric === 'retention'
+      ? 'Remember what you learn. Accuracy and meaningful review volume both count.'
+      : collectorMetric === 'streaks'
+        ? 'Show up consistently. Your current Learning Streak leads the way.'
+        : 'Build your vocabulary. Every meaningful word added moves you forward.';
+
+    return (
+      <View style={[community.collectorHero, { borderColor: `${metric.color}45`, backgroundColor: metric.background }]}>
+        <View style={[community.collectorHeroIcon, { backgroundColor: `${metric.color}20` }]}>
+          <Ionicons name={metric.icon} size={23} color={metric.color} />
+        </View>
+        <View style={community.collectorHeroCopy}>
+          <Text style={[community.collectorHeroEyebrow, { color: metric.color }]}>{metric.label.toUpperCase()}</Text>
+          <Text style={community.collectorHeroTitle}>{copy}</Text>
+        </View>
       </View>
-      <View style={community.collectorHeroCopy}>
-        <Text style={community.collectorHeroEyebrow}>WORD COLLECTORS</Text>
-        <Text style={community.collectorHeroTitle}>Discover more words. Climb the leaderboard.</Text>
-      </View>
-    </View>
-  );
+    );
+  };
 
   const renderWordCollectors = () => {
-    const locationRequired = collectorAudience === 'nearby' || collectorAudience === 'state';
-    const locationAudienceLabel = collectorAudience === 'state' ? 'State' : 'Nearby';
+    const metric = COMPETITIVE_METRICS.find((item) => item.key === collectorMetric) ?? COMPETITIVE_METRICS[0];
+    const locationRequired = collectorAudience === 'nearby' || collectorAudience === 'state' || collectorAudience === 'all';
+    const locationAudienceLabel = collectorAudience === 'state' ? 'State' : collectorAudience === 'all' ? 'Country' : 'Nearby';
     const locationAudienceDescription = collectorAudience === 'state'
       ? 'Allow WordWiz to use your approximate location to place you in a broad state leaderboard. Your exact location is never shown.'
-      : 'Allow WordWiz to use your approximate location to place you in a broad local leaderboard. Your exact location is never shown.';
+      : collectorAudience === 'all'
+        ? 'Allow WordWiz to use your approximate location to place you in a country leaderboard. Your exact location is never shown.'
+        : 'Allow WordWiz to use your approximate location to place you in a broad local leaderboard. Your exact location is never shown.';
     const locationGroupIsGrowing = locationRequired && !collectorLoading && collectors.length === 0;
     const noCollectorWords = !collectorLoading && !locationRequired && collectors.length === 0;
     const showLocationAccess = locationRequired && !collectorContext?.hasLocation;
+    const metricLabel = collectorMetric === 'retention' ? 'RETENTION' : collectorMetric === 'streaks' ? 'LEARNING STREAK' : 'WORDS ADDED';
+    const rankTitle = collectorMetric === 'retention' ? 'YOUR RETENTION RANK' : collectorMetric === 'streaks' ? 'YOUR LEARNING STREAK RANK' : 'YOUR WORD COLLECTOR RANK';
+    const metricDetail = collectorMetric === 'retention'
+      ? collectorContext?.qualified
+        ? `${collectorContext.retentionPercent ?? 0}% retained across ${collectorContext.reviewCount ?? 0} reviews`
+        : `Complete ${collectorContext?.reviewsToQualify ?? 40} more reviews to qualify`
+      : collectorMetric === 'streaks'
+        ? `${collectorContext?.streakDays ?? 0} Learning Streak days in a row`
+        : collectorContext?.wordCount
+          ? `${collectorContext.wordCount.toLocaleString()} ${collectorContext.wordCount === 1 ? 'word' : 'words'} added`
+          : 'Add a new word to join this ranking.';
 
     return (
       <>
-        <View style={community.collectorControlGroup}>
-          <Text style={community.collectorControlLabel}>WORDS ADDED</Text>
+        <View style={community.metricTabs} accessibilityRole="tablist">
+          {COMPETITIVE_METRICS.map((item) => (
+            <Pressable
+              key={item.key}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: collectorMetric === item.key }}
+              onPress={() => {
+                collectorSelectionRef.current += 1;
+                setCollectorMetric(item.key);
+                setCollectorPeriod(item.key === 'retention' ? 'all_time' : 'week');
+                setCollectorPage(0);
+                setCollectorRankView(false);
+                void loadWordCollectors(item.key === 'retention' ? 'all_time' : 'week', collectorAudience, 0, true, item.key);
+              }}
+              style={({ pressed }) => [community.metricTab, collectorMetric === item.key && community.metricTabActive, pressed && community.metricTabPressed]}
+            >
+              <Ionicons name={item.icon} size={16} color={collectorMetric === item.key ? item.color : COLORS.muted} />
+              <Text style={[community.metricTabText, collectorMetric === item.key && { color: item.color }]}>{item.label}</Text>
+            </Pressable>
+          ))}
+        </View>
+
+        {collectorMetric !== 'streaks' ? <View style={community.collectorControlGroup}>
+          <Text style={community.collectorControlLabel}>{collectorMetric === 'retention' ? 'RETENTION WINDOW' : metricLabel}</Text>
           <View style={community.periods}>
             {WORD_COLLECTOR_PERIODS.map((item) => (
               <Pressable
@@ -1048,7 +1223,7 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
               </Pressable>
             ))}
           </View>
-        </View>
+        </View> : null}
 
         <View style={community.collectorControlGroup}>
           <Text style={community.collectorControlLabel}>COMPETE WITH</Text>
@@ -1069,17 +1244,15 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
 
         <View style={community.collectorMyRankCard}>
           <View style={community.collectorMyRankCopy}>
-            <Text style={community.myLeaderboardEyebrow}>YOUR WORD COLLECTOR RANK</Text>
+            <Text style={community.myLeaderboardEyebrow}>{rankTitle}</Text>
             <Text style={community.collectorMyRankValue}>
               {collectorContext?.rank ? `#${collectorContext.rank}` : 'Not ranked yet'}
             </Text>
-            <Text style={community.collectorMyRankDetail}>
-              {collectorContext?.wordCount ? `${collectorContext.wordCount.toLocaleString()} ${collectorContext.wordCount === 1 ? 'word' : 'words'} added` : 'Add a new word to join this ranking.'}
-            </Text>
+            <Text style={community.collectorMyRankDetail}>{metricDetail}</Text>
           </View>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Show my Word Collector rank"
+            accessibilityLabel={`Show my ${metric.label} rank`}
             disabled={!collectorContext?.rank}
             onPress={() => void showMyCollectorRank()}
             style={[community.collectorMyRankButton, !collectorContext?.rank && community.disabledButton]}
@@ -1091,7 +1264,19 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
         {!collectorContext?.eligible ? (
           <View style={community.notice}>
             <Ionicons name="lock-closed-outline" size={18} color={COLORS.purpleDark} />
-            <Text style={community.noticeText}>Turn on leaderboard visibility in your Connect profile to join Word Collectors. Your saved words stay private.</Text>
+            <Text style={community.noticeText}>Turn on leaderboard visibility in your Connect profile to join {metric.label}. Your saved words stay private.</Text>
+          </View>
+        ) : null}
+
+        {collectorMetric === 'retention' && collectorContext?.eligible && !collectorContext.qualified ? (
+          <View style={community.retentionQualificationCard}>
+            <View style={community.retentionQualificationIcon}>
+              <Ionicons name="bulb-outline" size={18} color={COLORS.purpleDark} />
+            </View>
+            <View style={community.retentionQualificationCopy}>
+              <Text style={community.retentionQualificationTitle}>Retention Rank unlocks with evidence</Text>
+              <Text style={community.retentionQualificationText}>Complete {collectorContext.reviewsToQualify ?? 40} more reviews. Ranking considers accuracy and meaningful review volume.</Text>
+            </View>
           </View>
         ) : null}
 
@@ -1104,7 +1289,7 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
               <Text style={community.collectorLocationTitle}>
                 {collectorLocationPermission === 'denied'
                   ? `${locationAudienceLabel} rankings need location access`
-                  : collectorAudience === 'state' ? 'See how you rank in your state' : 'See how you rank nearby'}
+                  : collectorAudience === 'state' ? 'See how you rank in your state' : collectorAudience === 'all' ? 'See how you rank in your country' : 'See how you rank nearby'}
               </Text>
               <Text style={community.collectorLocationText}>{locationAudienceDescription}</Text>
             </View>
@@ -1143,7 +1328,7 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
           <View style={community.empty}>
             <Ionicons name="people-outline" size={30} color={COLORS.purple} />
             <Text style={community.emptyTitle}>Your local ranking is still growing</Text>
-            <Text style={community.emptyText}>Try State or Global while more Word Collectors join your general area.</Text>
+            <Text style={community.emptyText}>Try State or Global while more learners join your general area.</Text>
             <View style={community.collectorEmptyActions}>
               <Pressable onPress={() => void selectWordCollectorAudience('state')} style={community.collectorEmptyButton}><Text style={community.collectorEmptyButtonText}>View State</Text></Pressable>
               <Pressable onPress={() => void selectWordCollectorAudience('global')} style={community.collectorEmptyButton}><Text style={community.collectorEmptyButtonText}>View Global</Text></Pressable>
@@ -1158,14 +1343,14 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
           >
             <View style={community.leaderboardStatus}>
               <Text style={community.leaderboardStatusText}>
-                {collectorRankView ? 'Your place in this ranking' : `${WORD_COLLECTOR_PERIOD_LABELS[collectorPeriod]} · ${WORD_COLLECTOR_AUDIENCE_LABELS[collectorAudience]} Word Collectors`}
+              {collectorRankView ? 'Your place in this ranking' : `${collectorMetric === 'streaks' ? 'Current Learning Streak' : WORD_COLLECTOR_PERIOD_LABELS[collectorPeriod]} · ${WORD_COLLECTOR_AUDIENCE_LABELS[collectorAudience]} ${metric.label}`}
               </Text>
               {collectorLoading ? <ActivityIndicator size="small" color={COLORS.purple} /> : null}
             </View>
-            {collectors.map((entry) => {
+            {collectors.map((entry, index) => {
               const medal = entry.rank === 1 ? '🥇' : entry.rank === 2 ? '🥈' : entry.rank === 3 ? '🥉' : null;
               return (
-                <View key={entry.publicId} style={[community.rankRow, community.collectorRankRow, entry.isMe && community.rankRowMe, entry.rank <= 3 && community.collectorTopRank]}>
+                <View key={entry.publicId} style={[community.rankRow, index > 0 && community.rankRowAfter, community.collectorRankRow, entry.isMe && community.rankRowMe, entry.rank <= 3 && community.collectorTopRank]}>
                   <View style={community.collectorRankNumber}>
                     <Text style={entry.rank <= 3 ? community.collectorMedal : community.collectorRankText}>{medal ?? `#${entry.rank}`}</Text>
                   </View>
@@ -1174,17 +1359,35 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
                   </View>
                   <View style={community.rankName}>
                     <Text numberOfLines={1} style={community.rankNameText}>{entry.displayName}{entry.isMe ? ' (you)' : ''}</Text>
-                    <Text style={community.collectorRowDetail}>Words Added</Text>
+                    <Text style={[community.collectorRowDetail, { color: metric.color }]}>
+                      {collectorMetric === 'retention'
+                        ? `${entry.reviewCount ?? 0} reviews · ranking score considers volume`
+                        : collectorMetric === 'streaks' ? 'Current Learning Streak' : 'Words Added'}
+                    </Text>
                   </View>
-                  <Text style={community.collectorWordCount}>{entry.wordCount.toLocaleString()} {entry.wordCount === 1 ? 'word' : 'words'}</Text>
+                  <Text style={[community.collectorWordCount, { color: metric.color }]}>
+                    {collectorMetric === 'retention'
+                      ? `${entry.retentionPercent ?? entry.metricValue ?? 0}%`
+                      : collectorMetric === 'streaks'
+                        ? `${entry.streakDays ?? entry.metricValue ?? 0}d`
+                        : `${entry.wordCount.toLocaleString()} ${entry.wordCount === 1 ? 'word' : 'words'}`}
+                  </Text>
                 </View>
               );
             })}
             {noCollectorWords ? (
               <View style={community.empty}>
-                <Ionicons name="book-outline" size={31} color={COLORS.purple} />
-                <Text style={community.emptyTitle}>Start discovering words</Text>
-                <Text style={community.emptyText}>Add a new word and it will appear in your Word Collector total.</Text>
+                <Ionicons name={metric.icon} size={31} color={metric.color} />
+                <Text style={community.emptyTitle}>
+                  {collectorMetric === 'retention' ? 'Build your retention evidence' : collectorMetric === 'streaks' ? 'Start a Learning Streak' : 'Start discovering words'}
+                </Text>
+                <Text style={community.emptyText}>
+                  {collectorMetric === 'retention'
+                    ? 'Review words regularly to qualify for the Retention ranking.'
+                    : collectorMetric === 'streaks'
+                      ? 'Complete your daily goal today and keep showing up to appear in Learning Streaks.'
+                      : 'Add a new word and it will appear in your Word Collector total.'}
+                </Text>
               </View>
             ) : null}
             {collectorRankView ? (
@@ -1193,14 +1396,14 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
                 setCollectorPage(0);
                 void loadWordCollectors(collectorPeriod, collectorAudience, 0);
               }} style={community.collectorReturnTop}>
-                <Text style={community.collectorReturnTopText}>Back to top collectors</Text>
+                <Text style={community.collectorReturnTopText}>Back to top of ranking</Text>
               </Pressable>
             ) : collectors.length ? (
               collectorHasMore || collectorLoadingMore ? (
                 <Pressable disabled={collectorLoadingMore} onPress={() => void loadMoreWordCollectors()} style={({ pressed }) => [community.loadMore, (pressed || collectorLoadingMore) && community.loadMorePressed]}>
                   {collectorLoadingMore ? <ActivityIndicator size="small" color={COLORS.purpleDark} /> : <Ionicons name="arrow-down-circle-outline" size={18} color={COLORS.purpleDark} />}
                   <View style={community.loadMoreCopy}>
-                    <Text style={community.loadMoreTitle}>{collectorLoadingMore ? 'Loading more collectors…' : 'Keep exploring Word Collectors'}</Text>
+                    <Text style={community.loadMoreTitle}>{collectorLoadingMore ? 'Loading more learners…' : `Keep exploring ${metric.label}`}</Text>
                     <Text style={community.loadMoreText}>Load the next group without downloading the full ranking.</Text>
                   </View>
                   {!collectorLoadingMore ? <Ionicons name="chevron-down" size={17} color={COLORS.purpleDark} /> : null}
@@ -1216,7 +1419,7 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
   const renderLeaderboard = () => (
     <>
       {leaderboardMode === 'collectors' ? renderWordCollectorsHero() : null}
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={community.tierLegend}>
+      {leaderboardMode === 'social' ? <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={community.tierLegend}>
         {TIER_LEGEND.map((tierName) => {
           const tier = levelPresentation(tierName);
           return (
@@ -1252,7 +1455,7 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Show Word Collectors leaderboard"
-          accessibilityState={{ selected: leaderboardMode === 'collectors' }}
+          accessibilityState={{ selected: false }}
           onPress={() => {
             setLeaderboardMode('collectors');
             setSelectedLevel(null);
@@ -1262,7 +1465,6 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
           style={({ pressed }) => [
             community.tierLegendItem,
             community.collectorDestination,
-            leaderboardMode === 'collectors' && community.collectorDestinationActive,
             pressed && community.tierLegendItemPressed,
           ]}
         >
@@ -1283,11 +1485,11 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
             </Svg>
           </Animated.View>
           <View>
-            <Text style={[community.tierLegendText, leaderboardMode === 'collectors' && community.collectorDestinationTextActive]}>Word Collectors</Text>
-            <Text style={[community.tierLegendCount, leaderboardMode === 'collectors' && community.collectorDestinationCountActive]}>Words added</Text>
+            <Text style={community.tierLegendText}>Word Collectors</Text>
+          <Text style={community.tierLegendCount}>Collectors · Retention · Learning Streaks</Text>
           </View>
         </Pressable>
-      </ScrollView>
+      </ScrollView> : null}
       {leaderboardMode === 'social' ? (
       <View style={community.socialPeriods}>
         {PERIODS.map((item) => (
@@ -1695,9 +1897,14 @@ export function CommunityScreen({ onUnreadNudgesChange }: { onUnreadNudgesChange
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.purple} />}
         scrollEventThrottle={16}
         onScroll={({ nativeEvent }) => {
-          if (section !== 'leaderboard' || !leaderboardHasMore || leaderboardLoading || leaderboardLoadingMore) return;
+          if (section !== 'leaderboard') return;
           const { contentOffset, contentSize, layoutMeasurement } = nativeEvent;
-          if (contentOffset.y + layoutMeasurement.height >= contentSize.height - 220) void loadMoreLeaderboard();
+          if (contentOffset.y + layoutMeasurement.height < contentSize.height - 220) return;
+          if (leaderboardMode === 'collectors') {
+            if (collectorHasMore && !collectorLoading && !collectorLoadingMore) void loadMoreWordCollectors();
+          } else if (leaderboardHasMore && !leaderboardLoading && !leaderboardLoadingMore) {
+            void loadMoreLeaderboard();
+          }
         }}
       >
       <Animated.View
@@ -2046,6 +2253,11 @@ const community = StyleSheet.create({
   collectorHeroCopy: { flex: 1 },
   collectorHeroEyebrow: { color: COLORS.purple, fontSize: 10, letterSpacing: 1, fontWeight: '900' },
   collectorHeroTitle: { marginTop: 2, color: COLORS.ink, fontSize: 15, lineHeight: 20, fontWeight: '900' },
+  metricTabs: { flexDirection: 'row', gap: 6, padding: 4, borderRadius: 18, borderWidth: 1, borderColor: '#E3DDF5', backgroundColor: '#F0EDF8' },
+  metricTab: { flex: 1, minHeight: 43, alignItems: 'center', justifyContent: 'center', gap: 2, paddingHorizontal: 3, borderRadius: 14 },
+  metricTabActive: { backgroundColor: COLORS.white, ...SOFT_SHADOW },
+  metricTabPressed: { opacity: 0.78 },
+  metricTabText: { color: COLORS.muted, fontSize: 10, fontWeight: '900' },
   collectorControlGroup: { gap: 6 },
   collectorControlLabel: { marginLeft: 3, color: COLORS.purpleDark, fontSize: 9, letterSpacing: 1, fontWeight: '900' },
   collectorAudienceRow: { flexDirection: 'row', gap: 6 },
@@ -2069,6 +2281,11 @@ const community = StyleSheet.create({
   collectorLocationPrimaryText: { color: COLORS.white, fontSize: 12, fontWeight: '900' },
   collectorLocationSecondary: { minHeight: 40, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12, borderRadius: 13, backgroundColor: COLORS.white },
   collectorLocationSecondaryText: { color: COLORS.purpleDark, fontSize: 12, fontWeight: '900' },
+  retentionQualificationCard: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 13, borderRadius: 18, borderWidth: 1, borderColor: '#D8D0FF', backgroundColor: '#F8F5FF' },
+  retentionQualificationIcon: { width: 34, height: 34, alignItems: 'center', justifyContent: 'center', borderRadius: 12, backgroundColor: '#EAE4FF' },
+  retentionQualificationCopy: { flex: 1 },
+  retentionQualificationTitle: { color: COLORS.ink, fontSize: 12, fontWeight: '900' },
+  retentionQualificationText: { marginTop: 2, color: COLORS.muted, fontSize: 11, lineHeight: 16, fontWeight: '700' },
   collectorRankRow: { minHeight: 70 },
   collectorTopRank: { borderColor: '#E8D39D', backgroundColor: '#FFFCF3' },
   collectorRankNumber: { width: 31, alignItems: 'center' },

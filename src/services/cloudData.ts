@@ -2,6 +2,8 @@ import type {
   AnalyticsData,
   CardStudyEvent,
   DefinitionVariant,
+  GameAttempt,
+  GameType,
   QuizAnswer,
   QuizAttempt,
   QuizProgress,
@@ -116,13 +118,14 @@ export type UserLearningData = {
   quizProgress: QuizProgress | null;
   analytics: AnalyticsData;
   reminderSettings: ReminderSettings | null;
+  dailyLearningGoal?: number;
 };
 
 export async function fetchUserLearningData(
   userId: string,
   context?: CloudRequestContext,
 ): Promise<UserLearningData> {
-  const [wordsResult, quizResult, reviewsResult, reminderResult] =
+  const [wordsResult, quizResult, reviewsResult, reminderResult, dailyGoalResult] =
     await Promise.all([
       fetchCloudWords(userId),
       supabase
@@ -142,6 +145,7 @@ export async function fetchUserLearningData(
         .select('enabled,hour,minute')
         .eq('user_id', userId)
         .maybeSingle(),
+      supabase.rpc('community_get_daily_learning_goal'),
     ]);
 
   const firstError =
@@ -173,9 +177,12 @@ export async function fetchUserLearningData(
   const fetchedQuizHistory = ((quizResult.data ?? []) as unknown as QuizAttemptRow[]).map(
     mapQuizAttemptRow,
   );
+  const gameHistory = fetchedQuizHistory
+    .filter(isGameAttempt)
+    .map(mapGameAttempt);
   const incompleteOmegaTests = fetchedQuizHistory.filter(isIncompleteOmegaTestAttempt);
   const quizHistory = fetchedQuizHistory.filter(
-    (attempt) => !isIncompleteOmegaTestAttempt(attempt),
+    (attempt) => !isIncompleteOmegaTestAttempt(attempt) && !isGameAttempt(attempt),
   );
   const cardHistory = ((reviewsResult.data ?? []) as unknown as CardReviewRow[]).map(
     mapCardReviewRow,
@@ -195,11 +202,15 @@ export async function fetchUserLearningData(
     analytics: {
       quizHistory,
       cardHistory,
+      gameHistory,
       omegaTestHistory: incompleteOmegaTests,
     },
     reminderSettings: reminderResult.data
       ? mapReminderSettingsRow(reminderResult.data as ReminderSettingsRow)
       : null,
+    ...(typeof dailyGoalResult.data === 'number' && Number.isFinite(dailyGoalResult.data)
+      ? { dailyLearningGoal: Math.max(1, Math.min(50, Math.round(dailyGoalResult.data))) }
+      : {}),
   };
 }
 
@@ -219,7 +230,11 @@ export async function seedUserLearningData({
   );
 
   await Promise.all([
-    ...[...analytics.quizHistory, ...(analytics.omegaTestHistory ?? [])].map((attempt) =>
+    ...[
+      ...analytics.quizHistory,
+      ...(analytics.omegaTestHistory ?? []),
+      ...(analytics.gameHistory ?? []),
+    ].map((attempt) =>
       saveCloudQuizAttempt(userId, attempt),
     ),
     ...analytics.cardHistory.map((event) => saveCloudCardReview(userId, event)),
@@ -350,10 +365,11 @@ export async function saveCloudWordReviews(
 
 export async function saveCloudQuizAttempt(
   userId: string,
-  attempt: QuizAttempt,
+  attempt: QuizAttempt | GameAttempt,
   context?: CloudRequestContext,
 ) {
-  const { error } = await supabase.from('quiz_attempts').insert({
+  const payload = {
+    ...(isUuid(attempt.id) ? { id: attempt.id } : {}),
     user_id: userId,
     quiz_date: attempt.date,
     score: attempt.score,
@@ -361,7 +377,10 @@ export async function saveCloudQuizAttempt(
     duration_seconds: attempt.durationSeconds,
     answers: attempt.answers,
     completed_at: attempt.completedAt,
-  });
+  };
+  const { error } = isUuid(attempt.id)
+    ? await supabase.from('quiz_attempts').upsert(payload, { onConflict: 'id', ignoreDuplicates: true })
+    : await supabase.from('quiz_attempts').insert(payload);
 
   if (error) {
     throw getQueryError('quiz_attempts', error);
@@ -538,6 +557,36 @@ function mapQuizAttemptRow(row: QuizAttemptRow): QuizAttempt {
     answers,
     completedAt: row.completed_at,
     completed: !answers.some((answer) => answer.attemptStatus === 'incomplete'),
+  };
+}
+
+function isGameAttempt(attempt: QuizAttempt) {
+  return attempt.answers.some((answer) => Boolean(answer.gameType));
+}
+
+function mapGameAttempt(attempt: QuizAttempt): GameAttempt {
+  const firstGameAnswer = attempt.answers.find((answer) => answer.gameType);
+  const gameType = firstGameAnswer?.gameType as GameType;
+  const gameKey = firstGameAnswer?.gameKey ?? `${attempt.date}:${gameType}:${attempt.id}`;
+  return {
+    id: attempt.id,
+    date: attempt.date,
+    gameType,
+    gameKey,
+    score: attempt.score,
+    total: attempt.total,
+    durationSeconds: attempt.durationSeconds,
+    answers: attempt.answers.map((answer) => ({
+      wordId: answer.wordId,
+      wordTerm: answer.wordTerm,
+      correct: answer.correct,
+      answeredAt: answer.answeredAt,
+      responseTimeSeconds: answer.responseTimeSeconds,
+      gameType: answer.gameType,
+      gameKey: answer.gameKey,
+    })),
+    completedAt: attempt.completedAt,
+    completed: attempt.completed,
   };
 }
 
@@ -915,6 +964,20 @@ function parseQuizAnswers(value: unknown): QuizAnswer[] {
             : undefined;
         const isAttemptMarker =
           'isAttemptMarker' in answer && answer.isAttemptMarker === true;
+        const gameType =
+          'gameType' in answer &&
+          (answer.gameType === 'speed-match' ||
+            answer.gameType === 'fill-gap' ||
+            answer.gameType === 'word-connections' ||
+            answer.gameType === 'crossword' ||
+            answer.gameType === 'word-scramble' ||
+            answer.gameType === 'rapid-fire')
+            ? answer.gameType
+            : undefined;
+        const gameKey =
+          'gameKey' in answer && typeof answer.gameKey === 'string'
+            ? answer.gameKey.trim() || undefined
+            : undefined;
 
         return {
           wordId: answer.wordId,
@@ -929,6 +992,8 @@ function parseQuizAnswers(value: unknown): QuizAnswer[] {
           sessionMode,
           attemptStatus,
           isAttemptMarker,
+          gameType,
+          gameKey,
         };
       }
 

@@ -131,6 +131,40 @@ export function getCompleteFlashcardDefinition(
   return cleanedSimpleDefinition;
 }
 
+/**
+ * The post-answer Lock It In card should add a fresh cue instead of repeating
+ * the definition the learner just used. Prefer a vetted alternate phrasing,
+ * then the other saved definition, and finally a quoted example when no
+ * alternate wording is available.
+ */
+export function getAlternateLearningExplanation(
+  word: Pick<Word, 'definition' | 'simpleDefinition' | 'definitionVariants' | 'example'>,
+) {
+  const primary = getCompleteFlashcardDefinition(
+    word.definition,
+    word.simpleDefinition,
+  );
+  const candidates = [
+    ...(word.definitionVariants ?? []).map((variant) => variant.text),
+    word.definition,
+    word.simpleDefinition,
+  ]
+    .map((candidate) => cleanDefinitionText(candidate ?? ''))
+    .filter((candidate) => candidate.length >= 12 && candidate.length <= 180)
+    .filter((candidate) => !definitionsMatch(candidate, primary));
+
+  if (candidates.length > 0) {
+    return candidates[0];
+  }
+
+  const example = cleanDefinitionText(word.example ?? '');
+  if (example.length >= 12 && example.length <= 240) {
+    return `“${example.replace(/^“|”$/g, '')}”`;
+  }
+
+  return primary;
+}
+
 function simplifyDefinitionText(value: string) {
   const simpleText = [
     [/^used to describe\s+/i, ''],

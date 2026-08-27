@@ -14,6 +14,7 @@ export const DEFAULT_REMINDER: ReminderSettings = {
 export const EMPTY_ANALYTICS: AnalyticsData = {
   quizHistory: [],
   cardHistory: [],
+  gameHistory: [],
 };
 
 export const STARTER_WORDS: Word[] = [

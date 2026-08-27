@@ -6,6 +6,7 @@ export type CommunityPeriod = 'daily' | 'weekly' | 'all_time';
 export type CommunityLevel = 'Novice' | 'Apprentice' | 'Journeyman' | 'Adept' | 'Mage' | 'Master' | 'Grandmaster';
 export type WordCollectorPeriod = 'week' | 'month' | 'all_time';
 export type WordCollectorAudience = 'all' | 'nearby' | 'state' | 'global';
+export type CompetitiveMetric = 'collectors' | 'retention' | 'streaks';
 export type CommunityTierSummary = {
   level: CommunityLevel;
   count: number;
@@ -53,6 +54,11 @@ export type WordCollectorEntry = {
   avatarPath: string | null;
   wordCount: number;
   isMe: boolean;
+  metricValue?: number;
+  reviewCount?: number;
+  retentionPercent?: number;
+  retentionScore?: number;
+  streakDays?: number;
 };
 export type WordCollectorContext = {
   eligible: boolean;
@@ -60,7 +66,17 @@ export type WordCollectorContext = {
   rank: number | null;
   wordCount: number;
   totalUsers: number;
+  metric?: CompetitiveMetric;
+  metricValue?: number | null;
+  reviewCount?: number;
+  retentionPercent?: number;
+  retentionScore?: number | null;
+  streakDays?: number;
+  qualified?: boolean;
+  reviewsToQualify?: number;
+  locationLabel?: string;
 };
+export type CompetitiveMetricContext = WordCollectorContext & { metric: CompetitiveMetric };
 export type WordCollectorLocationPermission = 'granted' | 'denied' | 'undetermined';
 export type WordCollectorLocationResult = 'ready' | 'denied' | 'unavailable';
 export type CommunityConnection = {
@@ -102,7 +118,7 @@ function messageFor(error: unknown) {
   if (message.includes('avatar_not_uploaded')) return 'Your photo uploaded, but could not be verified. Please try again.';
   if (message.includes('invalid_avatar_path')) return 'Your photo could not be prepared. Please choose it again.';
   if (message.includes('community_profile_required')) return 'Create your Connect profile before adding a picture.';
-  if (message.includes('collector_location_required')) return 'Nearby and State rankings need approximate location access.';
+  if (message.includes('collector_location_required')) return 'Nearby, State, and Country rankings need approximate location access.';
   return 'Community is temporarily unavailable. Please try again.';
 }
 
@@ -148,6 +164,15 @@ function normalizeWordCollectorContext(value: unknown): WordCollectorContext {
     rank: finiteNumber(record?.rank),
     wordCount: finiteNumber(record?.wordCount, 0) ?? 0,
     totalUsers: finiteNumber(record?.totalUsers, 0) ?? 0,
+    metric: record?.metric === 'retention' || record?.metric === 'streaks' ? record.metric : 'collectors',
+    metricValue: finiteNumber(record?.metricValue),
+    reviewCount: finiteNumber(record?.reviewCount, 0) ?? 0,
+    retentionPercent: finiteNumber(record?.retentionPercent, 0) ?? 0,
+    retentionScore: finiteNumber(record?.retentionScore),
+    streakDays: finiteNumber(record?.streakDays, 0) ?? 0,
+    qualified: record?.qualified !== false,
+    reviewsToQualify: finiteNumber(record?.reviewsToQualify, 0) ?? 0,
+    locationLabel: typeof record?.locationLabel === 'string' ? record.locationLabel : undefined,
   };
 }
 
@@ -167,6 +192,11 @@ function normalizeWordCollectorEntries(value: unknown): WordCollectorEntry[] {
       avatarPath: typeof record?.avatarPath === 'string' ? record.avatarPath : null,
       wordCount,
       isMe: record?.isMe === true,
+      metricValue: finiteNumber(record?.metricValue) ?? undefined,
+      reviewCount: finiteNumber(record?.reviewCount) ?? undefined,
+      retentionPercent: finiteNumber(record?.retentionPercent) ?? undefined,
+      retentionScore: finiteNumber(record?.retentionScore) ?? undefined,
+      streakDays: finiteNumber(record?.streakDays) ?? undefined,
     }];
   });
 }
@@ -227,6 +257,70 @@ export async function getWordCollectorsMyRank(
   return normalizeWordCollectorEntries(data);
 }
 
+export async function getCompetitiveMetricContext(
+  metric: CompetitiveMetric,
+  period: WordCollectorPeriod,
+  audience: WordCollectorAudience,
+): Promise<CompetitiveMetricContext> {
+  const data = await rpc<unknown>('community_competitive_metric_context', {
+    p_metric: metric,
+    p_period: period,
+    p_scope: audience,
+  });
+  return {
+    ...normalizeWordCollectorContext(data),
+    metric,
+  };
+}
+
+export async function setCommunityDailyLearningGoal(
+  goal: number,
+  effectiveDate: string,
+) {
+  let timeZone = 'UTC';
+  try {
+    timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  } catch {
+    // UTC keeps the server calculation safe if a platform omits timezone data.
+  }
+  await rpc<void>('community_set_daily_learning_goal', {
+    p_goal: Math.max(1, Math.min(50, Math.round(goal))),
+    p_effective_date: effectiveDate,
+    p_time_zone: timeZone,
+  });
+}
+
+export async function getCompetitiveMetricLeaderboard(
+  metric: CompetitiveMetric,
+  period: WordCollectorPeriod,
+  audience: WordCollectorAudience,
+  limit: number,
+  offset: number,
+) {
+  const data = await rpc<unknown>('community_competitive_metric_leaderboard', {
+    p_metric: metric,
+    p_period: period,
+    p_scope: audience,
+    p_limit: limit,
+    p_offset: offset,
+  });
+  return normalizeWordCollectorEntries(data);
+}
+
+export async function getCompetitiveMetricMyRank(
+  metric: CompetitiveMetric,
+  period: WordCollectorPeriod,
+  audience: WordCollectorAudience,
+) {
+  const data = await rpc<unknown>('community_competitive_metric_my_rank', {
+    p_metric: metric,
+    p_period: period,
+    p_scope: audience,
+    p_radius: 3,
+  });
+  return normalizeWordCollectorEntries(data);
+}
+
 export async function getWordCollectorLocationPermission(): Promise<WordCollectorLocationPermission> {
   // Keeping this module dynamic guarantees that optional location support never
   // participates in app startup. It is checked only after a learner taps the
@@ -275,8 +369,10 @@ async function updateWordCollectorLocation(
   // neighbourhood. This key never leaves the private region table.
   const areaKey = `area-${Math.floor((latitude + 90) / 2)}-${Math.floor((longitude + 180) / 2)}`;
   let stateKey: string | null = null;
+  let countryKey: string | null = null;
   try {
     const [place] = await Location.reverseGeocodeAsync({ latitude, longitude });
+    countryKey = collectorCountryKey(place?.isoCountryCode);
     stateKey = collectorStateKey(place?.isoCountryCode, place?.region);
   } catch {
     // Nearby still works with the coarse grid if a platform geocoder has no
@@ -286,6 +382,7 @@ async function updateWordCollectorLocation(
   await rpc<void>('word_collectors_set_my_location', {
     p_area_key: areaKey,
     p_state_key: stateKey,
+    p_country_key: countryKey,
   });
   return 'ready';
 }
@@ -296,6 +393,10 @@ function collectorStateKey(country: string | null | undefined, region: string | 
   return normalizedCountry && normalizedRegion
     ? `${normalizedCountry}-${normalizedRegion}`.slice(0, 96)
     : null;
+}
+
+function collectorCountryKey(country: string | null | undefined) {
+  return normalizeCollectorRegionPart(country);
 }
 
 function normalizeCollectorRegionPart(value: string | null | undefined) {

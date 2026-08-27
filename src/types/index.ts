@@ -36,6 +36,14 @@ export type QuizSessionMode =
   | 'mastery-test'
   | 'omega-test';
 
+export type GameType =
+  | 'speed-match'
+  | 'fill-gap'
+  | 'word-connections'
+  | 'crossword'
+  | 'word-scramble'
+  | 'rapid-fire';
+
 export type QuizPreferences = {
   enabled: boolean;
   difficulty: QuizDifficultyPreference;
@@ -223,6 +231,29 @@ export type QuizAnswer = {
   attemptStatus?: 'incomplete';
   /** Allows a zero-question Omega exit to retain its session metadata safely. */
   isAttemptMarker?: boolean;
+  /** Game metadata is kept on the shared persisted attempt shape for cloud XP. */
+  gameType?: GameType;
+  gameKey?: string;
+};
+
+export type GameAnswer = Pick<
+  QuizAnswer,
+  'wordId' | 'wordTerm' | 'correct' | 'answeredAt' | 'responseTimeSeconds' | 'gameType' | 'gameKey'
+>;
+
+export type GameAttempt = {
+  id: string;
+  date: string;
+  gameType: GameType;
+  gameKey: string;
+  score: number;
+  total: number;
+  durationSeconds: number;
+  answers: GameAnswer[];
+  completedAt: string;
+  /** Locally calculated display value; the server independently recalculates XP. */
+  xpEarned?: number;
+  completed?: boolean;
 };
 
 export type QuizRecallPaceSignal =
@@ -291,6 +322,7 @@ export type CardStudyEvent = {
 export type AnalyticsData = {
   quizHistory: QuizAttempt[];
   cardHistory: CardStudyEvent[];
+  gameHistory?: GameAttempt[];
   /** Incomplete Omega Tests are shown in Omega stats only. */
   omegaTestHistory?: QuizAttempt[];
 };

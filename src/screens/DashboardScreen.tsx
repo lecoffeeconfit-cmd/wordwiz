@@ -2,19 +2,19 @@ import { Ionicons } from '@expo/vector-icons';
 import { Canvas as SkiaCanvas, Circle as SkiaCircle, Group as SkiaGroup, Path as SkiaPath, Skia, vec } from '@shopify/react-native-skia';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { LayoutChangeEvent } from 'react-native';
-import { ActivityIndicator, Alert, Animated, Easing, FlatList, Image, Modal, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, Animated, Easing, FlatList, Image, Modal, PanResponder, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { COLORS } from '../constants/theme';
 import type { AnalyticsData, LegalPage, QuizAnswer, QuizDifficultyPreference, QuizPreferences, QuizProgress, QuizQuestion, QuizQuestionMode, ReminderSettings, SortMode, TimeBasedLearningSettings, Word } from '../types';
 import type { QuizFeedbackSummary } from '../utils';
 import type { AuthUser } from '../types';
 import type { PausedQuizSession } from './QuizScreen';
 import { styles } from '../styles';
-import { DEFAULT_TIME_BASED_LEARNING_SETTINGS, MASTERY_LEVELS, buildAchievements, buildQuiz, calculateStreakStats, FLUENT_RECALL_SECONDS, formatReminderTime, formatStudyTime, getDayKey, getDueReviewWords, getHeroProgressColor, getLongTermRetention, getMasteryLevel, getMasteryLevelProgress, getNextMasteryLevel, getOmegaTestAttempts, getOmegaTestStatus, getProgressColor, getProgressPaleColor, getQuizAttemptKind, getQuizFeedbackByWord, getQuizFeedbackSummary, getQuizRecallPaceByQuestionType, getQuizRecallPaceByWord, getQuizResponseSignalSummary, getQuizRetrievalProfile, getRecentDays, getRecentStreakLengths, getStreakMessage, getStreakMilestone, getStreakWeek, getWordLearningSignalScores, getWordMastery, getWordMasteryCategory, getWordMasteryCategoryForWord, getWordMasteryProgress, isCompletedOmegaTestAttempt, normalizeQuestionTypePreferences, normalizeTimeBasedLearningSettings, shuffle } from '../utils';
+import { DEFAULT_TIME_BASED_LEARNING_SETTINGS, MASTERY_LEVELS, buildAchievements, buildQuiz, calculateStreakStats, FLUENT_RECALL_SECONDS, formatReminderTime, formatStudyTime, getCompetitiveRetention, getDailyLearningProgress, getDayKey, getDueReviewWords, getHeroProgressColor, getLearningSessionCount, getLongTermRetention, getMasteryLevel, getMasteryLevelProgress, getNextMasteryLevel, getOmegaTestAttempts, getOmegaTestStatus, getProgressColor, getProgressPaleColor, getQuizAttemptKind, getQuizFeedbackByWord, getQuizFeedbackSummary, getQuizRecallPaceByQuestionType, getQuizRecallPaceByWord, getQuizResponseSignalSummary, getQuizRetrievalProfile, getRecentDays, getRecentStreakLengths, getStreakMessage, getStreakMilestone, getStreakWeek, getTotalLearningSeconds, getWordLearningSignalScores, getWordMastery, getWordMasteryCategory, getWordMasteryCategoryForWord, getWordMasteryProgress, isCompletedOmegaTestAttempt, normalizeQuestionTypePreferences, normalizeTimeBasedLearningSettings, shuffle } from '../utils';
 import { CompactPagination, DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, ProgressFill, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 import { LessonProgressRing } from '../components/dashboard/LessonProgressRing';
-import { CommunityGuidelinesModal } from '../modals';
+import { CommunityGuidelinesModal, GoldenTicketInfoModal } from '../modals';
 import { useSubscription } from '../subscription/SubscriptionProvider';
-import { type StatsSectionInteraction, validatePassword } from '../services';
+import { getCompetitiveMetricContext, type CompetitiveMetric, type CompetitiveMetricContext, type StatsSectionInteraction, validatePassword } from '../services';
 
 const EXPANDED_LIST_PAGE_SIZE = 8;
 const FEEDBACK_BY_WORD_PAGE_SIZE = 6;
@@ -35,6 +35,21 @@ const QUIZ_ACCURACY_RING_SIZE = 116;
 const QUIZ_ACCURACY_RING_STROKE = 14;
 const QUIZ_ACCURACY_RING_RADIUS = (QUIZ_ACCURACY_RING_SIZE - QUIZ_ACCURACY_RING_STROKE) / 2;
 type DashboardDetailKind = 'study-time' | 'quizzes' | 'missed' | 'streak';
+type DashboardInitialSection = 'achievements';
+
+function competitiveRankLabel(context: CompetitiveMetricContext | undefined) {
+  if (!context?.eligible) return 'Set up Connect to compare';
+  if (context.metric === 'retention' && !context.qualified) {
+    return `Complete ${context.reviewsToQualify ?? 40} more reviews to qualify`;
+  }
+  if (context.metric === 'streaks' && !context.qualified) {
+    return 'Complete today’s goal to qualify';
+  }
+  if (!context.rank || !context.totalUsers) return 'Building your ranking';
+  const place = context.locationLabel ?? 'Global';
+  if (context.rank <= 3) return `#${context.rank} in ${place}`;
+  return `Top ${Math.max(1, Math.ceil((context.rank / context.totalUsers) * 100))}% in ${place}`;
+}
 const QUIZ_DIFFICULTY_OPTIONS: {
   id: QuizDifficultyPreference;
   label: string;
@@ -164,6 +179,8 @@ const QUESTION_MIX_PRESETS: {
 ];
 
 export function DashboardScreen({
+  initialSection,
+  onInitialSectionFocused,
   words,
   analytics,
   pausedOmegaSession,
@@ -172,7 +189,7 @@ export function DashboardScreen({
   quizPreferences,
   currentUser,
   reminderSettings,
-  dailyQuizGoal,
+  dailyLearningGoal,
   refreshTokens,
   onReviewDue,
   onStudyFlaggedCards,
@@ -181,7 +198,7 @@ export function DashboardScreen({
   onToggleWordFocus,
   onToggleWordReviewNext,
   onUpdateReminder,
-  onUpdateDailyQuizGoal,
+  onUpdateDailyLearningGoal,
   onTimedLearningChange,
   onTimeBasedLearningSettingsChange,
   onQuizPreferencesChange,
@@ -192,10 +209,14 @@ export function DashboardScreen({
   isAdmin = false,
   onOpenAdmin,
   onOpenOnboardingGuide,
+  onOpenWidgets,
   onOpenPlus,
   onOpenFeedback,
+  onOpenCompetitiveRanking,
   onTrackStatsSectionInteraction,
 }: {
+  initialSection?: DashboardInitialSection | null;
+  onInitialSectionFocused?: () => void;
   words: Word[];
   analytics: AnalyticsData;
   pausedOmegaSession?: PausedQuizSession | null;
@@ -204,7 +225,7 @@ export function DashboardScreen({
   quizPreferences: QuizPreferences;
   currentUser: AuthUser | null;
   reminderSettings: ReminderSettings;
-  dailyQuizGoal: number;
+  dailyLearningGoal: number;
   refreshTokens: number;
   onReviewDue: (priorityWordIds?: string[]) => void;
   onStudyFlaggedCards: () => void;
@@ -213,7 +234,7 @@ export function DashboardScreen({
   onToggleWordFocus: (wordId: string) => void;
   onToggleWordReviewNext: (wordId: string) => void;
   onUpdateReminder: (settings: ReminderSettings) => void;
-  onUpdateDailyQuizGoal: (goal: number) => void;
+  onUpdateDailyLearningGoal: (goal: number) => void;
   onTimedLearningChange: (enabled: boolean) => void;
   onTimeBasedLearningSettingsChange: (settings: TimeBasedLearningSettings) => void;
   onQuizPreferencesChange: (preferences: QuizPreferences) => void;
@@ -224,10 +245,14 @@ export function DashboardScreen({
   isAdmin?: boolean;
   onOpenAdmin?: () => void;
   onOpenOnboardingGuide: () => void;
+  onOpenWidgets: () => void;
   onOpenPlus: () => void;
   onOpenFeedback: () => void;
+  onOpenCompetitiveRanking: (metric: CompetitiveMetric) => void;
   onTrackStatsSectionInteraction: (section: StatsSectionInteraction) => void;
 }) {
+  const dashboardScrollRef = useRef<ScrollView>(null);
+  const hasFocusedInitialSection = useRef(false);
   const subscription = useSubscription();
   const [isPasswordEditorOpen, setIsPasswordEditorOpen] = useState(false);
   const [dashboardDetail, setDashboardDetail] = useState<DashboardDetailKind | null>(null);
@@ -267,6 +292,7 @@ export function DashboardScreen({
         ? 'Checking usage'
         : `${subscription.monthlyWordsAdded} of ${subscription.monthlyWordLimit} added`;
   const [achievementsExpanded, setAchievementsExpanded] = useState(false);
+  const [goldenTicketInfoOpen, setGoldenTicketInfoOpen] = useState(false);
   const [achievementPage, setAchievementPage] = useState(0);
   const [masteryExpanded, setMasteryExpanded] = useState(false);
   const [masteryOverviewWordId, setMasteryOverviewWordId] = useState<string | null>(null);
@@ -295,6 +321,54 @@ export function DashboardScreen({
   const [isTimeSettingsExpanded, setIsTimeSettingsExpanded] = useState(false);
   const [isQuestionMixExpanded, setIsQuestionMixExpanded] = useState(false);
   const [expandedQuestionType, setExpandedQuestionType] = useState<QuizQuestionMode | null>(null);
+  const [competitiveRankContexts, setCompetitiveRankContexts] = useState<Partial<Record<CompetitiveMetric, CompetitiveMetricContext>>>({});
+
+  useEffect(() => {
+    let active = true;
+    if (!currentUser) {
+      setCompetitiveRankContexts({});
+      return () => { active = false; };
+    }
+
+    const loadCompetitiveRankTeasers = async () => {
+      const load = async (metric: CompetitiveMetric) => {
+        try {
+          const stateContext = await getCompetitiveMetricContext(metric, 'all_time', 'state');
+          if (stateContext.hasLocation) return stateContext;
+          return await getCompetitiveMetricContext(metric, 'all_time', 'global');
+        } catch {
+          return null;
+        }
+      };
+      const [retention, streaks] = await Promise.all([load('retention'), load('streaks')]);
+      if (!active) return;
+      setCompetitiveRankContexts({
+        ...(retention ? { retention } : {}),
+        ...(streaks ? { streaks } : {}),
+      });
+    };
+
+    void loadCompetitiveRankTeasers();
+    return () => { active = false; };
+  }, [currentUser?.id]);
+
+  useEffect(() => {
+    hasFocusedInitialSection.current = false;
+  }, [initialSection]);
+
+  const handleAchievementsLayout = useCallback((event: LayoutChangeEvent) => {
+    if (initialSection !== 'achievements' || hasFocusedInitialSection.current) return;
+
+    hasFocusedInitialSection.current = true;
+    const sectionY = event.nativeEvent.layout.y;
+    requestAnimationFrame(() => {
+      dashboardScrollRef.current?.scrollTo({
+        y: Math.max(0, sectionY - 12),
+        animated: true,
+      });
+      onInitialSectionFocused?.();
+    });
+  }, [initialSection, onInitialSectionFocused]);
   const normalizedTimeSettings = normalizeTimeBasedLearningSettings(
     timeBasedLearningSettings,
   );
@@ -572,15 +646,7 @@ export function DashboardScreen({
     timeBasedLearningSettings,
   );
   const longTermRetention = getLongTermRetention(words, analytics);
-  const totalSeconds =
-    analytics.quizHistory.reduce(
-      (total, attempt) => total + attempt.durationSeconds,
-      0,
-    ) +
-    analytics.cardHistory.reduce(
-      (total, event) => total + event.durationSeconds,
-      0,
-    );
+  const totalSeconds = getTotalLearningSeconds(analytics);
   const mastery = words
     .map((word) => ({
       word,
@@ -745,6 +811,9 @@ export function DashboardScreen({
     const dayQuizAttempts = analytics.quizHistory.filter(
       (attempt) => attempt.date === day.key,
     );
+    const dayGameAttempts = (analytics.gameHistory ?? []).filter(
+      (attempt) => attempt.date === day.key,
+    );
     const dayTestAttempts = dayQuizAttempts.filter((attempt) =>
       attempt.answers.some(
         (answer) =>
@@ -760,20 +829,21 @@ export function DashboardScreen({
       dayQuizAttempts.reduce(
         (total, attempt) => total + attempt.durationSeconds,
         0,
+      ) +
+      dayGameAttempts.reduce(
+        (total, attempt) => total + attempt.durationSeconds,
+        0,
       );
-    const quizQuestionCount = dayQuizAttempts.reduce(
-      (total, attempt) => total + attempt.total,
-      0,
-    );
-    const activityCount = dayCardEvents.length + quizQuestionCount;
+    const dailyLearningProgress = getDailyLearningProgress(analytics, day.key);
 
     return {
       ...day,
-      activityCount,
+      activityCount: dailyLearningProgress.completed,
       quizCount: dayQuizAttempts.length - dayTestAttempts.length,
       testCount: dayTestAttempts.length,
+      gameCount: dayGameAttempts.length,
       studySeconds,
-      dailyProgress: getDailyActivityProgress(studySeconds, dayQuizAttempts.length),
+      dailyProgress: getDailyActivityProgress(studySeconds, dailyLearningProgress.completed),
     };
   });
   const weeklyActivityTotal = weeklyActivity.reduce(
@@ -795,11 +865,23 @@ export function DashboardScreen({
         (currentQuizTrendPage + 1) * QUIZ_TREND_PAGE_SIZE,
       )
     : recentQuizzes;
-  const streakStats = calculateStreakStats(analytics);
+  const streakStats = calculateStreakStats(analytics, dailyLearningGoal);
   const streak = streakStats.current;
+  const todayLearningProgress = getDailyLearningProgress(analytics);
+  const completedActivitiesToday = Math.min(todayLearningProgress.completed, dailyLearningGoal);
   const recentStreakLengths = getRecentStreakLengths(streakStats);
   const streakMilestone = getStreakMilestone(streakStats);
   const streakWeek = getStreakWeek(streakStats);
+  const competitiveRetention = getCompetitiveRetention(analytics);
+  const retentionRankContext = competitiveRankContexts.retention;
+  const streakRankContext = competitiveRankContexts.streaks;
+  const retentionPercent = retentionRankContext?.retentionPercent ?? competitiveRetention.percent;
+  const retentionReviewCount = retentionRankContext?.reviewCount ?? competitiveRetention.reviewCount;
+  const retentionRememberedCount = retentionRankContext
+    ? Math.round((retentionPercent / 100) * retentionReviewCount)
+    : competitiveRetention.rememberedCount;
+  const retentionQualified = retentionRankContext?.qualified ?? competitiveRetention.qualified;
+  const retentionReviewsToQualify = retentionRankContext?.reviewsToQualify ?? competitiveRetention.reviewsToQualify;
   const achievements = buildAchievements({ words, analytics, streakStats });
   const achievementPageCount = Math.max(
     1,
@@ -1099,6 +1181,7 @@ export function DashboardScreen({
   return (
     <>
     <ScrollView
+      ref={dashboardScrollRef}
       style={styles.screen}
       contentContainerStyle={styles.dashboardContent}
       showsVerticalScrollIndicator={false}
@@ -1198,6 +1281,50 @@ export function DashboardScreen({
         recent={recentStreakLengths}
         onPress={() => setDashboardDetail('streak')}
       />
+      </View>
+
+      <View style={styles.competitiveMetricGrid}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="View Retention ranking"
+          accessibilityHint="Opens the full Retention leaderboard"
+          onPress={() => onOpenCompetitiveRanking('retention')}
+          style={({ pressed }) => [styles.competitiveMetricCard, styles.competitiveRetentionCard, pressed && styles.competitiveMetricCardPressed]}
+        >
+          <View style={[styles.competitiveMetricIcon, styles.competitiveRetentionIcon]}>
+            <Ionicons name="bulb-outline" size={19} color={COLORS.purpleDark} />
+          </View>
+          <Text style={styles.competitiveMetricLabel}>RETENTION</Text>
+          <Text style={styles.competitiveMetricValue}>{retentionReviewCount ? `${retentionPercent}%` : '—'}</Text>
+          <Text numberOfLines={2} style={styles.competitiveMetricDetail}>
+            {retentionQualified
+              ? `${retentionRememberedCount} of ${retentionReviewCount} reviews remembered`
+              : retentionReviewCount
+                ? `${retentionReviewsToQualify} more reviews to qualify`
+                : 'Complete your first review to begin'}
+          </Text>
+          <Text numberOfLines={1} style={styles.competitiveMetricRank}>{competitiveRankLabel(retentionRankContext)}</Text>
+          <Ionicons name="arrow-forward-circle-outline" size={18} color={COLORS.purpleDark} style={styles.competitiveMetricChevron} />
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="View Learning Streaks ranking"
+          accessibilityHint="Opens the full Learning Streaks leaderboard"
+          onPress={() => onOpenCompetitiveRanking('streaks')}
+          style={({ pressed }) => [styles.competitiveMetricCard, styles.competitiveStreakCard, pressed && styles.competitiveMetricCardPressed]}
+        >
+          <View style={[styles.competitiveMetricIcon, styles.competitiveStreakIcon]}>
+            <Ionicons name="flame-outline" size={19} color="#C88612" />
+          </View>
+          <Text style={styles.competitiveMetricLabel}>LEARNING STREAK</Text>
+          <Text style={styles.competitiveMetricValue}>{streak}d</Text>
+          <Text numberOfLines={1} style={styles.competitiveMetricDetail}>Current active streak</Text>
+          <Text numberOfLines={1} style={styles.competitiveMetricSubdetail}>
+            Daily goal: {completedActivitiesToday}/{dailyLearningGoal} activities today
+          </Text>
+          <Text numberOfLines={1} style={styles.competitiveMetricRank}>{competitiveRankLabel(streakRankContext)}</Text>
+          <Ionicons name="arrow-forward-circle-outline" size={18} color="#C88612" style={styles.competitiveMetricChevron} />
+        </Pressable>
       </View>
 
       <View style={styles.streakReminderGrid}>
@@ -1971,10 +2098,11 @@ export function DashboardScreen({
         ) : null}
       </DashboardSection>
 
-      <DashboardSection
-        title="ACHIEVEMENTS"
-        badge={`${unlockedAchievements}/${achievements.length} unlocked`}
-      >
+      <View onLayout={handleAchievementsLayout}>
+        <DashboardSection
+          title="ACHIEVEMENTS"
+          badge={`${unlockedAchievements}/${achievements.length} unlocked`}
+        >
         <View style={styles.achievementRewardBar}>
           <View style={styles.achievementRewardItem}>
             <View style={[styles.achievementRewardIcon, styles.achievementRewardIconPoints]}>
@@ -1988,7 +2116,16 @@ export function DashboardScreen({
             </View>
           </View>
           <View style={styles.achievementRewardDivider} />
-          <View style={styles.achievementTokenVault}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Learn about Golden Tickets"
+            accessibilityHint="Explains what Golden Tickets are used for and how to earn them"
+            onPress={() => setGoldenTicketInfoOpen(true)}
+            style={({ pressed }) => [
+              styles.achievementTokenVault,
+              pressed && styles.achievementTokenVaultPressed,
+            ]}
+          >
             <Animated.View
               pointerEvents="none"
               style={[
@@ -2042,7 +2179,7 @@ export function DashboardScreen({
                 {refreshTokens > 0 ? 'UNLOCK DAILY + OMEGA' : 'EARN FROM ACHIEVEMENTS'}
               </Text>
             </View>
-          </View>
+          </Pressable>
         </View>
         <Pressable
           accessibilityRole="button"
@@ -2198,7 +2335,8 @@ export function DashboardScreen({
             ) : null}
           </>
         ) : null}
-      </DashboardSection>
+        </DashboardSection>
+      </View>
 
 
 
@@ -2238,7 +2376,7 @@ export function DashboardScreen({
             </Pressable>
           </View>
           <Text style={styles.reminderText}>
-            Smart reminders adapt to your streak, quiz goal, new words, and
+            Smart reminders adapt to your streak, learning goal, new words, and
             reviews.
           </Text>
           <View style={styles.reminderCustomTime}>
@@ -2308,49 +2446,50 @@ export function DashboardScreen({
           </View>
           <View style={styles.dailyGoalCopy}>
             <Text style={styles.dailyGoalLabel}>DAILY PRACTICE</Text>
-            <Text style={styles.dailyGoalTitle}>Quiz goal</Text>
+            <Text style={styles.dailyGoalTitle}>Learning goal</Text>
           </View>
           <View style={styles.dailyGoalBadge}>
             <Text style={styles.dailyGoalBadgeText}>
-              {dailyQuizGoal} {dailyQuizGoal === 1 ? 'quiz' : 'quizzes'}
+              {dailyLearningGoal} {dailyLearningGoal === 1 ? 'activity' : 'activities'}
             </Text>
           </View>
         </View>
         <Text style={styles.dailyGoalText}>
-          Choose how many quizzes you want to complete each day. Every finished
-          quiz counts, even when it has fewer than ten questions.
+          Choose how many learning activities you want to complete each day.
+          Quizzes, games, crosswords, and active flashcard reviews can all
+          count toward one shared goal and your Learning Streak.
         </Text>
         <View style={styles.dailyGoalStepper}>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Decrease daily quiz goal"
-            accessibilityState={{ disabled: dailyQuizGoal <= 1 }}
-            disabled={dailyQuizGoal <= 1}
-            onPress={() => onUpdateDailyQuizGoal(dailyQuizGoal - 1)}
+            accessibilityLabel="Decrease daily learning goal"
+            accessibilityState={{ disabled: dailyLearningGoal <= 1 }}
+            disabled={dailyLearningGoal <= 1}
+            onPress={() => onUpdateDailyLearningGoal(dailyLearningGoal - 1)}
             style={({ pressed }) => [
               styles.dailyGoalStepButton,
-              dailyQuizGoal <= 1 && styles.dailyGoalStepButtonDisabled,
-              pressed && dailyQuizGoal > 1 && styles.pressed,
+              dailyLearningGoal <= 1 && styles.dailyGoalStepButtonDisabled,
+              pressed && dailyLearningGoal > 1 && styles.pressed,
             ]}
           >
             <Ionicons name="remove" size={21} color={COLORS.teal} />
           </Pressable>
           <View style={styles.dailyGoalValue}>
-            <Text style={styles.dailyGoalNumber}>{dailyQuizGoal}</Text>
+            <Text style={styles.dailyGoalNumber}>{dailyLearningGoal}</Text>
             <Text style={styles.dailyGoalUnit}>
-              {dailyQuizGoal === 1 ? 'QUIZ PER DAY' : 'QUIZZES PER DAY'}
+              {dailyLearningGoal === 1 ? 'ACTIVITY PER DAY' : 'ACTIVITIES PER DAY'}
             </Text>
           </View>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Increase daily quiz goal"
-            accessibilityState={{ disabled: dailyQuizGoal >= 5 }}
-            disabled={dailyQuizGoal >= 5}
-            onPress={() => onUpdateDailyQuizGoal(dailyQuizGoal + 1)}
+            accessibilityLabel="Increase daily learning goal"
+            accessibilityState={{ disabled: dailyLearningGoal >= 50 }}
+            disabled={dailyLearningGoal >= 50}
+            onPress={() => onUpdateDailyLearningGoal(dailyLearningGoal + 1)}
             style={({ pressed }) => [
               styles.dailyGoalStepButton,
-              dailyQuizGoal >= 5 && styles.dailyGoalStepButtonDisabled,
-              pressed && dailyQuizGoal < 5 && styles.pressed,
+              dailyLearningGoal >= 50 && styles.dailyGoalStepButtonDisabled,
+              pressed && dailyLearningGoal < 50 && styles.pressed,
             ]}
           >
             <Ionicons name="add" size={21} color={COLORS.teal} />
@@ -3299,6 +3438,26 @@ export function DashboardScreen({
         </Pressable>
       </View>
 
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Open WordWiz widget setup"
+        accessibilityHint="Choose what WordWiz shows on your Home Screen or Lock Screen"
+        onPress={onOpenWidgets}
+        style={({ pressed }) => [styles.dashboardWidgetsCard, pressed && styles.pressed]}
+      >
+        <View style={styles.dashboardWidgetsIcon}>
+          <Ionicons name="grid-outline" size={21} color={COLORS.purpleDark} />
+        </View>
+        <View style={styles.dashboardWidgetsCopy}>
+          <Text style={styles.dashboardWidgetsLabel}>QUICK ACCESS</Text>
+          <Text style={styles.dashboardWidgetsTitle}>Widgets</Text>
+          <Text style={styles.dashboardWidgetsText}>
+            Manage your WordWiz Home Screen and Lock Screen shortcuts.
+          </Text>
+        </View>
+        <Ionicons name="chevron-forward" size={19} color={COLORS.purpleDark} />
+      </Pressable>
+
       {isAdmin && onOpenAdmin ? (
         <Pressable
           accessibilityRole="button"
@@ -3478,7 +3637,13 @@ export function DashboardScreen({
       detail={dashboardDetail}
       analytics={analytics}
       words={words}
+      dailyLearningGoal={dailyLearningGoal}
       onDismiss={() => setDashboardDetail(null)}
+    />
+    <GoldenTicketInfoModal
+      visible={goldenTicketInfoOpen}
+      refreshTokens={refreshTokens}
+      onClose={() => setGoldenTicketInfoOpen(false)}
     />
     <CommunityGuidelinesModal visible={communityGuidelinesOpen} onClose={() => setCommunityGuidelinesOpen(false)} />
     </>
@@ -3534,16 +3699,80 @@ function DashboardDetailModal({
   detail,
   analytics,
   words,
+  dailyLearningGoal,
   onDismiss,
 }: {
   detail: DashboardDetailKind | null;
   analytics: AnalyticsData;
   words: Word[];
+  dailyLearningGoal: number;
   onDismiss: () => void;
 }) {
+  const sheetTranslateY = useRef(new Animated.Value(0)).current;
+  const sheetHeight = useRef(0);
+
+  useEffect(() => {
+    if (!detail) return;
+    sheetTranslateY.stopAnimation();
+    sheetTranslateY.setValue(0);
+  }, [detail, sheetTranslateY]);
+
+  const closeDetail = useCallback(() => {
+    sheetTranslateY.stopAnimation();
+    Animated.timing(sheetTranslateY, {
+      toValue: Math.max(sheetHeight.current, 800),
+      duration: 180,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (finished) onDismiss();
+    });
+  }, [onDismiss, sheetTranslateY]);
+
+  const panResponder = useMemo(() => PanResponder.create({
+    onMoveShouldSetPanResponder: (_, gestureState) => (
+      gestureState.dy > 8 && Math.abs(gestureState.dy) > Math.abs(gestureState.dx)
+    ),
+    onPanResponderGrant: () => {
+      sheetTranslateY.stopAnimation();
+    },
+    onPanResponderMove: (_, gestureState) => {
+      sheetTranslateY.setValue(Math.max(0, gestureState.dy));
+    },
+    onPanResponderRelease: (_, gestureState) => {
+      const shouldClose = gestureState.dy > 120 || gestureState.vy > 0.8;
+      if (shouldClose) {
+        closeDetail();
+        return;
+      }
+
+      Animated.spring(sheetTranslateY, {
+        toValue: 0,
+        damping: 22,
+        stiffness: 260,
+        mass: 0.8,
+        useNativeDriver: true,
+      }).start();
+    },
+    onPanResponderTerminate: () => {
+      Animated.spring(sheetTranslateY, {
+        toValue: 0,
+        damping: 22,
+        stiffness: 260,
+        mass: 0.8,
+        useNativeDriver: true,
+      }).start();
+    },
+    onPanResponderTerminationRequest: () => false,
+  }), [closeDetail, sheetTranslateY]);
+
   if (!detail) return null;
 
   const quizStudySeconds = analytics.quizHistory.reduce(
+    (total, attempt) => total + attempt.durationSeconds,
+    0,
+  );
+  const gameStudySeconds = (analytics.gameHistory ?? []).reduce(
     (total, attempt) => total + attempt.durationSeconds,
     0,
   );
@@ -3551,7 +3780,7 @@ function DashboardDetailModal({
     (total, event) => total + event.durationSeconds,
     0,
   );
-  const totalStudySeconds = quizStudySeconds + cardStudySeconds;
+  const totalStudySeconds = getTotalLearningSeconds(analytics);
   const totalQuizQuestions = analytics.quizHistory.reduce(
     (total, attempt) => total + attempt.total,
     0,
@@ -3564,7 +3793,7 @@ function DashboardDetailModal({
   const accuracy = totalQuizQuestions
     ? Math.round((totalCorrect / totalQuizQuestions) * 100)
     : 0;
-  const streakStats = calculateStreakStats(analytics);
+  const streakStats = calculateStreakStats(analytics, dailyLearningGoal);
   const streakMilestone = getStreakMilestone(streakStats);
   const streakWeek = getStreakWeek(streakStats);
   const recentStreakLengths = getRecentStreakLengths(streakStats);
@@ -3575,7 +3804,10 @@ function DashboardDetailModal({
     const quizSeconds = analytics.quizHistory
       .filter((attempt) => attempt.date === day.key)
       .reduce((total, attempt) => total + attempt.durationSeconds, 0);
-    return { ...day, seconds: cardSeconds + quizSeconds };
+    const gameSeconds = (analytics.gameHistory ?? [])
+      .filter((attempt) => attempt.date === day.key)
+      .reduce((total, attempt) => total + attempt.durationSeconds, 0);
+    return { ...day, seconds: cardSeconds + quizSeconds + gameSeconds };
   });
   const maxRecentStudySeconds = Math.max(
     1,
@@ -3589,10 +3821,19 @@ function DashboardDetailModal({
       const quizMisses = analytics.quizHistory
         .flatMap((attempt) => attempt.answers)
         .filter((answer) => answer.wordId === word.id && !answer.correct).length;
+      const gameMisses = (analytics.gameHistory ?? [])
+        .flatMap((attempt) => attempt.answers)
+        .filter((answer) => answer.wordId === word.id && !answer.correct).length;
       const cardMisses = analytics.cardHistory.filter(
         (event) => event.wordId === word.id && !event.remembered,
       ).length;
-      return { word, quizMisses, cardMisses, totalMisses: quizMisses + cardMisses };
+      return {
+        word,
+        quizMisses,
+        gameMisses,
+        cardMisses,
+        totalMisses: quizMisses + gameMisses + cardMisses,
+      };
     })
     .filter((item) => item.totalMisses > 0)
     .sort(
@@ -3620,7 +3861,7 @@ function DashboardDetailModal({
       eyebrow: 'LEARNING TIME',
       title: 'Study time',
       value: formatStudyTime(totalStudySeconds),
-      subtitle: `${analytics.cardHistory.length + analytics.quizHistory.length} learning sessions recorded`,
+      subtitle: `${getLearningSessionCount(analytics)} learning sessions recorded`,
       icon: 'time-outline',
       color: COLORS.blue,
       background: '#EEF5FF',
@@ -3663,18 +3904,28 @@ function DashboardDetailModal({
     <Modal
       visible
       transparent
-      animationType="slide"
-      onRequestClose={onDismiss}
+      animationType="none"
+      onRequestClose={closeDetail}
       statusBarTranslucent
     >
       <View style={styles.dashboardDetailBackdrop}>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Close learning detail"
-          onPress={onDismiss}
+          onPress={closeDetail}
           style={styles.dashboardDetailDismiss}
         />
-        <View style={styles.dashboardDetailSheet}>
+        <Animated.View
+          {...panResponder.panHandlers}
+          onLayout={(event) => {
+            sheetHeight.current = event.nativeEvent.layout.height;
+          }}
+          style={[
+            styles.dashboardDetailSheet,
+            { transform: [{ translateY: sheetTranslateY }] },
+          ]}
+          accessibilityHint="Swipe down to close"
+        >
           <View style={styles.dashboardDetailHandle} />
           <View style={styles.dashboardDetailHeader}>
             <View>
@@ -3684,7 +3935,7 @@ function DashboardDetailModal({
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Close learning detail"
-              onPress={onDismiss}
+              onPress={closeDetail}
               style={({ pressed }) => [styles.dashboardDetailClose, pressed && styles.pressed]}
             >
               <Ionicons name="close" size={20} color={COLORS.ink} />
@@ -3712,6 +3963,7 @@ function DashboardDetailModal({
                 <View style={styles.dashboardDetailMetricGrid}>
                   <DashboardDetailMetric icon="albums-outline" value={formatStudyTime(cardStudySeconds)} label="FLASHCARDS" color={COLORS.purpleDark} />
                   <DashboardDetailMetric icon="trophy-outline" value={formatStudyTime(quizStudySeconds)} label="QUIZZES" color={COLORS.orange} />
+                  <DashboardDetailMetric icon="game-controller-outline" value={formatStudyTime(gameStudySeconds)} label="GAMES" color={COLORS.purple} />
                   <DashboardDetailMetric icon="calendar-outline" value={formatStudyTime(recentStudyDays.reduce((total, day) => total + day.seconds, 0))} label="LAST 7 DAYS" color={COLORS.blue} />
                 </View>
                 <View style={styles.dashboardDetailCard}>
@@ -3789,7 +4041,7 @@ function DashboardDetailModal({
                   <Text style={styles.dashboardDetailSectionTitle}>Patterns from your answers</Text>
                   {missedWords.length ? (
                     <View style={styles.dashboardDetailList}>
-                      {missedWords.map(({ word, quizMisses, cardMisses, totalMisses }) => (
+                      {missedWords.map(({ word, quizMisses, gameMisses, cardMisses, totalMisses }) => (
                         <View key={word.id} style={styles.dashboardDetailListRow}>
                           <View style={[styles.dashboardDetailListIcon, styles.dashboardDetailListIconMissed]}>
                             <Ionicons name="refresh-outline" size={16} color={COLORS.red} />
@@ -3798,6 +4050,7 @@ function DashboardDetailModal({
                             <Text style={styles.dashboardDetailListTitle}>{word.term}</Text>
                             <Text style={styles.dashboardDetailListText}>
                               {quizMisses ? `${quizMisses} quiz miss${quizMisses === 1 ? '' : 'es'}` : 'No quiz misses'}
+                              {gameMisses ? ` · ${gameMisses} game miss${gameMisses === 1 ? '' : 'es'}` : ''}
                               {cardMisses ? ` · ${cardMisses} card ${cardMisses === 1 ? 'retry' : 'retries'}` : ''}
                             </Text>
                           </View>
@@ -3850,7 +4103,7 @@ function DashboardDetailModal({
               </>
             ) : null}
           </ScrollView>
-        </View>
+        </Animated.View>
       </View>
     </Modal>
   );
@@ -4815,6 +5068,7 @@ function DailyActivityBar({
     activityCount: number;
     quizCount: number;
     testCount: number;
+    gameCount: number;
     studySeconds: number;
     dailyProgress: number;
   };
@@ -4888,7 +5142,9 @@ function DailyActivityBar({
             ? `${day.testCount}t`
             : day.quizCount > 0
               ? `${day.quizCount}q`
-              : ''
+              : day.gameCount > 0
+                ? `${day.gameCount}g`
+                : ''
           : ''}
       </Text>
     </View>

@@ -4,7 +4,7 @@ import { AccessibilityInfo, Animated, FlatList, Image, Pressable, ScrollView, Te
 import { COLORS } from '../constants/theme';
 import type { AnalyticsData, LegalPage, QuizAnswer, QuizProgress, QuizQuestion, ReminderSettings, SortMode, Word } from '../types';
 import { styles } from '../styles';
-import { buildAchievements, buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, getDayKey, getDueReviewWords, getProgressColor, getProgressPaleColor, getRecentDays, getStreakMessage, getStreakMilestone, getStreakWeek, getWordMastery, sortWordsForReview, shuffle } from '../utils';
+import { buildAchievements, buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, getDailyLearningProgress, getDayKey, getDueReviewWords, getProgressColor, getProgressPaleColor, getRecentDays, getStreakMessage, getStreakMilestone, getStreakWeek, getTotalLearningSeconds, getWordMastery, sortWordsForReview, shuffle } from '../utils';
 import { CompactPagination, DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, ProgressFill, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 
 const EXPANDED_REVIEW_WORD_PAGE_SIZE = 8;
@@ -25,7 +25,7 @@ export function HomeScreen({
   words,
   analytics,
   reminderSettings,
-  dailyQuizGoal,
+  dailyLearningGoal,
   onAddWord,
   onStudy,
   onReviewWord,
@@ -33,6 +33,8 @@ export function HomeScreen({
   onQuiz,
   onOmegaTest,
   onStats,
+  onOpenAchievements,
+  onOpenWidgets,
   onOpenPlus,
   complimentaryAccess,
   showFreePlanNotice,
@@ -40,7 +42,7 @@ export function HomeScreen({
   words: Word[];
   analytics: AnalyticsData;
   reminderSettings: ReminderSettings;
-  dailyQuizGoal: number;
+  dailyLearningGoal: number;
   onAddWord: () => void;
   onStudy: () => void;
   onReviewWord: (wordId: string) => void;
@@ -48,6 +50,8 @@ export function HomeScreen({
   onQuiz: () => void;
   onOmegaTest: () => void;
   onStats: () => void;
+  onOpenAchievements: () => void;
+  onOpenWidgets: () => void;
   onOpenPlus: () => void;
   complimentaryAccess: { daysRemaining: number; expiresAt: string | null } | null;
   showFreePlanNotice: boolean;
@@ -97,16 +101,8 @@ export function HomeScreen({
   const accuracy = totalQuizQuestions
     ? Math.round((totalCorrect / totalQuizQuestions) * 100)
     : 0;
-  const totalSeconds =
-    analytics.quizHistory.reduce(
-      (total, attempt) => total + attempt.durationSeconds,
-      0,
-    ) +
-    analytics.cardHistory.reduce(
-      (total, event) => total + event.durationSeconds,
-      0,
-    );
-  const streakStats = calculateStreakStats(analytics);
+  const totalSeconds = getTotalLearningSeconds(analytics);
+  const streakStats = calculateStreakStats(analytics, dailyLearningGoal);
   const streakMilestone = getStreakMilestone(streakStats);
   const achievements = buildAchievements({ words, analytics, streakStats });
   const achievementItems = [
@@ -121,8 +117,11 @@ export function HomeScreen({
       ),
     [achievementItems],
   );
-  const todayQuizzes = getTodayQuizCount(analytics);
-  const completedDailyQuizzes = Math.min(todayQuizzes, dailyQuizGoal);
+  const todayLearningProgress = getDailyLearningProgress(analytics);
+  const completedDailyLearning = Math.min(
+    todayLearningProgress.completed,
+    dailyLearningGoal,
+  );
   const dueReviewCount = getDueReviewWords(words, analytics).length;
   const reviewWords = sortWordsForReview(words, analytics);
   const reviewWordPageCount = Math.max(
@@ -422,18 +421,18 @@ export function HomeScreen({
           </View>
           <View
             accessible
-            accessibilityLabel={`${completedDailyQuizzes} of ${dailyQuizGoal} daily quizzes completed`}
+            accessibilityLabel={`${completedDailyLearning} of ${dailyLearningGoal} activities completed toward today's learning goal`}
             style={styles.overviewDailyGoal}
           >
             <View style={styles.overviewDailyGoalCopy}>
-              <Text maxFontSizeMultiplier={1.15} style={styles.overviewDailyGoalLabel}>DAILY GOAL</Text>
+              <Text maxFontSizeMultiplier={1.15} style={styles.overviewDailyGoalLabel}>DAILY LEARNING GOAL</Text>
               <Text maxFontSizeMultiplier={1.15} style={styles.overviewDailyGoalCaption}>
-                {dailyQuizGoal === 1 ? 'Quiz' : 'Quizzes'}
+                {dailyLearningGoal === 1 ? 'Activity completed' : 'Activities completed'}
               </Text>
             </View>
             <View style={styles.overviewProgressRing}>
               <Text maxFontSizeMultiplier={1.15} style={styles.overviewProgressText}>
-                {completedDailyQuizzes}/{dailyQuizGoal}
+                {completedDailyLearning}/{dailyLearningGoal}
               </Text>
             </View>
           </View>
@@ -479,6 +478,9 @@ export function HomeScreen({
           <Text style={styles.homeSkillSubtitle}>
             Mastery is about {overallMastery}% across your saved words.
           </Text>
+          <Text style={styles.homeSkillGoal}>
+            Daily goal: {Math.min(todayLearningProgress.completed, dailyLearningGoal)}/{dailyLearningGoal} activities completed today.
+          </Text>
           <Text style={[styles.homeSkillBadge, { color: getProgressColor(overallMastery) }]}>
             {streakMilestone.title}
           </Text>
@@ -497,13 +499,55 @@ export function HomeScreen({
         </Pressable>
       </View>
 
-      <View style={styles.homeAchievementsCard}>
-        <View style={styles.homeAchievementsHeader}>
-          <Text style={styles.homeSectionTitle}>Latest achievements</Text>
-          <Text style={styles.homeAchievementsCount}>
-            {achievements.filter((achievement) => achievement.unlocked).length}/{achievements.length}
-          </Text>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Open WordWiz widget setup"
+        accessibilityHint="Choose what WordWiz shows on your Home Screen or Lock Screen"
+        onPress={onOpenWidgets}
+        style={({ pressed }) => [styles.homeWidgetsCard, pressed && styles.pressed]}
+      >
+        <View style={styles.homeWidgetsIcon}>
+          <Ionicons name="grid-outline" size={22} color={COLORS.purpleDark} />
         </View>
+        <View style={styles.homeWidgetsCopy}>
+          <Text style={styles.homeWidgetsLabel}>STAY IN THE FLOW</Text>
+          <Text style={styles.homeWidgetsTitle}>Widgets</Text>
+          <Text style={styles.homeWidgetsSubtitle}>
+            Keep a word, your streak, or today’s reviews close by.
+          </Text>
+          <View style={styles.homeWidgetsTags}>
+            <View style={styles.homeWidgetsTag}>
+              <Ionicons name="sunny-outline" size={11} color={COLORS.orange} />
+              <Text style={styles.homeWidgetsTagText}>Word of the Day</Text>
+            </View>
+            <View style={styles.homeWidgetsTag}>
+              <Ionicons name="flame-outline" size={11} color="#D68C27" />
+              <Text style={styles.homeWidgetsTagText}>Streak</Text>
+            </View>
+          </View>
+        </View>
+        <View style={styles.homeWidgetsAction}>
+          <Ionicons name="arrow-forward" size={17} color={COLORS.purpleDark} />
+        </View>
+      </Pressable>
+
+      <View style={styles.homeAchievementsCard}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="View all achievements"
+          accessibilityHint="Opens the Achievements area in Stats"
+          onPress={onOpenAchievements}
+          style={({ pressed }) => [styles.homeAchievementsHeader, pressed && styles.pressed]}
+        >
+          <Text style={styles.homeSectionTitle}>Latest achievements</Text>
+          <View style={styles.homeAchievementsHeaderAction}>
+            <Text style={styles.homeAchievementsCount}>
+              {achievements.filter((achievement) => achievement.unlocked).length}/{achievements.length}
+            </Text>
+            <Text style={styles.homeAchievementsViewAll}>View all</Text>
+            <Ionicons name="chevron-forward" size={15} color={COLORS.purpleDark} />
+          </View>
+        </Pressable>
         <View
           onLayout={(event) => {
             setAchievementCarouselWidth(event.nativeEvent.layout.width);
@@ -541,9 +585,9 @@ export function HomeScreen({
                   }
 
                   return (
-                    <View
+                    <Pressable
                       key={achievement.id}
-                      style={[
+                      style={({ pressed }) => [
                         styles.homeAchievementChip,
                         {
                           backgroundColor: achievement.unlocked
@@ -552,7 +596,11 @@ export function HomeScreen({
                                 (achievement.progress / achievement.target) * 100,
                               ),
                         },
+                        pressed && styles.pressed,
                       ]}
+                      accessibilityRole="button"
+                      accessibilityLabel={`${achievement.title}. View all achievements`}
+                      onPress={onOpenAchievements}
                     >
                       <Ionicons
                         name={achievement.icon}
@@ -575,7 +623,7 @@ export function HomeScreen({
                           {achievement.progress}/{achievement.target}
                         </Text>
                       )}
-                    </View>
+                    </Pressable>
                   );
                 })}
               </View>
@@ -799,7 +847,9 @@ function HomeQuickActions({
             <Ionicons name={displayedAction.icon} size={16} color="#4B45C7" />
           </View>
           <Text
+            adjustsFontSizeToFit
             maxFontSizeMultiplier={1.15}
+            minimumFontScale={0.82}
             numberOfLines={1}
             style={styles.homeFloatingSecondaryText}
           >

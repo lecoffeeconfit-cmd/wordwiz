@@ -2,10 +2,10 @@ import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Animated, FlatList, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { COLORS } from '../constants/theme';
-import type { AnalyticsData, LegalPage, QuizAnswer, QuizDifficultyPreference, QuizPreferences, QuizProgress, QuizQuestion, QuizSessionMode, ReminderSettings, ReviewRating, SortMode, TimeBasedLearningSettings, Word } from '../types';
+import type { AnalyticsData, GameAttempt, LegalPage, QuizAnswer, QuizDifficultyPreference, QuizPreferences, QuizProgress, QuizQuestion, QuizSessionMode, ReminderSettings, ReviewRating, SortMode, TimeBasedLearningSettings, Word } from '../types';
 import { styles } from '../styles';
-import { buildCategoryPracticeQuiz, buildOmegaTestAsync, buildQuiz, calculateStreakStats, evaluateQuizAnswer, formatReminderTime, formatStudyTime, formatWordFlaggedDate, getCompleteFlashcardDefinition, getDayKey, getEffectiveQuizDifficulty, getMistakeReviewWordIds, getNewStudyWords, getOmegaTestStatus, getQuizQuestionPace, getQuizRecallPaceSignal, getRecentDays, getStreakMessage, getStreakWeek, getStudySets, getTimedLearningBonusXp, getTypedRecallHint, getWordMastery, getWordMasteryCategoryForWord, isPersonalLibraryWord, NEW_STUDY_GROUP, normalizeTimeBasedLearningSettings, shuffle, TIMED_LEARNING_SECONDS, WORD_MASTERY_CATEGORIES, type WordMasteryCategoryId } from '../utils';
-import { DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, ProgressFill, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
+import { buildCategoryPracticeQuiz, buildOmegaTestAsync, buildQuiz, calculateStreakStats, evaluateQuizAnswer, formatReminderTime, formatStudyTime, formatWordFlaggedDate, getAlternateLearningExplanation, getDayKey, getEffectiveQuizDifficulty, getMistakeReviewWordIds, getNewStudyWords, getOmegaTestStatus, getQuizQuestionPace, getQuizRecallPaceSignal, getRecentDays, getStreakMessage, getStreakWeek, getStudySets, getTimedLearningBonusXp, getTypedRecallHint, getWordMastery, getWordMasteryCategoryForWord, isPersonalLibraryWord, NEW_STUDY_GROUP, normalizeTimeBasedLearningSettings, shuffle, TIMED_LEARNING_SECONDS, WORD_MASTERY_CATEGORIES, type WordMasteryCategoryId } from '../utils';
+import { DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, ProgressFill, QuizComplete, QuizFact, QuizGames, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 import { reportError, trackEvent } from '../services';
 
 const REVEALED_TYPED_ANSWER = '__wordwiz-revealed-answer__';
@@ -167,6 +167,7 @@ export function QuizScreen({
   refreshTokens,
   onUseRefreshToken,
   onComplete,
+  onGameComplete,
   onAbandonOmegaTest,
   onToggleFlag,
   onOpenStudySetBuilder,
@@ -192,6 +193,7 @@ export function QuizScreen({
     answers: QuizAnswer[],
     options?: { isDailyScoreRetry?: boolean },
   ) => Promise<void>;
+  onGameComplete: (attempt: GameAttempt) => void | Promise<void>;
   onAbandonOmegaTest: (
     score: number,
     total: number,
@@ -205,6 +207,7 @@ export function QuizScreen({
   onDiscardPausedSession: () => void;
   onRegisterPauseHandler: (handler: (() => void) | null) => void;
 }) {
+  const [quizArea, setQuizArea] = useState<'quizzes' | 'games'>('quizzes');
   const [quiz, setQuiz] = useState<QuizQuestion[]>([]);
   const [questionIndex, setQuestionIndex] = useState(0);
   const [selected, setSelected] = useState<string | null>(null);
@@ -1608,6 +1611,45 @@ export function QuizScreen({
     </>
   );
 
+  const quizAreaTabs = (
+    <View style={styles.quizAreaTabs} accessibilityRole="tablist">
+      {(['quizzes', 'games'] as const).map((area) => {
+        const active = quizArea === area;
+        return (
+          <Pressable
+            key={area}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: active }}
+            accessibilityLabel={area === 'quizzes' ? 'Quizzes' : 'Games'}
+            onPress={() => setQuizArea(area)}
+            style={({ pressed }) => [
+              styles.quizAreaTab,
+              active && styles.quizAreaTabActive,
+              pressed && styles.pressed,
+            ]}
+          >
+            <Ionicons
+              name={area === 'quizzes' ? 'help-circle-outline' : 'game-controller-outline'}
+              size={17}
+              color={active ? COLORS.purple : COLORS.muted}
+            />
+            <Text style={[styles.quizAreaTabText, active && styles.quizAreaTabTextActive]}>
+              {area === 'quizzes' ? 'Quizzes' : 'Games'}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+
+  const gamesView = (
+    <QuizGames
+      words={words}
+      gameHistory={analytics.gameHistory ?? []}
+      onComplete={onGameComplete}
+    />
+  );
+
   if (pausedSession && quiz.length === 0) {
     const questionNumber = pausedSession.questionIndex + 1;
     const totalQuestions = pausedSession.quiz.length;
@@ -1623,46 +1665,49 @@ export function QuizScreen({
           subtitle="Your place is saved. Pick up exactly where you left off."
           meta={quizDifficultyBadge}
         />
-        <View style={styles.quizPausedCard}>
-          <View pointerEvents="none" style={styles.quizPausedGlow} />
-          <View style={styles.quizPausedIcon}>
-            <Ionicons name="pause" size={29} color={COLORS.white} />
-          </View>
-          <Text style={styles.quizPausedTitle}>{pausedLabel} paused</Text>
-          <Text style={styles.quizPausedText}>
-            Your timer is paused too, so there is no rush.
-          </Text>
-          <View style={styles.quizPausedProgress}>
-            <Text style={styles.quizPausedProgressText}>
-              QUESTION {questionNumber} OF {totalQuestions} · {pausedSession.score} CORRECT
+        {quizAreaTabs}
+        {quizArea === 'games' ? gamesView : (
+          <View style={styles.quizPausedCard}>
+            <View pointerEvents="none" style={styles.quizPausedGlow} />
+            <View style={styles.quizPausedIcon}>
+              <Ionicons name="pause" size={29} color={COLORS.white} />
+            </View>
+            <Text style={styles.quizPausedTitle}>{pausedLabel} paused</Text>
+            <Text style={styles.quizPausedText}>
+              Your timer is paused too, so there is no rush.
             </Text>
+            <View style={styles.quizPausedProgress}>
+              <Text style={styles.quizPausedProgressText}>
+                QUESTION {questionNumber} OF {totalQuestions} · {pausedSession.score} CORRECT
+              </Text>
+            </View>
+            <View style={styles.quizPausedActions}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Resume paused quiz"
+                onPress={resumePausedQuiz}
+                style={({ pressed }) => [
+                  styles.primaryButton,
+                  pressed && styles.primaryButtonPressed,
+                ]}
+              >
+                <Text style={styles.primaryButtonText}>RESUME QUIZ</Text>
+                <Ionicons name="play" size={18} color={COLORS.white} />
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="End paused quiz"
+                onPress={confirmEndPausedQuiz}
+                style={({ pressed }) => [
+                  styles.quizPausedDiscardButton,
+                  pressed && styles.pressed,
+                ]}
+              >
+                <Text style={styles.quizPausedDiscardText}>END THIS ATTEMPT</Text>
+              </Pressable>
+            </View>
           </View>
-          <View style={styles.quizPausedActions}>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Resume paused quiz"
-              onPress={resumePausedQuiz}
-              style={({ pressed }) => [
-                styles.primaryButton,
-                pressed && styles.primaryButtonPressed,
-              ]}
-            >
-              <Text style={styles.primaryButtonText}>RESUME QUIZ</Text>
-              <Ionicons name="play" size={18} color={COLORS.white} />
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="End paused quiz"
-              onPress={confirmEndPausedQuiz}
-              style={({ pressed }) => [
-                styles.quizPausedDiscardButton,
-                pressed && styles.pressed,
-              ]}
-            >
-              <Text style={styles.quizPausedDiscardText}>END THIS ATTEMPT</Text>
-            </Pressable>
-          </View>
-        </View>
+        )}
       </ScrollView>
     );
   }
@@ -1675,13 +1720,16 @@ export function QuizScreen({
           title={dailyRefreshActive ? 'Improve today’s score' : 'Today’s practice'}
           subtitle={
             dailyRefreshActive
-              ? 'A fresh Daily Quiz is ready. Daily and regular quizzes add to your streak.'
+              ? 'A fresh Daily Quiz is ready. Correct words move your Daily Learning Goal forward.'
               : 'A little review each day makes words stick.'
           }
           meta={quizDifficultyBadge}
         />
-        <QuizComplete score={progress.score} total={progress.total} />
-        <View style={styles.quizRefreshTokenCard}>
+        {quizAreaTabs}
+        {quizArea === 'games' ? gamesView : (
+          <>
+            <QuizComplete score={progress.score} total={progress.total} />
+            <View style={styles.quizRefreshTokenCard}>
           <View pointerEvents="none" style={styles.quizRefreshTokenGlow} />
           {refreshTokens > 0 ? (
             <View pointerEvents="none" style={styles.quizRefreshTokenMagicSparkle}>
@@ -1701,7 +1749,7 @@ export function QuizScreen({
               <Text style={styles.quizRefreshTokenTitle}>Improve today’s score</Text>
               <Text style={styles.quizRefreshTokenText}>
                 {refreshTokens > 0
-                  ? 'Use a token for one more Daily Quiz. Daily and regular quizzes add to your streak.'
+                  ? 'Use a token for one more Daily Quiz. Correct words move your Daily Learning Goal forward.'
                   : 'Complete achievements to earn a refresh token.'}
               </Text>
             </View>
@@ -1723,24 +1771,26 @@ export function QuizScreen({
               <Text style={styles.quizRefreshTokenButtonText}>RETRY DAILY SCORE</Text>
             </Pressable>
           ) : null}
-        </View>
-        {quizSetupControls}
-        {omegaTestCard}
-        {quizScopeControls}
-        <Pressable
-          disabled={!quizPreferences.enabled || activeQuizWords.length === 0}
-          onPress={() => startQuiz()}
-          style={({ pressed }) => [
-            styles.quizPracticeButton,
-            (!quizPreferences.enabled || activeQuizWords.length === 0) && styles.practiceButtonDisabled,
-            pressed && styles.pressed,
-          ]}
-        >
-          <Ionicons name="refresh" size={18} color={COLORS.blue} />
-          <Text style={styles.quizPracticeButtonText}>
-            PRACTICE {getQuizSessionLabel(sessionMode).toUpperCase()} QUIZ
-          </Text>
-        </Pressable>
+            </View>
+            {quizSetupControls}
+            {omegaTestCard}
+            {quizScopeControls}
+            <Pressable
+              disabled={!quizPreferences.enabled || activeQuizWords.length === 0}
+              onPress={() => startQuiz()}
+              style={({ pressed }) => [
+                styles.quizPracticeButton,
+                (!quizPreferences.enabled || activeQuizWords.length === 0) && styles.practiceButtonDisabled,
+                pressed && styles.pressed,
+              ]}
+            >
+              <Ionicons name="refresh" size={18} color={COLORS.blue} />
+              <Text style={styles.quizPracticeButtonText}>
+                PRACTICE {getQuizSessionLabel(sessionMode).toUpperCase()} QUIZ
+              </Text>
+            </Pressable>
+          </>
+        )}
       </ScrollView>
     );
   }
@@ -1754,10 +1804,13 @@ export function QuizScreen({
           subtitle="A little review each day makes words stick."
           meta={quizDifficultyBadge}
         />
-        <EmptyPractice
-          icon="help-circle-outline"
-          label="Add a word to unlock your daily quiz."
-        />
+        {quizAreaTabs}
+        {quizArea === 'games' ? gamesView : (
+          <EmptyPractice
+            icon="help-circle-outline"
+            label="Add a word to unlock your daily quiz."
+          />
+        )}
       </ScrollView>
     );
   }
@@ -1771,36 +1824,41 @@ export function QuizScreen({
           subtitle="You gave your brain a useful workout."
           meta={quizDifficultyBadge}
         />
-        <QuizComplete
-          score={finishedScore}
-          total={finishedTotal ?? quiz.length}
-          mode={isPracticeRound ? 'practice' : 'daily'}
-          bonusXp={finishedBonusXp}
-        />
-        <Text style={styles.quizPracticeNote}>
+        {quizAreaTabs}
+        {quizArea === 'games' ? gamesView : (
+          <>
+            <QuizComplete
+              score={finishedScore}
+              total={finishedTotal ?? quiz.length}
+              mode={isPracticeRound ? 'practice' : 'daily'}
+              bonusXp={finishedBonusXp}
+            />
+            <Text style={styles.quizPracticeNote}>
           {finishedWasDailyRetry
             ? 'Your best daily score is safely kept on record.'
             : isPracticeRound
             ? 'Practice did not replace today’s daily score. It still counted as real review.'
             : 'Practice again anytime to keep learning.'}
-        </Text>
-        {quizSetupControls}
-        {omegaTestCard}
-        {quizScopeControls}
-        <Pressable
-          disabled={!quizPreferences.enabled || activeQuizWords.length === 0}
-          onPress={() => startQuiz()}
-          style={({ pressed }) => [
-            styles.quizPracticeButton,
-            (!quizPreferences.enabled || activeQuizWords.length === 0) && styles.practiceButtonDisabled,
-            pressed && styles.pressed,
-          ]}
-        >
-          <Ionicons name="refresh" size={18} color={COLORS.blue} />
-          <Text style={styles.quizPracticeButtonText}>
-            PRACTICE ANOTHER QUIZ
-          </Text>
-        </Pressable>
+            </Text>
+            {quizSetupControls}
+            {omegaTestCard}
+            {quizScopeControls}
+            <Pressable
+              disabled={!quizPreferences.enabled || activeQuizWords.length === 0}
+              onPress={() => startQuiz()}
+              style={({ pressed }) => [
+                styles.quizPracticeButton,
+                (!quizPreferences.enabled || activeQuizWords.length === 0) && styles.practiceButtonDisabled,
+                pressed && styles.pressed,
+              ]}
+            >
+              <Ionicons name="refresh" size={18} color={COLORS.blue} />
+              <Text style={styles.quizPracticeButtonText}>
+                PRACTICE ANOTHER QUIZ
+              </Text>
+            </Pressable>
+          </>
+        )}
       </ScrollView>
     );
   }
@@ -1814,7 +1872,9 @@ export function QuizScreen({
           subtitle="A little review each day makes words stick."
           meta={quizDifficultyBadge}
         />
-        <View style={styles.quizIntroCard}>
+        {quizAreaTabs}
+        {quizArea === 'games' ? gamesView : (
+          <View style={styles.quizIntroCard}>
           <View style={styles.quizIllustration}>
             <Ionicons name="trophy" size={48} color={COLORS.yellow} />
             <View style={styles.sparkleOne}>
@@ -1905,7 +1965,8 @@ export function QuizScreen({
               <Ionicons name="arrow-forward" size={21} color={COLORS.white} />
             )}
           </Pressable>
-        </View>
+          </View>
+        )}
       </ScrollView>
     );
   }
@@ -1962,10 +2023,7 @@ export function QuizScreen({
       ? getTypedRecallHint(getLiveQuestionWord(question), hintStep)
       : null;
   const questionWord = getLiveQuestionWord(question);
-  const answerDefinition = getCompleteFlashcardDefinition(
-    questionWord.definition,
-    questionWord.simpleDefinition,
-  );
+  const lockInExplanation = getAlternateLearningExplanation(questionWord);
   const allowsHints =
     sessionMode !== 'challenge' &&
     sessionMode !== 'mastery-test' &&
@@ -2405,7 +2463,7 @@ export function QuizScreen({
                 </Text>
                 <Text style={styles.answerMeaningText}>
                   <Text style={styles.answerMeaningWord}>{questionWord.term}</Text>
-                  {' · '}{answerDefinition}
+                  {' · '}{lockInExplanation}
                 </Text>
               </View>
             </View>

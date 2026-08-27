@@ -785,6 +785,67 @@ export type LongTermRetention = {
   percent: number;
 };
 
+/** Minimum evidence needed before a learner appears in the public Retention ranking. */
+export const RETENTION_QUALIFYING_REVIEWS = 40;
+
+export type CompetitiveRetention = {
+  reviewCount: number;
+  rememberedCount: number;
+  percent: number;
+  score: number | null;
+  qualified: boolean;
+  reviewsToQualify: number;
+};
+
+/**
+ * A public-facing retention estimate built from the same review events that
+ * are synced to Supabase. The displayed percentage is familiar accuracy; the
+ * ranking score adds a confidence curve so meaningful review volume matters.
+ */
+export function getCompetitiveRetention(analytics: AnalyticsData): CompetitiveRetention {
+  const cardReviews = analytics.cardHistory.map((event) => event.remembered);
+  const quizAnswers = analytics.quizHistory.flatMap((attempt) =>
+    attempt.answers.map((answer) => answer.correct),
+  );
+  const gameAnswers = (analytics.gameHistory ?? []).flatMap((attempt) =>
+    attempt.answers.map((answer) => answer.correct),
+  );
+  const reviewCount = cardReviews.length + quizAnswers.length + gameAnswers.length;
+  const rememberedCount =
+    cardReviews.filter(Boolean).length +
+    quizAnswers.filter(Boolean).length +
+    gameAnswers.filter(Boolean).length;
+  const percent = reviewCount ? Math.round((rememberedCount / reviewCount) * 100) : 0;
+  const qualified = reviewCount >= RETENTION_QUALIFYING_REVIEWS;
+  const volumeConfidence = Math.min(1, Math.sqrt(reviewCount / 250));
+  const score = qualified
+    ? Math.round(percent * (0.7 + volumeConfidence * 0.3))
+    : null;
+
+  return {
+    reviewCount,
+    rememberedCount,
+    percent,
+    score,
+    qualified,
+    reviewsToQualify: Math.max(0, RETENTION_QUALIFYING_REVIEWS - reviewCount),
+  };
+}
+
+export function getTotalLearningSeconds(analytics: AnalyticsData) {
+  return (
+    analytics.quizHistory.reduce((total, attempt) => total + attempt.durationSeconds, 0) +
+    (analytics.gameHistory ?? []).reduce((total, attempt) => total + attempt.durationSeconds, 0) +
+    analytics.cardHistory.reduce((total, event) => total + event.durationSeconds, 0)
+  );
+}
+
+export function getLearningSessionCount(analytics: AnalyticsData) {
+  return analytics.quizHistory.length +
+    (analytics.gameHistory ?? []).length +
+    analytics.cardHistory.length;
+}
+
 /**
  * Long-term retention is deliberately narrower than mastery or quiz score.
  * A word qualifies only after a learner answers correctly on at least three
@@ -1572,11 +1633,126 @@ export function formatStudyTime(seconds: number) {
   return `${hours}h ${minutes % 60}m`;
 }
 
-export function getActivityDates(analytics: AnalyticsData) {
-  return new Set([
+export type DailyLearningProgress = {
+  date: string;
+  completed: number;
+  quizAnswers: number;
+  gameAnswers: number;
+  cardReviews: number;
+  wordIds: string[];
+};
+
+function isLearningWordId(wordId: string) {
+  return Boolean(wordId) && !wordId.startsWith('__');
+}
+
+function isCompletedLearningActivity(
+  activity: { answers?: Array<{ wordId?: string }>; completed?: boolean },
+) {
+  if (activity.completed === false) return false;
+  const answers = activity.answers ?? [];
+  return answers.some(
+    (answer) => isLearningWordId(answer.wordId ?? ''),
+  );
+}
+
+function isIncompleteLearningAnswer(value: unknown) {
+  return typeof value === 'object' && value !== null && 'attemptStatus' in value
+    && (value as { attemptStatus?: unknown }).attemptStatus === 'incomplete';
+}
+
+function hasIncompleteAnswer(activity: { answers?: Array<unknown> }) {
+  return (activity.answers ?? []).some(isIncompleteLearningAnswer);
+}
+
+/**
+ * Counts completed learning activities on one day across every learning mode.
+ * A completed quiz, game (including the crossword), or active flashcard review
+ * is one activity. Repeating a word in another activity is still meaningful:
+ * the goal measures showing up, not collecting unique answer ids.
+ */
+export function getDailyLearningProgress(
+  analytics: AnalyticsData,
+  dayKey = getDayKey(),
+): DailyLearningProgress {
+  const practicedWordIds = new Set<string>();
+  const recordedActivityIds = new Set<string>();
+  let quizAnswers = 0;
+  let gameAnswers = 0;
+  let cardReviews = 0;
+
+  analytics.quizHistory.forEach((attempt) => {
+    if (
+      attempt.date !== dayKey ||
+      recordedActivityIds.has(attempt.id) ||
+      !isCompletedLearningActivity(attempt) ||
+      hasIncompleteAnswer(attempt)
+    ) return;
+    recordedActivityIds.add(attempt.id);
+    const isGame = attempt.answers.some((answer) => Boolean(answer.gameType));
+    if (isGame) gameAnswers += 1;
+    else quizAnswers += 1;
+    attempt.answers.forEach((answer) => {
+      if (isLearningWordId(answer.wordId) && !isIncompleteLearningAnswer(answer)) {
+        practicedWordIds.add(answer.wordId);
+      }
+    });
+  });
+
+  (analytics.gameHistory ?? []).forEach((attempt) => {
+    if (
+      attempt.date !== dayKey ||
+      recordedActivityIds.has(attempt.id) ||
+      !isCompletedLearningActivity(attempt) ||
+      hasIncompleteAnswer(attempt)
+    ) return;
+    recordedActivityIds.add(attempt.id);
+    gameAnswers += 1;
+    attempt.answers.forEach((answer) => {
+      if (isLearningWordId(answer.wordId) && !isIncompleteLearningAnswer(answer)) {
+        practicedWordIds.add(answer.wordId);
+      }
+    });
+  });
+
+  analytics.cardHistory.forEach((event) => {
+    if (
+      event.date !== dayKey ||
+      recordedActivityIds.has(event.id) ||
+      !isLearningWordId(event.wordId)
+    ) return;
+    recordedActivityIds.add(event.id);
+    practicedWordIds.add(event.wordId);
+    cardReviews += 1;
+  });
+
+  return {
+    date: dayKey,
+    completed: recordedActivityIds.size,
+    quizAnswers,
+    gameAnswers,
+    cardReviews,
+    wordIds: Array.from(practicedWordIds),
+  };
+}
+
+export function getActivityDates(
+  analytics: AnalyticsData,
+  dailyLearningGoal = 1,
+) {
+  const candidateDates = new Set([
     ...analytics.cardHistory.map((event) => event.date),
     ...analytics.quizHistory.map((attempt) => attempt.date),
+    ...(analytics.gameHistory ?? []).map((attempt) => attempt.date),
   ]);
+  const normalizedGoal = Math.max(1, Math.round(dailyLearningGoal));
+
+  return new Set(
+    Array.from(candidateDates).filter(
+      (dayKey) =>
+        getDailyLearningProgress(analytics, dayKey).completed >= normalizedGoal,
+    ),
+  );
 }
 
 export function countBackwardsStreak(activeDates: Set<string>, startDay: string) {
@@ -1589,8 +1765,11 @@ export function countBackwardsStreak(activeDates: Set<string>, startDay: string)
   return streak;
 }
 
-export function calculateStreakStats(analytics: AnalyticsData): StreakStats {
-  const activeDates = getActivityDates(analytics);
+export function calculateStreakStats(
+  analytics: AnalyticsData,
+  dailyLearningGoal = 1,
+): StreakStats {
+  const activeDates = getActivityDates(analytics, dailyLearningGoal);
   const today = getDayKey();
   const yesterday = getPreviousDayKey(today);
   const todayDone = activeDates.has(today);
@@ -1645,8 +1824,8 @@ export function getRecentStreakLengths(stats: StreakStats, count = 3) {
 }
 
 
-export function calculateStreak(analytics: AnalyticsData) {
-  return calculateStreakStats(analytics).current;
+export function calculateStreak(analytics: AnalyticsData, dailyLearningGoal = 1) {
+  return calculateStreakStats(analytics, dailyLearningGoal).current;
 }
 
 export function getStreakWeek(stats: StreakStats) {
@@ -1662,9 +1841,9 @@ export function getStreakMessage(stats: StreakStats) {
     return 'Nice. Your streak is safe for today.';
   }
   if (stats.current > 0) {
-    return 'Review today to keep your streak alive.';
+    return "Complete today's learning goal to keep your streak alive.";
   }
-  return 'Start a new streak with one quick review today.';
+  return "Complete today's learning goal to start a new streak.";
 }
 
 export function getStreakMilestone(stats: StreakStats) {
