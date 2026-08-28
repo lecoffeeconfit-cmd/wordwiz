@@ -261,7 +261,7 @@ function WordWizardLabel({ style }: { style?: StyleProp<TextStyle> }) {
 type LeaderboardPlacement = 'champion' | 'gold' | 'silver' | 'bronze' | null;
 
 function leaderboardPlacementFor(rank: number | null | undefined, level?: CommunityLevel): LeaderboardPlacement {
-  if (rank === 1 && level === 'Grandmaster') return 'champion';
+  if (rank === 1) return 'champion';
   if (rank === 1) return 'gold';
   if (typeof rank === 'number' && rank >= 2 && rank <= 5) return 'gold';
   if (typeof rank === 'number' && rank >= 6 && rank <= 15) return 'silver';
@@ -329,7 +329,7 @@ function CommunityAvatar({
 
 function TierBadge({ level, rank, compact = false, modal = false }: { level: CommunityLevel; rank?: number | null; compact?: boolean; modal?: boolean }) {
   const tier = levelPresentation(level);
-  const isChampion = rank === 1 && level === 'Grandmaster';
+  const isChampion = rank === 1;
   return (
     <View style={[
       community.tierBadge,
@@ -1692,24 +1692,24 @@ export function CommunityScreen({
       <View style={community.myLeaderboardCard}>
         <Text style={community.myLeaderboardEyebrow}>YOUR LEADERBOARD STATUS</Text>
         <View style={[community.rankRow, community.rankRowMe, leaderboardPlacementStyle(context?.rank, context?.level)]}>
-          {context?.rank === 1 && context.level === 'Grandmaster' ? <ChampionRankBackdrop reduceMotion={reduceMotion} /> : null}
+          {context?.rank === 1 ? <ChampionRankBackdrop reduceMotion={reduceMotion} /> : null}
           <MiniLeaderboardCrest
             rank={context?.rank}
             level={context?.level ?? 'Novice'}
             testID="community-your-rank"
           />
-          <View style={context?.rank === 1 && context.level === 'Grandmaster' ? community.rankOneAvatarFrame : undefined}>
+          <View style={context?.rank === 1 ? community.rankOneAvatarFrame : undefined}>
             <CommunityAvatar name={context?.profile?.displayName ?? 'You'} avatarPath={context?.profile?.avatarPath} small />
           </View>
             <View style={community.rankName}>
             <Text numberOfLines={1} style={community.rankNameText}>{context?.profile?.displayName} (you)</Text>
             <View style={community.rankDetailRow}>
-              {context?.rank === 1 && context.level === 'Grandmaster' ? (
+              {context?.rank === 1 ? (
                 <Image source={require('../../assets/splash-icon.png')} style={community.rankWordWizardIcon} />
               ) : (
                 <LevelPresentationIcon level={context?.level ?? 'Novice'} size={12} />
               )}
-              {context?.rank === 1 && context.level === 'Grandmaster' ? (
+              {context?.rank === 1 ? (
                 <WordWizardLabel style={community.rankDetail} />
               ) : (
                 <Text style={[community.rankDetail, { color: levelPresentation(context?.level ?? 'Novice').color }]}>{context?.level ?? 'Novice'}</Text>
@@ -1751,24 +1751,24 @@ export function CommunityScreen({
               onPress={() => setSelectedLeaderboardEntry(entry)}
               style={({ pressed }) => [community.rankRow, index > 0 && community.rankRowAfter, entry.isMe && community.rankRowMe, leaderboardPlacementStyle(entry.rank, entry.level), pressed && community.rankRowPressed]}
             >
-              {entry.rank === 1 && entry.level === 'Grandmaster' ? <ChampionRankBackdrop reduceMotion={reduceMotion} /> : null}
+              {entry.rank === 1 ? <ChampionRankBackdrop reduceMotion={reduceMotion} /> : null}
               <MiniLeaderboardCrest
                 rank={entry.rank}
                 level={entry.level}
                 testID={`community-rank-${entry.rank}`}
               />
-              <View style={entry.rank === 1 && entry.level === 'Grandmaster' ? community.rankOneAvatarFrame : undefined}>
+              <View style={entry.rank === 1 ? community.rankOneAvatarFrame : undefined}>
                 <CommunityAvatar name={entry.displayName} avatarPath={entry.avatarPath} small />
               </View>
               <View style={community.rankName}>
                 <Text numberOfLines={1} style={community.rankNameText}>{entry.displayName}{entry.isMe ? ' (you)' : ''}</Text>
                 <View style={community.rankDetailRow}>
-                  {entry.rank === 1 && entry.level === 'Grandmaster' ? (
+                  {entry.rank === 1 ? (
                     <Image source={require('../../assets/splash-icon.png')} style={community.rankWordWizardIcon} />
                   ) : (
                     <LevelPresentationIcon level={entry.level} size={12} />
                   )}
-                  {entry.rank === 1 && entry.level === 'Grandmaster' ? (
+                  {entry.rank === 1 ? (
                     <WordWizardLabel style={community.rankDetail} />
                   ) : (
                     <Text style={[community.rankDetail, { color: tier.color }]}>{tier.name}</Text>

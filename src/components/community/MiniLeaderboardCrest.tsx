@@ -74,7 +74,7 @@ const CHAMPION_SPARKLES: readonly ChampionSparkle[] = [
 ] as const;
 
 function rankBadgeFor(rank: number | null | undefined, level: CommunityLevel, championVisual: boolean) {
-  if (rank === 1 && (level === 'Grandmaster' || championVisual)) return TOP_THREE[1];
+  if (rank === 1 || championVisual) return TOP_THREE[1];
   if (rank === 1 || rank === 2 || rank === 3) return RANK_TIER_BADGES.gold;
   if (typeof rank === 'number' && rank >= 4 && rank <= 5) return RANK_TIER_BADGES.gold;
   if (typeof rank === 'number' && rank >= 6 && rank <= 15) return RANK_TIER_BADGES.silver;
@@ -388,7 +388,7 @@ export function LeaderboardRankBadge({
   championVisual = false,
 }: LeaderboardRankBadgeProps) {
   const label = accessibilityLabel ?? rankLabel(rank, level);
-  const isChampionVisual = rank === 1 && (level === 'Grandmaster' || championVisual);
+  const isChampionVisual = rank === 1 || championVisual;
   const medal = rankBadgeFor(rank, level, championVisual);
   const isTieredRank = medal !== null;
   const reduceMotion = useReducedMotion();
