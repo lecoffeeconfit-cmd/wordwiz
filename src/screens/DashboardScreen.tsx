@@ -1,15 +1,16 @@
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Canvas as SkiaCanvas, Circle as SkiaCircle, Group as SkiaGroup, Path as SkiaPath, Skia, vec } from '@shopify/react-native-skia';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { LayoutChangeEvent } from 'react-native';
-import { ActivityIndicator, Alert, Animated, Easing, FlatList, Image, Modal, PanResponder, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
-import { COLORS } from '../constants/theme';
-import type { AnalyticsData, LegalPage, QuizAnswer, QuizDifficultyPreference, QuizPreferences, QuizProgress, QuizQuestion, QuizQuestionMode, ReminderSettings, SortMode, TimeBasedLearningSettings, Word } from '../types';
+import { ActivityIndicator, Alert, Animated, Easing, FlatList, Image, Modal, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { COLORS, WORDWIZ_GRADIENT_COLORS } from '../constants/theme';
+import type { AnalyticsData, GamePreferences, GameTimerMode, LegalPage, QuizAnswer, QuizDifficultyPreference, QuizPreferences, QuizProgress, QuizQuestion, QuizQuestionMode, ReminderSettings, SortMode, TimeBasedLearningSettings, Word } from '../types';
 import type { QuizFeedbackSummary } from '../utils';
 import type { AuthUser } from '../types';
 import type { PausedQuizSession } from './QuizScreen';
 import { styles } from '../styles';
-import { DEFAULT_TIME_BASED_LEARNING_SETTINGS, MASTERY_LEVELS, buildAchievements, buildQuiz, calculateStreakStats, FLUENT_RECALL_SECONDS, formatReminderTime, formatStudyTime, getCompetitiveRetention, getDailyLearningProgress, getDayKey, getDueReviewWords, getHeroProgressColor, getLearningSessionCount, getLongTermRetention, getMasteryLevel, getMasteryLevelProgress, getNextMasteryLevel, getOmegaTestAttempts, getOmegaTestStatus, getProgressColor, getProgressPaleColor, getQuizAttemptKind, getQuizFeedbackByWord, getQuizFeedbackSummary, getQuizRecallPaceByQuestionType, getQuizRecallPaceByWord, getQuizResponseSignalSummary, getQuizRetrievalProfile, getRecentDays, getRecentStreakLengths, getStreakMessage, getStreakMilestone, getStreakWeek, getTotalLearningSeconds, getWordLearningSignalScores, getWordMastery, getWordMasteryCategory, getWordMasteryCategoryForWord, getWordMasteryProgress, isCompletedOmegaTestAttempt, normalizeQuestionTypePreferences, normalizeTimeBasedLearningSettings, shuffle } from '../utils';
+import { DEFAULT_TIME_BASED_LEARNING_SETTINGS, MASTERY_LEVELS, buildAchievements, buildQuiz, calculateStreakStats, FLUENT_RECALL_SECONDS, formatReminderTime, formatStudyTime, getCompetitiveRetention, getDailyLearningProgress, getDayKey, getDueReviewWords, getHeroProgressColor, getLearningSessionCount, getLongTermRetention, getMasteryLevel, getMasteryLevelProgress, getNextMasteryLevel, getOmegaTestAttempts, getOmegaTestStatus, getProgressColor, getProgressPaleColor, getQuizAttemptKind, getQuizFeedbackByWord, getQuizFeedbackSummary, getQuizRecallPaceByQuestionType, getQuizRecallPaceByWord, getQuizResponseSignalSummary, getQuizRetrievalProfile, getRecentDays, getRecentStreakLengths, getStreakMessage, getStreakMilestone, getStreakWeek, getTotalLearningSeconds, getWordLearningSignalScores, getWordMastery, getWordMasteryCategory, getWordMasteryCategoryForWord, getWordMasteryProgress, isCompletedOmegaTestAttempt, normalizeQuestionTypePreferences, normalizeTimeBasedLearningSettings, shuffle, stripPlainEnglishLeadIn } from '../utils';
 import { CompactPagination, DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, ProgressFill, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 import { LessonProgressRing } from '../components/dashboard/LessonProgressRing';
 import { CommunityGuidelinesModal, GoldenTicketInfoModal } from '../modals';
@@ -35,20 +36,22 @@ const QUIZ_ACCURACY_RING_SIZE = 116;
 const QUIZ_ACCURACY_RING_STROKE = 14;
 const QUIZ_ACCURACY_RING_RADIUS = (QUIZ_ACCURACY_RING_SIZE - QUIZ_ACCURACY_RING_STROKE) / 2;
 type DashboardDetailKind = 'study-time' | 'quizzes' | 'missed' | 'streak';
-type DashboardInitialSection = 'achievements';
+type DashboardInitialSection = 'achievements' | 'reminder';
 
 function competitiveRankLabel(context: CompetitiveMetricContext | undefined) {
   if (!context?.eligible) return 'Set up Connect to compare';
+  if (context.rank && context.totalUsers) {
+    const place = context.locationLabel ?? 'Global';
+    if (context.rank <= 3) return `#${context.rank} in ${place}`;
+    return `Top ${Math.max(1, Math.ceil((context.rank / context.totalUsers) * 100))}% in ${place}`;
+  }
   if (context.metric === 'retention' && !context.qualified) {
     return `Complete ${context.reviewsToQualify ?? 40} more reviews to qualify`;
   }
   if (context.metric === 'streaks' && !context.qualified) {
-    return 'Complete today’s goal to qualify';
+    return 'Start a streak to rank';
   }
-  if (!context.rank || !context.totalUsers) return 'Building your ranking';
-  const place = context.locationLabel ?? 'Global';
-  if (context.rank <= 3) return `#${context.rank} in ${place}`;
-  return `Top ${Math.max(1, Math.ceil((context.rank / context.totalUsers) * 100))}% in ${place}`;
+  return 'Building your ranking';
 }
 const QUIZ_DIFFICULTY_OPTIONS: {
   id: QuizDifficultyPreference;
@@ -178,6 +181,13 @@ const QUESTION_MIX_PRESETS: {
   },
 ];
 
+const GAME_TIMER_OPTIONS: Array<{ id: GameTimerMode; label: string; detail: string }> = [
+  { id: 'off', label: 'Off', detail: 'No added clock' },
+  { id: 'relaxed', label: 'Relaxed', detail: '45s pace' },
+  { id: 'focused', label: 'Focused', detail: '30s pace' },
+  { id: 'challenge', label: 'Challenge', detail: '15s pace' },
+];
+
 export function DashboardScreen({
   initialSection,
   onInitialSectionFocused,
@@ -186,6 +196,7 @@ export function DashboardScreen({
   pausedOmegaSession,
   timedLearningEnabled,
   timeBasedLearningSettings,
+  gamePreferences,
   quizPreferences,
   currentUser,
   reminderSettings,
@@ -201,6 +212,7 @@ export function DashboardScreen({
   onUpdateDailyLearningGoal,
   onTimedLearningChange,
   onTimeBasedLearningSettingsChange,
+  onGamePreferencesChange,
   onQuizPreferencesChange,
   onOpenLegal,
   onLogout,
@@ -222,6 +234,7 @@ export function DashboardScreen({
   pausedOmegaSession?: PausedQuizSession | null;
   timedLearningEnabled: boolean;
   timeBasedLearningSettings: TimeBasedLearningSettings;
+  gamePreferences: GamePreferences;
   quizPreferences: QuizPreferences;
   currentUser: AuthUser | null;
   reminderSettings: ReminderSettings;
@@ -237,6 +250,7 @@ export function DashboardScreen({
   onUpdateDailyLearningGoal: (goal: number) => void;
   onTimedLearningChange: (enabled: boolean) => void;
   onTimeBasedLearningSettingsChange: (settings: TimeBasedLearningSettings) => void;
+  onGamePreferencesChange: (preferences: GamePreferences) => void;
   onQuizPreferencesChange: (preferences: QuizPreferences) => void;
   onOpenLegal: (page: LegalPage) => void;
   onLogout: () => void;
@@ -320,6 +334,7 @@ export function DashboardScreen({
   const [activityWindow, setActivityWindow] = useState<7 | 30>(7);
   const [isTimeSettingsExpanded, setIsTimeSettingsExpanded] = useState(false);
   const [isQuestionMixExpanded, setIsQuestionMixExpanded] = useState(false);
+  const [isGamePreferencesExpanded, setIsGamePreferencesExpanded] = useState(false);
   const [expandedQuestionType, setExpandedQuestionType] = useState<QuizQuestionMode | null>(null);
   const [competitiveRankContexts, setCompetitiveRankContexts] = useState<Partial<Record<CompetitiveMetric, CompetitiveMetricContext>>>({});
 
@@ -356,8 +371,8 @@ export function DashboardScreen({
     hasFocusedInitialSection.current = false;
   }, [initialSection]);
 
-  const handleAchievementsLayout = useCallback((event: LayoutChangeEvent) => {
-    if (initialSection !== 'achievements' || hasFocusedInitialSection.current) return;
+  const handleInitialSectionLayout = useCallback((section: DashboardInitialSection, event: LayoutChangeEvent) => {
+    if (initialSection !== section || hasFocusedInitialSection.current) return;
 
     hasFocusedInitialSection.current = true;
     const sectionY = event.nativeEvent.layout.y;
@@ -780,6 +795,7 @@ export function DashboardScreen({
       )
     : 0;
   const masteryLevel = getMasteryLevel(overallMastery);
+  const isGrandmaster = masteryLevel.shortTitle === 'Grandmaster';
   const nextMasteryLevel = getNextMasteryLevel(overallMastery);
   const masteryLevelProgress = getMasteryLevelProgress(overallMastery);
   const masteryRingSegments = buildMasteryRingSegments(
@@ -1259,6 +1275,7 @@ export function DashboardScreen({
         value={formatStudyTime(totalSeconds)}
         label="Study time"
         onPress={() => setDashboardDetail('study-time')}
+        grandmaster={isGrandmaster}
       />
       <DashboardStat
         icon="trophy"
@@ -1267,6 +1284,7 @@ export function DashboardScreen({
         value={`${analytics.quizHistory.length}`}
         label="Quizzes"
         onPress={() => setDashboardDetail('quizzes')}
+        grandmaster={isGrandmaster}
       />
       <DashboardStat
         icon="close-circle"
@@ -1275,11 +1293,13 @@ export function DashboardScreen({
         value={`${totalWrong}`}
         label="Missed"
         onPress={() => setDashboardDetail('missed')}
+        grandmaster={isGrandmaster}
       />
       <StreakHistoryStat
         current={streak}
         recent={recentStreakLengths}
         onPress={() => setDashboardDetail('streak')}
+        grandmaster={isGrandmaster}
       />
       </View>
 
@@ -1289,8 +1309,16 @@ export function DashboardScreen({
           accessibilityLabel="View Retention ranking"
           accessibilityHint="Opens the full Retention leaderboard"
           onPress={() => onOpenCompetitiveRanking('retention')}
-          style={({ pressed }) => [styles.competitiveMetricCard, styles.competitiveRetentionCard, pressed && styles.competitiveMetricCardPressed]}
+          style={({ pressed }) => [styles.competitiveMetricCard, isGrandmaster ? styles.competitiveGrandmasterCard : styles.competitiveRetentionCard, pressed && styles.competitiveMetricCardPressed]}
         >
+          {isGrandmaster ? (
+            <LinearGradient
+              colors={WORDWIZ_GRADIENT_COLORS}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.competitiveMetricGrandmasterBackdrop}
+            />
+          ) : null}
           <View style={[styles.competitiveMetricIcon, styles.competitiveRetentionIcon]}>
             <Ionicons name="bulb-outline" size={19} color={COLORS.purpleDark} />
           </View>
@@ -1311,10 +1339,18 @@ export function DashboardScreen({
           accessibilityLabel="View Learning Streaks ranking"
           accessibilityHint="Opens the full Learning Streaks leaderboard"
           onPress={() => onOpenCompetitiveRanking('streaks')}
-          style={({ pressed }) => [styles.competitiveMetricCard, styles.competitiveStreakCard, pressed && styles.competitiveMetricCardPressed]}
+          style={({ pressed }) => [styles.competitiveMetricCard, isGrandmaster ? styles.competitiveGrandmasterCard : styles.competitiveStreakCard, pressed && styles.competitiveMetricCardPressed]}
         >
+          {isGrandmaster ? (
+            <LinearGradient
+              colors={WORDWIZ_GRADIENT_COLORS}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.competitiveMetricGrandmasterBackdrop}
+            />
+          ) : null}
           <View style={[styles.competitiveMetricIcon, styles.competitiveStreakIcon]}>
-            <Ionicons name="flame-outline" size={19} color="#C88612" />
+            <Ionicons name="flame-outline" size={19} color="#D9900A" />
           </View>
           <Text style={styles.competitiveMetricLabel}>LEARNING STREAK</Text>
           <Text style={styles.competitiveMetricValue}>{streak}d</Text>
@@ -1323,7 +1359,7 @@ export function DashboardScreen({
             Daily goal: {completedActivitiesToday}/{dailyLearningGoal} activities today
           </Text>
           <Text numberOfLines={1} style={styles.competitiveMetricRank}>{competitiveRankLabel(streakRankContext)}</Text>
-          <Ionicons name="arrow-forward-circle-outline" size={18} color="#C88612" style={styles.competitiveMetricChevron} />
+          <Ionicons name="arrow-forward-circle-outline" size={18} color="#D9900A" style={styles.competitiveMetricChevron} />
         </Pressable>
       </View>
 
@@ -2098,7 +2134,7 @@ export function DashboardScreen({
         ) : null}
       </DashboardSection>
 
-      <View onLayout={handleAchievementsLayout}>
+      <View onLayout={(event) => handleInitialSectionLayout('achievements', event)}>
         <DashboardSection
           title="ACHIEVEMENTS"
           badge={`${unlockedAchievements}/${achievements.length} unlocked`}
@@ -2340,7 +2376,10 @@ export function DashboardScreen({
 
 
 
-        <View style={styles.reminderCard}>
+        <View
+          onLayout={(event) => handleInitialSectionLayout('reminder', event)}
+          style={styles.reminderCard}
+        >
           <View style={styles.reminderHeader}>
             <View style={styles.reminderIcon}>
               <Ionicons
@@ -2931,6 +2970,105 @@ export function DashboardScreen({
             ]} />
           </View>
         </Pressable>
+      </View>
+
+      <View style={styles.gamePreferencesCard}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Game control center"
+          accessibilityState={{ expanded: isGamePreferencesExpanded }}
+          onPress={() => setIsGamePreferencesExpanded((expanded) => !expanded)}
+          style={({ pressed }) => [styles.gamePreferencesHeader, pressed && styles.pressed]}
+        >
+          <View style={styles.gamePreferencesHeaderIcon}>
+            <Ionicons name="game-controller-outline" size={19} color="#A7700B" />
+          </View>
+          <View style={styles.gamePreferencesHeaderCopy}>
+            <Text style={styles.gamePreferencesEyebrow}>GAME CONTROL CENTER</Text>
+            <Text style={styles.gamePreferencesTitle}>Game preferences</Text>
+            {!isGamePreferencesExpanded ? (
+              <Text style={styles.gamePreferencesSummary}>
+                Hints {gamePreferences.hintsEnabled ? 'on' : 'off'} · {GAME_TIMER_OPTIONS.find((option) => option.id === gamePreferences.timerMode)?.label ?? 'Off'} timer
+              </Text>
+            ) : null}
+          </View>
+          <View style={styles.gamePreferencesHeaderAction}>
+            <Text style={styles.gamePreferencesHeaderActionText}>{isGamePreferencesExpanded ? 'DONE' : 'EDIT'}</Text>
+            <Ionicons
+              name={isGamePreferencesExpanded ? 'chevron-up' : 'chevron-down'}
+              size={15}
+              color="#A7700B"
+            />
+          </View>
+        </Pressable>
+
+        {isGamePreferencesExpanded ? (
+          <>
+            <Text style={styles.gamePreferencesText}>
+              Keep games guided or add a little friendly pressure. These settings apply to new game rounds.
+            </Text>
+            <Pressable
+              accessibilityRole="switch"
+              accessibilityLabel="Game hints"
+              accessibilityState={{ checked: gamePreferences.hintsEnabled }}
+              onPress={() => onGamePreferencesChange({
+                ...gamePreferences,
+                hintsEnabled: !gamePreferences.hintsEnabled,
+              })}
+              style={({ pressed }) => [
+                styles.gamePreferencesToggle,
+                gamePreferences.hintsEnabled && styles.gamePreferencesToggleActive,
+                pressed && styles.pressed,
+              ]}
+            >
+              <View style={styles.gamePreferencesToggleCopy}>
+                <Text style={styles.gamePreferencesToggleTitle}>Hints</Text>
+                <Text style={styles.gamePreferencesToggleText}>
+                  {gamePreferences.hintsEnabled ? 'Helpful nudges are available during games' : 'Play without optional nudges'}
+                </Text>
+              </View>
+              <View style={[
+                styles.timedLearningSwitch,
+                gamePreferences.hintsEnabled && styles.timedLearningSwitchActive,
+              ]}>
+                <View style={[
+                  styles.timedLearningSwitchKnob,
+                  gamePreferences.hintsEnabled && styles.timedLearningSwitchKnobActive,
+                ]} />
+              </View>
+            </Pressable>
+
+            <Text style={styles.gamePreferencesLabel}>GAME TIMER</Text>
+            <View style={styles.gameTimerOptions}>
+              {GAME_TIMER_OPTIONS.map((option) => {
+                const active = gamePreferences.timerMode === option.id;
+                return (
+                  <Pressable
+                    key={option.id}
+                    accessibilityRole="button"
+                    accessibilityLabel={`${option.label} game timer`}
+                    accessibilityState={{ selected: active }}
+                    onPress={() => onGamePreferencesChange({
+                      ...gamePreferences,
+                      timerMode: option.id,
+                    })}
+                    style={({ pressed }) => [
+                      styles.gameTimerOption,
+                      active && styles.gameTimerOptionActive,
+                      pressed && styles.pressed,
+                    ]}
+                  >
+                    <Text style={[styles.gameTimerOptionText, active && styles.gameTimerOptionTextActive]}>{option.label}</Text>
+                    <Text style={styles.gameTimerOptionDetail}>{option.detail}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+            <Text style={styles.gamePreferencesFootnote}>
+              Most games use the pace for each prompt; Speed Match and Crossword use it for the round. Rapid Fire keeps its sprint format and adjusts to your selected pace.
+            </Text>
+          </>
+        ) : null}
       </View>
 
       <DashboardSection
@@ -3654,10 +3792,12 @@ function StreakHistoryStat({
   current,
   recent,
   onPress,
+  grandmaster = false,
 }: {
   current: number;
   recent: number[];
   onPress: () => void;
+  grandmaster?: boolean;
 }) {
   return (
     <Pressable
@@ -3668,9 +3808,18 @@ function StreakHistoryStat({
       style={({ pressed }) => [
         styles.streakHistoryStat,
         styles.streakHistoryStatInteractive,
+        grandmaster && styles.streakHistoryStatGrandmaster,
         pressed && styles.streakHistoryStatPressed,
       ]}
     >
+      {grandmaster ? (
+        <LinearGradient
+          colors={WORDWIZ_GRADIENT_COLORS}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.streakHistoryStatGrandmasterBackdrop}
+        />
+      ) : null}
       <View style={styles.streakHistoryStatTopRow}>
         <View style={styles.streakHistoryStatIcon}>
           <Ionicons name="flame" size={20} color={COLORS.teal} />
@@ -3708,64 +3857,6 @@ function DashboardDetailModal({
   dailyLearningGoal: number;
   onDismiss: () => void;
 }) {
-  const sheetTranslateY = useRef(new Animated.Value(0)).current;
-  const sheetHeight = useRef(0);
-
-  useEffect(() => {
-    if (!detail) return;
-    sheetTranslateY.stopAnimation();
-    sheetTranslateY.setValue(0);
-  }, [detail, sheetTranslateY]);
-
-  const closeDetail = useCallback(() => {
-    sheetTranslateY.stopAnimation();
-    Animated.timing(sheetTranslateY, {
-      toValue: Math.max(sheetHeight.current, 800),
-      duration: 180,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: true,
-    }).start(({ finished }) => {
-      if (finished) onDismiss();
-    });
-  }, [onDismiss, sheetTranslateY]);
-
-  const panResponder = useMemo(() => PanResponder.create({
-    onMoveShouldSetPanResponder: (_, gestureState) => (
-      gestureState.dy > 8 && Math.abs(gestureState.dy) > Math.abs(gestureState.dx)
-    ),
-    onPanResponderGrant: () => {
-      sheetTranslateY.stopAnimation();
-    },
-    onPanResponderMove: (_, gestureState) => {
-      sheetTranslateY.setValue(Math.max(0, gestureState.dy));
-    },
-    onPanResponderRelease: (_, gestureState) => {
-      const shouldClose = gestureState.dy > 120 || gestureState.vy > 0.8;
-      if (shouldClose) {
-        closeDetail();
-        return;
-      }
-
-      Animated.spring(sheetTranslateY, {
-        toValue: 0,
-        damping: 22,
-        stiffness: 260,
-        mass: 0.8,
-        useNativeDriver: true,
-      }).start();
-    },
-    onPanResponderTerminate: () => {
-      Animated.spring(sheetTranslateY, {
-        toValue: 0,
-        damping: 22,
-        stiffness: 260,
-        mass: 0.8,
-        useNativeDriver: true,
-      }).start();
-    },
-    onPanResponderTerminationRequest: () => false,
-  }), [closeDetail, sheetTranslateY]);
-
   if (!detail) return null;
 
   const quizStudySeconds = analytics.quizHistory.reduce(
@@ -3904,28 +3995,18 @@ function DashboardDetailModal({
     <Modal
       visible
       transparent
-      animationType="none"
-      onRequestClose={closeDetail}
+      animationType="slide"
+      onRequestClose={onDismiss}
       statusBarTranslucent
     >
       <View style={styles.dashboardDetailBackdrop}>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Close learning detail"
-          onPress={closeDetail}
+          onPress={onDismiss}
           style={styles.dashboardDetailDismiss}
         />
-        <Animated.View
-          {...panResponder.panHandlers}
-          onLayout={(event) => {
-            sheetHeight.current = event.nativeEvent.layout.height;
-          }}
-          style={[
-            styles.dashboardDetailSheet,
-            { transform: [{ translateY: sheetTranslateY }] },
-          ]}
-          accessibilityHint="Swipe down to close"
-        >
+        <View style={styles.dashboardDetailSheet}>
           <View style={styles.dashboardDetailHandle} />
           <View style={styles.dashboardDetailHeader}>
             <View>
@@ -3935,7 +4016,7 @@ function DashboardDetailModal({
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Close learning detail"
-              onPress={closeDetail}
+              onPress={onDismiss}
               style={({ pressed }) => [styles.dashboardDetailClose, pressed && styles.pressed]}
             >
               <Ionicons name="close" size={20} color={COLORS.ink} />
@@ -4103,7 +4184,7 @@ function DashboardDetailModal({
               </>
             ) : null}
           </ScrollView>
-        </Animated.View>
+        </View>
       </View>
     </Modal>
   );
@@ -4595,7 +4676,7 @@ function WordMasteryOverviewModal({
                 <Text style={[styles.wordOverviewMasteryLabel, { color: category.color }]}>CURRENT MASTERY</Text>
                 <Text style={styles.wordOverviewMasteryTitle}>{category.label}</Text>
                 <Text style={styles.wordOverviewMasteryText}>
-                  {word.simpleDefinition ?? word.definition}
+                  {stripPlainEnglishLeadIn(word.simpleDefinition ?? word.definition)}
                 </Text>
               </View>
               <View style={[styles.wordOverviewScoreCircle, { borderColor: category.color }]}>

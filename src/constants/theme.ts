@@ -29,6 +29,8 @@ export const COLORS = {
   white: '#FFFFFF',
 };
 
+export const WORDWIZ_GRADIENT_COLORS = ['#FFE2A3', '#DED4FF', '#C9F0E3', '#FFD2E2'] as const;
+
 export const SOFT_SHADOW = {
   boxShadow: '0 14px 34px rgba(92, 86, 148, 0.13)',
   elevation: 5,

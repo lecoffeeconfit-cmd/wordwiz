@@ -14,6 +14,7 @@ import {
   inferOriginPeriod,
   makeSimpleDefinition,
   getSavedWordTermKey,
+  stripPlainEnglishLeadIn,
 } from '../utils';
 
 type SpeechRecognitionModule = {
@@ -140,7 +141,7 @@ export function AddWordModal({
 
     setTerm(wordToEdit.term);
     setDefinition(wordToEdit.definition);
-    setSimpleDefinition(wordToEdit.simpleDefinition ?? '');
+    setSimpleDefinition(stripPlainEnglishLeadIn(wordToEdit.simpleDefinition ?? ''));
     setExample(wordToEdit.example);
     setPartOfSpeech(wordToEdit.partOfSpeech ?? '');
     setPronunciation(wordToEdit.pronunciation ?? '');
@@ -444,7 +445,7 @@ export function AddWordModal({
     overrides: Partial<WordDetails> = {},
   ): Partial<WordDetails> {
     return {
-      simpleDefinition,
+      simpleDefinition: stripPlainEnglishLeadIn(simpleDefinition),
       partOfSpeech,
       pronunciation,
       origin,

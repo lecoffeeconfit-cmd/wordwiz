@@ -24,5 +24,7 @@ export function getCardSwipeDirection(
     return null;
   }
 
-  return dx > 0 ? 'next' : 'previous';
+  // Match the usual horizontal-card interaction: a left swipe advances to
+  // the next card, while a right swipe returns to the previous card.
+  return dx > 0 ? 'previous' : 'next';
 }

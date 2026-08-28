@@ -1,21 +1,25 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Animated, Easing, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { COLORS, SOFT_SHADOW } from '../../constants/theme';
-import type { GameAnswer, GameAttempt, GameType, Word } from '../../types';
+import type { GameAnswer, GameAttempt, GamePreferences, GameType, Word } from '../../types';
 import {
   createUuid,
   deterministicShuffle,
   getGameDateKey,
+  getGameCoverage,
   getGameRoundWords,
+  getGameTimerSeconds,
   getGameWeekKey,
   getGameWords,
   getGameXp,
   getGameXpLabel,
+  getRapidFireDurationSeconds,
   getLetterCount,
   getTypedRecallHint,
+  stripPlainEnglishLeadIn,
 } from '../../utils';
 
 type GameFinish = (
@@ -30,6 +34,7 @@ type GameFinish = (
 type QuizGamesProps = {
   words: Word[];
   gameHistory: GameAttempt[];
+  gamePreferences: GamePreferences;
   onComplete: (attempt: GameAttempt) => void | Promise<void>;
   onInputFocus?: () => void;
   wordChoicePicker: ReactNode;
@@ -104,9 +109,20 @@ const GAME_DEFINITIONS: GameDefinition[] = [
     total: 5,
   },
   {
+    type: 'hangman',
+    title: 'Wizard Hangman',
+    description: 'Help a little wizard reveal each word from its meaning.',
+    teaches: 'Spelling + recall',
+    icon: 'person-outline',
+    color: '#6B58D7',
+    pale: '#F0EBFF',
+    minimumWords: 4,
+    total: 5,
+  },
+  {
     type: 'rapid-fire',
     title: 'Rapid Fire',
-    description: 'You have 60 seconds to answer, repeat, and build a combo.',
+    description: 'Answer as many as you can before the sprint ends.',
     teaches: 'Speed + repetition',
     icon: 'timer-outline',
     color: '#D07B22',
@@ -119,6 +135,15 @@ const GAME_DEFINITIONS: GameDefinition[] = [
 const GAME_BY_TYPE = Object.fromEntries(
   GAME_DEFINITIONS.map((definition) => [definition.type, definition]),
 ) as Record<GameType, GameDefinition>;
+
+const GamePreferencesContext = createContext<GamePreferences>({
+  hintsEnabled: true,
+  timerMode: 'off',
+});
+
+function useGamePreferences() {
+  return useContext(GamePreferencesContext);
+}
 
 function normalizeWord(value: string) {
   return value.toLowerCase().replace(/[^a-z]/g, '');
@@ -134,7 +159,7 @@ function getExampleWithGap(word: Word) {
   const pattern = new RegExp(`\\b${word.term.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&')}\\b`, 'i');
   const replaced = example.replace(pattern, '_____');
   return replaced === example
-    ? `Use the word that means: ${word.simpleDefinition ?? word.definition}`
+    ? `Use the word that means: ${stripPlainEnglishLeadIn(word.simpleDefinition ?? word.definition)}`
     : replaced;
 }
 
@@ -216,6 +241,13 @@ function getPlayableGameWords(gameType: GameType, words: Word[]) {
     return words.filter((word) => crosswordLetters(word).length >= 3 && crosswordLetters(word).length <= 10);
   }
 
+  if (gameType === 'hangman') {
+    return words.filter((word) => {
+      const letters = normalizeWord(word.term);
+      return letters.length >= 3 && letters.length <= 14;
+    });
+  }
+
   return words;
 }
 
@@ -237,10 +269,11 @@ function makeAnswer(
   };
 }
 
-export function QuizGames({ words, gameHistory, onComplete, onInputFocus, wordChoicePicker }: QuizGamesProps) {
+export function QuizGames({ words, gameHistory, gamePreferences, onComplete, onInputFocus, wordChoicePicker }: QuizGamesProps) {
   const [activeGame, setActiveGame] = useState<GameType | null>(null);
   const [result, setResult] = useState<GameAttempt | null>(null);
   const gameWords = useMemo(() => getGameWords(words), [words]);
+  const gameCoverage = useMemo(() => getGameCoverage(gameWords, gameHistory), [gameHistory, gameWords]);
 
   const finishGame: GameFinish = (gameType, gameKey, answers, score, total, startedAt) => {
     const recordedAnswers = answers.length
@@ -288,7 +321,8 @@ export function QuizGames({ words, gameHistory, onComplete, onInputFocus, wordCh
   if (activeGame) {
     const definition = GAME_BY_TYPE[activeGame];
     return (
-      <View style={gameStyles.shell}>
+      <GamePreferencesContext.Provider value={gamePreferences}>
+        <View style={gameStyles.shell}>
         <View style={gameStyles.gameHeader}>
           <Pressable
             accessibilityRole="button"
@@ -301,30 +335,36 @@ export function QuizGames({ words, gameHistory, onComplete, onInputFocus, wordCh
           <View style={gameStyles.gameHeaderCopy}>
             <Text style={gameStyles.gameEyebrow}>GAME · {definition.teaches.toUpperCase()}</Text>
             <Text style={gameStyles.gameTitle}>{definition.title}</Text>
+            {gameCoverage.total > 12 ? <GameCoverageFlag {...gameCoverage} /> : null}
           </View>
           <View style={[gameStyles.gameHeaderIcon, { backgroundColor: definition.pale }]}>
             <Ionicons name={definition.icon} size={20} color={definition.color} />
           </View>
         </View>
         {activeGame === 'speed-match' ? (
-          <SpeedMatchGame words={getPlayableGameWords(activeGame, gameWords)} onFinish={finishGame} />
+          <SpeedMatchGame words={getPlayableGameWords(activeGame, gameWords)} gameHistory={gameHistory} onFinish={finishGame} />
         ) : activeGame === 'fill-gap' ? (
-          <FillGapGame words={getPlayableGameWords(activeGame, gameWords)} onFinish={finishGame} />
+          <FillGapGame words={getPlayableGameWords(activeGame, gameWords)} gameHistory={gameHistory} onFinish={finishGame} />
         ) : activeGame === 'word-connections' ? (
-          <WordConnectionsGame words={getPlayableGameWords(activeGame, gameWords)} onFinish={finishGame} />
+          <WordConnectionsGame words={getPlayableGameWords(activeGame, gameWords)} gameHistory={gameHistory} onFinish={finishGame} />
         ) : activeGame === 'crossword' ? (
-          <CrosswordGame words={getPlayableGameWords(activeGame, gameWords)} onFinish={finishGame} onInputFocus={onInputFocus} />
+          <CrosswordGame words={getPlayableGameWords(activeGame, gameWords)} gameHistory={gameHistory} onFinish={finishGame} onInputFocus={onInputFocus} />
         ) : activeGame === 'word-scramble' ? (
-          <WordScrambleGame words={getPlayableGameWords(activeGame, gameWords)} onFinish={finishGame} onInputFocus={onInputFocus} />
+          <WordScrambleGame words={getPlayableGameWords(activeGame, gameWords)} gameHistory={gameHistory} onFinish={finishGame} onInputFocus={onInputFocus} />
+        ) : activeGame === 'hangman' ? (
+          <HangmanGame words={getPlayableGameWords(activeGame, gameWords)} gameHistory={gameHistory} onFinish={finishGame} />
         ) : (
-          <RapidFireGame words={getPlayableGameWords(activeGame, gameWords)} onFinish={finishGame} />
+          <RapidFireGame words={getPlayableGameWords(activeGame, gameWords)} gameHistory={gameHistory} onFinish={finishGame} />
         )}
-      </View>
+        </View>
+      </GamePreferencesContext.Provider>
     );
   }
 
   return (
-    <View style={gameStyles.shell}>
+    <GamePreferencesContext.Provider value={gamePreferences}>
+      <View style={gameStyles.shell}>
+      {wordChoicePicker}
       <View style={gameStyles.gameIntro}>
         <View style={gameStyles.gameIntroIcon}>
           <Ionicons name="game-controller-outline" size={25} color={COLORS.purpleDark} />
@@ -336,7 +376,6 @@ export function QuizGames({ words, gameHistory, onComplete, onInputFocus, wordCh
           </Text>
         </View>
       </View>
-      {wordChoicePicker}
       {gameWords.length < 2 ? (
         <View style={gameStyles.emptyCard}>
           <Ionicons name="sparkles-outline" size={24} color={COLORS.purple} />
@@ -390,7 +429,23 @@ export function QuizGames({ words, gameHistory, onComplete, onInputFocus, wordCh
       })}
       <View style={gameStyles.gameNote}>
         <Ionicons name="shield-checkmark-outline" size={16} color={COLORS.greenDark} />
-        <Text style={gameStyles.gameNoteText}>Games give lighter mastery evidence than quizzes, and replaying the same daily puzzle earns reduced XP.</Text>
+        <Text style={gameStyles.gameNoteText}>Games give lighter mastery evidence than quizzes, and rounds rotate through your chosen words.</Text>
+      </View>
+      </View>
+    </GamePreferencesContext.Provider>
+  );
+}
+
+function GameCoverageFlag({ practiced, total, remaining }: { practiced: number; total: number; remaining: number }) {
+  const roundsRemaining = Math.max(0, Math.ceil(remaining / 5));
+  return (
+    <View style={gameStyles.coverageFlag} accessibilityLabel={`${practiced} of ${total} words covered, ${remaining} waiting`}>
+      <Ionicons name="layers-outline" size={11} color={COLORS.purpleDark} />
+      <View style={gameStyles.coverageFlagCopy}>
+        <Text numberOfLines={1} style={gameStyles.coverageFlagText}>{practiced}/{total} covered · {remaining} waiting</Text>
+        <Text numberOfLines={1} style={gameStyles.coverageFlagSubtext}>
+          {remaining > 0 ? `About ${roundsRemaining} rounds left` : 'Full set covered'}
+        </Text>
       </View>
     </View>
   );
@@ -447,7 +502,7 @@ function GameResult({ attempt, onBack, onPlayAgain }: { attempt: GameAttempt; on
       <Text style={gameStyles.resultText}>
         {perfect ? 'Great work. That was useful practice for your vocabulary.' : 'Nice round. Keep going and these words will feel more natural.'}
       </Text>
-      <Pressable onPress={onPlayAgain} style={({ pressed }) => [gameStyles.primaryButton, pressed && gameStyles.pressed]}>
+      <Pressable onPress={onPlayAgain} style={({ pressed }) => [gameStyles.primaryButton, gameStyles.resultPrimaryButton, pressed && gameStyles.pressed]}>
         <Text style={gameStyles.primaryButtonText}>PLAY AGAIN</Text>
         <Ionicons name="refresh" size={18} color={COLORS.white} />
       </Pressable>
@@ -471,6 +526,8 @@ function HintButton({
   hintStep?: number;
   hintCount?: number;
 }) {
+  const { hintsEnabled } = useGamePreferences();
+  if (!hintsEnabled) return null;
   const buttonLabel = label ?? (visible ? 'HIDE HINT' : 'HINT');
   return (
     <Pressable
@@ -498,7 +555,10 @@ function HintCard({
   step: number;
   total: number;
 }) {
+  const { hintsEnabled } = useGamePreferences();
   const entrance = useRef(new Animated.Value(0)).current;
+
+  if (!hintsEnabled) return null;
 
   useEffect(() => {
     entrance.setValue(0);
@@ -702,7 +762,66 @@ function GamePrompt({
   );
 }
 
-function GameProgress({ current, total, color = COLORS.purple }: { current: number; total: number; color?: string }) {
+function useGameTimer(scopeKey: string | number | undefined, onTimeout: () => void) {
+  const { timerMode } = useGamePreferences();
+  const total = getGameTimerSeconds(timerMode);
+  const [remaining, setRemaining] = useState<number | null>(total);
+  const onTimeoutRef = useRef(onTimeout);
+  const didTimeout = useRef(false);
+
+  useEffect(() => {
+    onTimeoutRef.current = onTimeout;
+  }, [onTimeout]);
+
+  useEffect(() => {
+    didTimeout.current = false;
+    if (scopeKey === undefined || total === null) {
+      setRemaining(null);
+      return;
+    }
+    const deadline = Date.now() + total * 1000;
+    setRemaining(total);
+    const interval = setInterval(() => {
+      const next = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+      setRemaining(next);
+      if (next === 0) {
+        clearInterval(interval);
+        if (!didTimeout.current) {
+          didTimeout.current = true;
+          onTimeoutRef.current();
+        }
+      }
+    }, 250);
+    return () => clearInterval(interval);
+  }, [scopeKey, total]);
+
+  return { total, remaining };
+}
+
+function GameTimer({ remaining, total }: { remaining: number | null; total: number | null }) {
+  if (remaining === null || total === null) return null;
+  const warning = remaining <= Math.max(5, Math.ceil(total * 0.2));
+  return (
+    <View style={[gameStyles.gameTimer, warning && gameStyles.gameTimerWarning]} accessibilityLabel={`${remaining} seconds remaining`}>
+      <Ionicons name="timer-outline" size={12} color={warning ? COLORS.red : COLORS.purpleDark} />
+      <Text style={[gameStyles.gameTimerText, warning && gameStyles.gameTimerTextWarning]}>{remaining}s</Text>
+    </View>
+  );
+}
+
+function GameProgress({
+  current,
+  total,
+  color = COLORS.purple,
+  timerRemaining,
+  timerTotal,
+}: {
+  current: number;
+  total: number;
+  color?: string;
+  timerRemaining?: number | null;
+  timerTotal?: number | null;
+}) {
   const progress = Math.min(1, current / Math.max(1, total));
   const animatedProgress = useRef(new Animated.Value(0)).current;
 
@@ -723,6 +842,7 @@ function GameProgress({ current, total, color = COLORS.purple }: { current: numb
         <Animated.View style={[gameStyles.progressFill, { width: animatedProgress.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }), backgroundColor: color }]} />
       </View>
       <Text style={gameStyles.progressText}>{current} / {total}</Text>
+      <GameTimer remaining={timerRemaining ?? null} total={timerTotal ?? null} />
     </View>
   );
 }
@@ -756,8 +876,8 @@ function OptionList({ options, selected, correct, onSelect }: { options: string[
   );
 }
 
-function SpeedMatchGame({ words, onFinish }: { words: Word[]; onFinish: GameFinish }) {
-  const roundWords = useMemo(() => getGameRoundWords('speed-match', words, 4), [words]);
+function SpeedMatchGame({ words, gameHistory, onFinish }: { words: Word[]; gameHistory: GameAttempt[]; onFinish: GameFinish }) {
+  const roundWords = useMemo(() => getGameRoundWords('speed-match', words, 4, gameHistory), [gameHistory, words]);
   const startedAt = useRef(Date.now()).current;
   const gameKey = useMemo(() => createGameKey('speed-match', roundWords), [roundWords]);
   const [selectedWord, setSelectedWord] = useState<string | null>(null);
@@ -776,6 +896,11 @@ function SpeedMatchGame({ words, onFinish }: { words: Word[]; onFinish: GameFini
     nextHintWord ? getHintLevels(nextHintWord) : undefined,
     nextHintWord?.id,
   );
+  const gameTimer = useGameTimer(gameKey, () => {
+    if (finishScheduled.current) return;
+    finishScheduled.current = true;
+    onFinish('speed-match', gameKey, answersRef.current, matched.length, roundWords.length, startedAt);
+  });
 
   useEffect(() => () => {
     if (wrongResetTimeout.current) clearTimeout(wrongResetTimeout.current);
@@ -812,7 +937,13 @@ function SpeedMatchGame({ words, onFinish }: { words: Word[]; onFinish: GameFini
 
   return (
     <View style={gameStyles.playArea}>
-      <GameProgress current={matched.length} total={roundWords.length} color="#4F78D8" />
+      <GameProgress
+        current={matched.length}
+        total={roundWords.length}
+        color="#4F78D8"
+        timerRemaining={gameTimer.remaining}
+        timerTotal={gameTimer.total}
+      />
       <GamePrompt
         promptKey={nextHintWord?.id}
         hintState={hintState}
@@ -833,7 +964,7 @@ function SpeedMatchGame({ words, onFinish }: { words: Word[]; onFinish: GameFini
           <Text style={gameStyles.columnLabel}>MEANINGS</Text>
           {definitions.map((word) => (
             <Pressable key={word.id} disabled={matched.includes(word.id)} onPress={() => setSelectedDefinition(word.id)} style={({ pressed }) => [gameStyles.matchTile, selectedDefinition === word.id && gameStyles.matchTileSelected, matched.includes(word.id) && gameStyles.matchTileMatched, pressed && !matched.includes(word.id) && gameStyles.pressed]}>
-              <Text numberOfLines={3} style={[gameStyles.matchTileDefinition, matched.includes(word.id) && gameStyles.mutedText]}>{word.simpleDefinition ?? word.definition}</Text>
+              <Text numberOfLines={3} style={[gameStyles.matchTileDefinition, matched.includes(word.id) && gameStyles.mutedText]}>{stripPlainEnglishLeadIn(word.simpleDefinition ?? word.definition)}</Text>
             </Pressable>
           ))}
         </View>
@@ -843,8 +974,8 @@ function SpeedMatchGame({ words, onFinish }: { words: Word[]; onFinish: GameFini
   );
 }
 
-function FillGapGame({ words, onFinish }: { words: Word[]; onFinish: GameFinish }) {
-  const roundWords = useMemo(() => getGameRoundWords('fill-gap', words, 5), [words]);
+function FillGapGame({ words, gameHistory, onFinish }: { words: Word[]; gameHistory: GameAttempt[]; onFinish: GameFinish }) {
+  const roundWords = useMemo(() => getGameRoundWords('fill-gap', words, 5, gameHistory), [gameHistory, words]);
   const startedAt = useRef(Date.now()).current;
   const gameKey = useMemo(() => createGameKey('fill-gap', roundWords), [roundWords]);
   const [index, setIndex] = useState(0);
@@ -858,13 +989,13 @@ function FillGapGame({ words, onFinish }: { words: Word[]; onFinish: GameFinish 
     [gameKey, word, words],
   );
 
-  function answer(option: string) {
-    if (selected || !word) return;
-    const isCorrect = normalizeWord(option) === normalizeWord(word.term);
+  function answer(option: string | null, timedOut = false) {
+    if (selected !== null || !word) return;
+    const isCorrect = !timedOut && option !== null && normalizeWord(option) === normalizeWord(word.term);
     triggerGameHaptic(isCorrect ? 'success' : 'error');
     const nextAnswers = [...answers, makeAnswer('fill-gap', gameKey, word, isCorrect, startedAt)];
     const nextScore = score + (isCorrect ? 1 : 0);
-    setSelected(option);
+    setSelected(option ?? '__game-timeout__');
     setAnswers(nextAnswers);
     setScore(nextScore);
     setTimeout(() => {
@@ -877,10 +1008,19 @@ function FillGapGame({ words, onFinish }: { words: Word[]; onFinish: GameFinish 
     }, 500);
   }
 
+  const gameTimer = useGameTimer(word?.id, () => answer(null, true));
+
   if (!word) return null;
+  const timedOut = selected === '__game-timeout__';
   return (
     <View style={gameStyles.playArea}>
-      <GameProgress current={index} total={roundWords.length} color="#2A9C79" />
+      <GameProgress
+        current={index}
+        total={roundWords.length}
+        color="#2A9C79"
+        timerRemaining={gameTimer.remaining}
+        timerTotal={gameTimer.total}
+      />
       <GamePrompt
         promptKey={word.id}
         hintState={hintState}
@@ -894,15 +1034,15 @@ function FillGapGame({ words, onFinish }: { words: Word[]; onFinish: GameFinish 
           {word.partOfSpeech ?? 'Choose the word that makes the sentence sound natural.'}
         </Text>
       </View>
-      <GameLetterCount answer={word.term} response={selected ?? ''} emptyStatus="SELECT AN ANSWER" />
+      <GameLetterCount answer={word.term} response={selected && !timedOut ? selected : ''} emptyStatus="SELECT AN ANSWER" />
       <OptionList options={options} selected={selected} correct={word.term} onSelect={answer} />
-      {selected ? <GameFeedback correct={normalizeWord(selected) === normalizeWord(word.term)} text={normalizeWord(selected) === normalizeWord(word.term) ? 'Nice fit.' : `The best fit is ${word.term}.`} /> : null}
+      {selected ? <GameFeedback correct={!timedOut && normalizeWord(selected) === normalizeWord(word.term)} text={timedOut ? `Time’s up — the best fit is ${word.term}.` : normalizeWord(selected) === normalizeWord(word.term) ? 'Nice fit.' : `The best fit is ${word.term}.`} /> : null}
     </View>
   );
 }
 
-function WordConnectionsGame({ words, onFinish }: { words: Word[]; onFinish: GameFinish }) {
-  const roundWords = useMemo(() => getGameRoundWords('word-connections', words, 5), [words]);
+function WordConnectionsGame({ words, gameHistory, onFinish }: { words: Word[]; gameHistory: GameAttempt[]; onFinish: GameFinish }) {
+  const roundWords = useMemo(() => getGameRoundWords('word-connections', words, 5, gameHistory), [gameHistory, words]);
   const startedAt = useRef(Date.now()).current;
   const gameKey = useMemo(() => createGameKey('word-connections', roundWords), [roundWords]);
   const [index, setIndex] = useState(0);
@@ -917,13 +1057,13 @@ function WordConnectionsGame({ words, onFinish }: { words: Word[]; onFinish: Gam
     [correct, gameKey, word, words],
   );
 
-  function answer(option: string) {
-    if (selected || !word) return;
-    const isCorrect = normalizeWord(option) === normalizeWord(correct);
+  function answer(option: string | null, timedOut = false) {
+    if (selected !== null || !word) return;
+    const isCorrect = !timedOut && option !== null && normalizeWord(option) === normalizeWord(correct);
     triggerGameHaptic(isCorrect ? 'success' : 'error');
     const nextAnswers = [...answers, makeAnswer('word-connections', gameKey, word, isCorrect, startedAt)];
     const nextScore = score + (isCorrect ? 1 : 0);
-    setSelected(option);
+    setSelected(option ?? '__game-timeout__');
     setAnswers(nextAnswers);
     setScore(nextScore);
     setTimeout(() => {
@@ -936,10 +1076,18 @@ function WordConnectionsGame({ words, onFinish }: { words: Word[]; onFinish: Gam
     }, 500);
   }
 
+  const gameTimer = useGameTimer(word?.id, () => answer(null, true));
+
   if (!word) return null;
   return (
     <View style={gameStyles.playArea}>
-      <GameProgress current={index} total={roundWords.length} color="#8B65D9" />
+      <GameProgress
+        current={index}
+        total={roundWords.length}
+        color="#8B65D9"
+        timerRemaining={gameTimer.remaining}
+        timerTotal={gameTimer.total}
+      />
       <GamePrompt
         promptKey={word.id}
         hintState={hintState}
@@ -950,7 +1098,7 @@ function WordConnectionsGame({ words, onFinish }: { words: Word[]; onFinish: Gam
       <View style={gameStyles.connectionClue}>
         <Text style={gameStyles.connectionClueLabel}>WORD</Text>
         <Text style={gameStyles.connectionWord}>{word.term}</Text>
-        <Text style={gameStyles.contextDefinition}>{word.simpleDefinition ?? word.definition}</Text>
+        <Text style={gameStyles.contextDefinition}>{stripPlainEnglishLeadIn(word.simpleDefinition ?? word.definition)}</Text>
       </View>
       <OptionList options={options} selected={selected} correct={correct} onSelect={answer} />
     </View>
@@ -1028,8 +1176,8 @@ function buildCrossword(words: Word[]) {
   return placements;
 }
 
-function CrosswordGame({ words, onFinish, onInputFocus }: { words: Word[]; onFinish: GameFinish; onInputFocus?: () => void }) {
-  const orderedWords = useMemo(() => getGameRoundWords('crossword', words), [words]);
+function CrosswordGame({ words, gameHistory, onFinish, onInputFocus }: { words: Word[]; gameHistory: GameAttempt[]; onFinish: GameFinish; onInputFocus?: () => void }) {
+  const orderedWords = useMemo(() => getGameRoundWords('crossword', words, undefined, gameHistory), [gameHistory, words]);
   const placements = useMemo(() => buildCrossword(orderedWords), [orderedWords]);
   const startedAt = useRef(Date.now()).current;
   const gameKey = useMemo(() => createGameKey('crossword', placements.map((placement) => placement.word)), [placements]);
@@ -1038,12 +1186,18 @@ function CrosswordGame({ words, onFinish, onInputFocus }: { words: Word[]; onFin
   const [response, setResponse] = useState('');
   const [feedback, setFeedback] = useState<string | null>(null);
   const answersRef = useRef<GameAnswer[]>([]);
+  const finishScheduled = useRef(false);
   const active = placements[activeIndex];
   const activeHints = active ? getHintLevels(active.word) : [];
   const hintState = useGameHintState(activeHints, active?.word.id);
+  const gameTimer = useGameTimer(active ? gameKey : undefined, () => {
+    if (finishScheduled.current) return;
+    finishScheduled.current = true;
+    onFinish('crossword', gameKey, answersRef.current, solved.length, placements.length, startedAt);
+  });
 
   function checkAnswer() {
-    if (!active || !response.trim() || solved.includes(activeIndex)) return;
+    if (finishScheduled.current || !active || !response.trim() || solved.includes(activeIndex)) return;
     const isCorrect = normalizeWord(response) === active.letters.toLowerCase();
     triggerGameHaptic(isCorrect ? 'success' : 'error');
     answersRef.current = [...answersRef.current, makeAnswer('crossword', gameKey, active.word, isCorrect, startedAt)];
@@ -1056,6 +1210,7 @@ function CrosswordGame({ words, onFinish, onInputFocus }: { words: Word[]; onFin
     setFeedback('Entry locked in.');
     setResponse('');
     if (nextSolved.length === placements.length) {
+      finishScheduled.current = true;
       setTimeout(() => onFinish('crossword', gameKey, answersRef.current, placements.length, placements.length, startedAt), 300);
     } else {
       setTimeout(() => {
@@ -1086,7 +1241,13 @@ function CrosswordGame({ words, onFinish, onInputFocus }: { words: Word[]; onFin
   const gridCols = Array.from({ length: 15 });
   return (
     <View style={gameStyles.playArea}>
-      <GameProgress current={solved.length} total={placements.length} color="#C17A2B" />
+      <GameProgress
+        current={solved.length}
+        total={placements.length}
+        color="#C17A2B"
+        timerRemaining={gameTimer.remaining}
+        timerTotal={gameTimer.total}
+      />
       <View style={gameStyles.crosswordBoard}>
         {gridRows.map((_, row) => (
           <View key={row} style={gameStyles.crosswordRow}>
@@ -1103,7 +1264,7 @@ function CrosswordGame({ words, onFinish, onInputFocus }: { words: Word[]; onFin
             <Text style={gameStyles.crosswordClueNumber}>{placement.number}</Text>
             <View style={gameStyles.crosswordClueCopy}>
               <Text style={gameStyles.crosswordClueDirection}>{placement.direction.toUpperCase()} · {placement.letters.length} LETTERS</Text>
-              <Text style={gameStyles.crosswordClueText}>{placement.word.simpleDefinition ?? placement.word.definition}</Text>
+              <Text style={gameStyles.crosswordClueText}>{stripPlainEnglishLeadIn(placement.word.simpleDefinition ?? placement.word.definition)}</Text>
             </View>
             {solved.includes(index) ? <Ionicons name="checkmark-circle" size={17} color={COLORS.greenDark} /> : null}
           </Pressable>
@@ -1137,8 +1298,8 @@ function CrosswordGame({ words, onFinish, onInputFocus }: { words: Word[]; onFin
   );
 }
 
-function WordScrambleGame({ words, onFinish, onInputFocus }: { words: Word[]; onFinish: GameFinish; onInputFocus?: () => void }) {
-  const roundWords = useMemo(() => getGameRoundWords('word-scramble', words, 5), [words]);
+function WordScrambleGame({ words, gameHistory, onFinish, onInputFocus }: { words: Word[]; gameHistory: GameAttempt[]; onFinish: GameFinish; onInputFocus?: () => void }) {
+  const roundWords = useMemo(() => getGameRoundWords('word-scramble', words, 5, gameHistory), [gameHistory, words]);
   const startedAt = useRef(Date.now()).current;
   const gameKey = useMemo(() => createGameKey('word-scramble', roundWords), [roundWords]);
   const [index, setIndex] = useState(0);
@@ -1155,15 +1316,15 @@ function WordScrambleGame({ words, onFinish, onInputFocus }: { words: Word[]; on
     [gameKey, word],
   );
 
-  function checkAnswer() {
-    if (!word || !response.trim() || feedback) return;
-    const isCorrect = normalizeWord(response) === normalizeWord(word.term);
+  function checkAnswer(timedOut = false) {
+    if (!word || (!timedOut && !response.trim()) || feedback) return;
+    const isCorrect = !timedOut && normalizeWord(response) === normalizeWord(word.term);
     triggerGameHaptic(isCorrect ? 'success' : 'error');
     const nextAnswers = [...answers, makeAnswer('word-scramble', gameKey, word, isCorrect, startedAt)];
     const nextScore = score + (isCorrect ? 1 : 0);
     setAnswers(nextAnswers);
     setScore(nextScore);
-    setFeedback(isCorrect ? 'Correct.' : `The word is ${word.term}.`);
+    setFeedback(timedOut ? `Time’s up — the word is ${word.term}.` : isCorrect ? 'Correct.' : `The word is ${word.term}.`);
     setTimeout(() => {
       if (index === roundWords.length - 1) {
         onFinish('word-scramble', gameKey, nextAnswers, nextScore, roundWords.length, startedAt);
@@ -1175,26 +1336,34 @@ function WordScrambleGame({ words, onFinish, onInputFocus }: { words: Word[]; on
     }, 500);
   }
 
+  const gameTimer = useGameTimer(word?.id, () => checkAnswer(true));
+
   if (!word) return null;
   return (
     <View style={gameStyles.playArea}>
-      <GameProgress current={index} total={roundWords.length} color="#D36B89" />
+      <GameProgress
+        current={index}
+        total={roundWords.length}
+        color="#D36B89"
+        timerRemaining={gameTimer.remaining}
+        timerTotal={gameTimer.total}
+      />
       <GamePrompt
         promptKey={word.id}
         hintState={hintState}
         hintColor="#B95372"
         showHintButton={false}
         label="UNSCRAMBLE THE WORD"
-        prompt={word.simpleDefinition ?? word.definition}
+        prompt={stripPlainEnglishLeadIn(word.simpleDefinition ?? word.definition)}
       />
       <View style={gameStyles.scrambleCard}>
         <Text style={gameStyles.scrambleLabel}>THE LETTERS</Text>
         <Text style={gameStyles.scrambleWord}>{scrambled}</Text>
         <Text style={gameStyles.contextDefinition}>{word.partOfSpeech ?? 'Vocabulary word'}</Text>
       </View>
-      <TextInput autoCapitalize="none" autoCorrect={false} onChangeText={setResponse} onFocus={onInputFocus} onSubmitEditing={checkAnswer} placeholder="Rebuild the word" placeholderTextColor={COLORS.muted} returnKeyType="done" style={gameStyles.textInput} value={response} />
+      <TextInput autoCapitalize="none" autoCorrect={false} onChangeText={setResponse} onFocus={onInputFocus} onSubmitEditing={() => checkAnswer()} placeholder="Rebuild the word" placeholderTextColor={COLORS.muted} returnKeyType="done" style={gameStyles.textInput} value={response} />
       <GameLetterCount answer={word.term} response={response} />
-      <Pressable disabled={!response.trim()} onPress={checkAnswer} style={({ pressed }) => [gameStyles.primaryButton, !response.trim() && gameStyles.disabledButton, pressed && gameStyles.pressed]}>
+      <Pressable disabled={!response.trim()} onPress={() => checkAnswer()} style={({ pressed }) => [gameStyles.primaryButton, !response.trim() && gameStyles.disabledButton, pressed && gameStyles.pressed]}>
         <Text style={gameStyles.primaryButtonText}>CHECK WORD</Text>
         <Ionicons name="checkmark" size={18} color={COLORS.white} />
       </Pressable>
@@ -1220,10 +1389,298 @@ function WordScrambleGame({ words, onFinish, onInputFocus }: { words: Word[]; on
   );
 }
 
-function RapidFireGame({ words, onFinish }: { words: Word[]; onFinish: GameFinish }) {
+const HANGMAN_MAX_MISSES = 6;
+const HANGMAN_LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+
+function HangmanFigure({ misses }: { misses: number }) {
+  const figureScale = useRef(new Animated.Value(1)).current;
+  const figureFloat = useRef(new Animated.Value(0)).current;
+  const magicPulse = useRef(new Animated.Value(0)).current;
+  const wandTilt = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (misses === 0) return;
+    figureScale.setValue(0.94);
+    const animation = Animated.spring(figureScale, {
+      toValue: 1,
+      friction: 5,
+      tension: 180,
+      useNativeDriver: true,
+    });
+    animation.start();
+    return () => animation.stop();
+  }, [figureScale, misses]);
+
+  useEffect(() => {
+    const idleAnimation = Animated.loop(
+      Animated.parallel([
+        Animated.sequence([
+          Animated.timing(figureFloat, {
+            toValue: -5,
+            duration: 1100,
+            useNativeDriver: true,
+          }),
+          Animated.timing(figureFloat, {
+            toValue: 0,
+            duration: 1100,
+            useNativeDriver: true,
+          }),
+        ]),
+        Animated.sequence([
+          Animated.timing(magicPulse, {
+            toValue: 1,
+            duration: 900,
+            useNativeDriver: true,
+          }),
+          Animated.timing(magicPulse, {
+            toValue: 0,
+            duration: 900,
+            useNativeDriver: true,
+          }),
+        ]),
+        Animated.sequence([
+          Animated.timing(wandTilt, {
+            toValue: 1,
+            duration: 1350,
+            useNativeDriver: true,
+          }),
+          Animated.timing(wandTilt, {
+            toValue: 0,
+            duration: 1350,
+            useNativeDriver: true,
+          }),
+        ]),
+      ]),
+    );
+    idleAnimation.start();
+    return () => idleAnimation.stop();
+  }, [figureFloat, magicPulse, wandTilt]);
+
+  return (
+    <View
+      accessibilityLabel={`Wizard Hangman character with ${misses} of ${HANGMAN_MAX_MISSES} misses`}
+      style={gameStyles.hangmanFigure}
+    >
+      <View style={gameStyles.hangmanBase} />
+      <View style={gameStyles.hangmanPost} />
+      <View style={gameStyles.hangmanBeam} />
+      <View style={gameStyles.hangmanRope} />
+      <Animated.View
+        style={[gameStyles.hangmanWizard, { transform: [{ translateY: figureFloat }, { scale: figureScale }] }]}
+      >
+        {misses >= 1 ? (
+          <>
+            <Animated.View
+              pointerEvents="none"
+              style={[
+                gameStyles.hangmanMagicHalo,
+                {
+                  opacity: magicPulse.interpolate({ inputRange: [0, 1], outputRange: [0.35, 0.9] }),
+                  transform: [{ scale: magicPulse.interpolate({ inputRange: [0, 1], outputRange: [0.92, 1.08] }) }],
+                },
+              ]}
+            >
+              <Ionicons name="sparkles" size={31} color="#E3A72A" />
+            </Animated.View>
+            <View style={gameStyles.hangmanWizardHat} />
+            <View style={gameStyles.hangmanWizardHatBand} />
+          </>
+        ) : null}
+        {misses >= 2 ? (
+          <View style={gameStyles.hangmanWizardFace}>
+            <View style={gameStyles.hangmanWizardEyes}>
+              <View style={gameStyles.hangmanWizardEye} />
+              <View style={gameStyles.hangmanWizardEye} />
+            </View>
+            <View style={gameStyles.hangmanWizardBeard} />
+          </View>
+        ) : null}
+        {misses >= 3 ? (
+          <View style={gameStyles.hangmanWizardRobe}>
+            <View style={gameStyles.hangmanWizardCollar} />
+            <View style={gameStyles.hangmanWizardBelt}>
+              <View style={gameStyles.hangmanWizardBuckle} />
+            </View>
+          </View>
+        ) : null}
+        {misses >= 4 ? (
+          <>
+            <View style={[gameStyles.hangmanWizardArm, gameStyles.hangmanWizardLeftArm]} />
+            <Animated.View
+              style={[
+                gameStyles.hangmanWizardWand,
+                { transform: [{ rotate: wandTilt.interpolate({ inputRange: [0, 1], outputRange: ['-8deg', '8deg'] }) }] },
+              ]}
+            >
+              <Ionicons name="sparkles" size={17} color="#E3A72A" />
+              <View style={gameStyles.hangmanWizardWandStick} />
+            </Animated.View>
+          </>
+        ) : null}
+        {misses >= 5 ? <View style={[gameStyles.hangmanWizardArm, gameStyles.hangmanWizardRightArm]} /> : null}
+        {misses >= 6 ? (
+          <>
+            <View style={gameStyles.hangmanWizardBootLeft} />
+            <View style={gameStyles.hangmanWizardBootRight} />
+          </>
+        ) : null}
+      </Animated.View>
+    </View>
+  );
+}
+
+function HangmanGame({ words, gameHistory, onFinish }: { words: Word[]; gameHistory: GameAttempt[]; onFinish: GameFinish }) {
+  const roundWords = useMemo(() => getGameRoundWords('hangman', words, 5, gameHistory), [gameHistory, words]);
+  const startedAt = useRef(Date.now()).current;
+  const gameKey = useMemo(() => createGameKey('hangman', roundWords), [roundWords]);
+  const [index, setIndex] = useState(0);
+  const [guessed, setGuessed] = useState<string[]>([]);
+  const [misses, setMisses] = useState(0);
+  const [score, setScore] = useState(0);
+  const [feedback, setFeedback] = useState<string | null>(null);
+  const [answers, setAnswers] = useState<GameAnswer[]>([]);
+  const word = roundWords[index];
+  const answer = word ? normalizeWord(word.term).toUpperCase() : '';
+  const hintState = useGameHintState(word ? getHintLevels(word) : undefined, word?.id);
+  const gameTimer = useGameTimer(word?.id, () => resolveWord(false));
+
+  useEffect(() => {
+    setGuessed([]);
+    setMisses(0);
+    setFeedback(null);
+  }, [word?.id]);
+
+  function resolveWord(isCorrect: boolean) {
+    if (!word || feedback) return;
+    const nextAnswers = [...answers, makeAnswer('hangman', gameKey, word, isCorrect, startedAt)];
+    const nextScore = score + (isCorrect ? 1 : 0);
+    setAnswers(nextAnswers);
+    setScore(nextScore);
+    setFeedback(isCorrect ? 'Word revealed!' : `The word was ${word.term}.`);
+    setTimeout(() => {
+      if (index === roundWords.length - 1) {
+        onFinish('hangman', gameKey, nextAnswers, nextScore, roundWords.length, startedAt);
+        return;
+      }
+      setIndex((current) => current + 1);
+    }, 700);
+  }
+
+  function guessLetter(letter: string) {
+    const normalizedLetter = normalizeWord(letter).toUpperCase();
+    if (!word || !normalizedLetter || feedback || guessed.includes(normalizedLetter)) return;
+
+    const nextGuessed = [...guessed, normalizedLetter];
+    setGuessed(nextGuessed);
+    if (!answer.includes(normalizedLetter)) {
+      const nextMisses = misses + 1;
+      setMisses(nextMisses);
+      triggerGameHaptic(nextMisses >= HANGMAN_MAX_MISSES ? 'error' : 'light');
+      if (nextMisses >= HANGMAN_MAX_MISSES) resolveWord(false);
+      return;
+    }
+
+    const solved = answer.split('').every((character) => nextGuessed.includes(character));
+    triggerGameHaptic(solved ? 'success' : 'light');
+    if (solved) resolveWord(true);
+  }
+
+  if (!word) return <Text style={gameStyles.emptyText}>Add a few usable words to play Hangman.</Text>;
+
+  return (
+    <View style={gameStyles.playArea}>
+      <GameProgress
+        current={index}
+        total={roundWords.length}
+        color="#6B58D7"
+        timerRemaining={gameTimer.remaining}
+        timerTotal={gameTimer.total}
+      />
+      <GamePrompt
+        promptKey={word.id}
+        hintState={hintState}
+        hintColor="#6B58D7"
+        label="REVEAL THE WORD"
+        prompt={stripPlainEnglishLeadIn(word.simpleDefinition ?? word.definition)}
+      />
+      <View style={gameStyles.hangmanCard}>
+        <HangmanFigure misses={misses} />
+        <View style={gameStyles.hangmanStatusRow}>
+          <Text style={gameStyles.hangmanStatusLabel}>MISTAKES</Text>
+          <Text style={[gameStyles.hangmanStatusValue, misses >= 4 && gameStyles.hangmanStatusValueWarning]}>
+            {misses}/{HANGMAN_MAX_MISSES}
+          </Text>
+        </View>
+        <View style={gameStyles.hangmanWord} accessibilityLabel="Word to reveal">
+          {Array.from(word.term.toUpperCase()).map((character, characterIndex) => {
+            const letter = normalizeWord(character).toUpperCase();
+            if (!letter) {
+              return character.trim() ? (
+                <Text key={`${character}-${characterIndex}`} style={gameStyles.hangmanPunctuation}>{character}</Text>
+              ) : (
+                <View key={`space-${characterIndex}`} style={gameStyles.hangmanWordSpace} />
+              );
+            }
+            return (
+              <View key={`${letter}-${characterIndex}`} style={gameStyles.hangmanLetterTile}>
+                <Text style={gameStyles.hangmanLetter}>{guessed.includes(letter) ? character.toUpperCase() : ''}</Text>
+              </View>
+            );
+          })}
+        </View>
+        <Text style={gameStyles.hangmanHelper}>
+          {feedback ?? 'Choose a letter before the drawing is complete.'}
+        </Text>
+      </View>
+      <View style={gameStyles.hangmanKeyboard}>
+        {HANGMAN_LETTERS.map((letter) => {
+          const used = guessed.includes(letter);
+          const correct = used && answer.includes(letter);
+          return (
+            <Pressable
+              key={letter}
+              accessibilityRole="button"
+              accessibilityLabel={`Guess letter ${letter}`}
+              accessibilityState={{ disabled: used || Boolean(feedback) }}
+              disabled={used || Boolean(feedback)}
+              onPress={() => guessLetter(letter)}
+              style={({ pressed }) => [
+                gameStyles.hangmanKey,
+                used && (correct ? gameStyles.hangmanKeyCorrect : gameStyles.hangmanKeyWrong),
+                pressed && !used && gameStyles.pressed,
+              ]}
+            >
+              <Text style={[gameStyles.hangmanKeyText, used && gameStyles.hangmanKeyTextUsed]}>{letter}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+      <View style={gameStyles.belowSubmitHintRow}>
+        <HintButton
+          label={getHintButtonLabel(hintState.hintStep, hintState.hintCount)}
+          onPress={hintState.advance}
+          visible={hintState.hintStep > 0}
+          hintStep={hintState.hintStep}
+          hintCount={hintState.hintCount}
+        />
+      </View>
+      {hintState.visibleHint ? (
+        <HintCard
+          color="#6B58D7"
+          hint={hintState.visibleHint}
+          step={hintState.hintStep}
+          total={hintState.hintCount}
+        />
+      ) : null}
+    </View>
+  );
+}
+
+function RapidFireGame({ words, gameHistory, onFinish }: { words: Word[]; gameHistory: GameAttempt[]; onFinish: GameFinish }) {
+  const { timerMode } = useGamePreferences();
   const startedAt = useRef(Date.now()).current;
   const gameKey = useMemo(() => `${getGameDateKey()}:rapid-fire`, []);
-  const [remaining, setRemaining] = useState(60);
+  const [remaining, setRemaining] = useState(() => getRapidFireDurationSeconds(timerMode));
   const [index, setIndex] = useState(0);
   const [score, setScore] = useState(0);
   const scoreRef = useRef(0);
@@ -1231,7 +1688,7 @@ function RapidFireGame({ words, onFinish }: { words: Word[]; onFinish: GameFinis
   const [answers, setAnswers] = useState<GameAnswer[]>([]);
   const answersRef = useRef<GameAnswer[]>([]);
   const finished = useRef(false);
-  const roundWords = useMemo(() => getGameRoundWords('rapid-fire', words), [words]);
+  const roundWords = useMemo(() => getGameRoundWords('rapid-fire', words, undefined, gameHistory), [gameHistory, words]);
   const word = roundWords[index % Math.max(1, roundWords.length)];
   const hintState = useGameHintState(word ? getHintLevels(word) : undefined, word?.id);
   const options = useMemo(
@@ -1294,7 +1751,7 @@ function RapidFireGame({ words, onFinish }: { words: Word[]; onFinish: GameFinis
         hintState={hintState}
         hintColor="#D07B22"
         label="GO WITH YOUR FIRST INSTINCT"
-        prompt={`Which word matches “${word.simpleDefinition ?? word.definition}”?`}
+        prompt={`Which word matches “${stripPlainEnglishLeadIn(word.simpleDefinition ?? word.definition)}”?`}
       />
       <OptionList options={options} selected={null} correct={word.term} onSelect={answer} />
       <Text style={gameStyles.helperText}>Answer as many as you can. A miss resets your combo.</Text>
@@ -1329,15 +1786,23 @@ const gameStyles = StyleSheet.create({
   gameNoteText: { flex: 1, color: COLORS.muted, fontSize: 10, lineHeight: 15, fontWeight: '700' },
   gameHeader: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingBottom: 2 },
   backButton: { width: 35, height: 35, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.white, borderWidth: 1, borderColor: COLORS.border },
-  gameHeaderCopy: { flex: 1 },
+  gameHeaderCopy: { flex: 1, minWidth: 0 },
   gameEyebrow: { color: COLORS.purpleDark, fontSize: 8, fontWeight: '900', letterSpacing: 0.9 },
   gameTitle: { marginTop: 2, color: COLORS.ink, fontSize: 20, fontWeight: '900' },
+  coverageFlag: { maxWidth: '100%', marginTop: 3, flexDirection: 'row', alignItems: 'center', gap: 4 },
+  coverageFlagCopy: { flex: 1, minWidth: 0 },
+  coverageFlagText: { color: COLORS.purpleDark, fontSize: 8, fontWeight: '900', letterSpacing: 0.25 },
+  coverageFlagSubtext: { marginTop: 1, color: COLORS.muted, fontSize: 8, fontWeight: '700' },
   gameHeaderIcon: { width: 38, height: 38, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
   playArea: { gap: 12 },
   progressWrap: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   progressTrack: { flex: 1, height: 7, overflow: 'hidden', borderRadius: 4, backgroundColor: '#ECE8F5' },
   progressFill: { height: '100%', borderRadius: 4 },
   progressText: { minWidth: 38, color: COLORS.muted, fontSize: 10, fontWeight: '900', textAlign: 'right' },
+  gameTimer: { minWidth: 63, paddingHorizontal: 7, paddingVertical: 5, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, borderRadius: 10, backgroundColor: '#F0ECFF', borderWidth: 1, borderColor: '#DDD2FF' },
+  gameTimerWarning: { backgroundColor: '#FFF0F3', borderColor: '#F0B4C2' },
+  gameTimerText: { color: COLORS.purpleDark, fontSize: 10, fontWeight: '900' },
+  gameTimerTextWarning: { color: COLORS.red },
   promptCard: { padding: 16, borderRadius: 20, backgroundColor: '#FFF8EC', borderWidth: 1, borderColor: '#F5E2B7' },
   promptHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   promptLabel: { color: COLORS.purpleDark, fontSize: 9, fontWeight: '900', letterSpacing: 0.9 },
@@ -1392,6 +1857,47 @@ const gameStyles = StyleSheet.create({
   connectionClue: { alignItems: 'center', padding: 17, borderRadius: 18, backgroundColor: '#F5F0FF', borderWidth: 1, borderColor: '#DED0FF' },
   connectionClueLabel: { color: '#8B65D9', fontSize: 9, fontWeight: '900', letterSpacing: 0.8 },
   connectionWord: { marginTop: 3, color: COLORS.ink, fontSize: 25, fontWeight: '900' },
+  hangmanCard: { alignItems: 'center', padding: 14, borderRadius: 20, backgroundColor: '#F5F0FF', borderWidth: 1, borderColor: '#DED0FF' },
+  hangmanFigure: { width: 160, height: 184, alignItems: 'center', justifyContent: 'flex-end' },
+  hangmanBase: { position: 'absolute', left: 12, bottom: -4, width: 144, height: 5, borderRadius: 3, backgroundColor: '#8A76D9' },
+  hangmanPost: { position: 'absolute', left: 28, bottom: -4, width: 5, height: 177, borderRadius: 3, backgroundColor: '#8A76D9' },
+  hangmanBeam: { position: 'absolute', left: 28, top: 9, width: 86, height: 5, borderRadius: 3, backgroundColor: '#8A76D9' },
+  hangmanRope: { position: 'absolute', left: 111, top: 9, width: 5, height: 40, borderRadius: 3, backgroundColor: '#8A76D9' },
+  hangmanMagicHalo: { position: 'absolute', top: -17, left: 14, width: 54, height: 54, alignItems: 'center', justifyContent: 'center', borderRadius: 27, backgroundColor: '#FFF5D8' },
+  hangmanWizard: { position: 'absolute', left: 71, top: 29, width: 82, height: 140, alignItems: 'center' },
+  hangmanWizardHat: { position: 'absolute', top: 0, width: 0, height: 0, borderLeftWidth: 25, borderRightWidth: 25, borderBottomWidth: 53, borderLeftColor: 'transparent', borderRightColor: 'transparent', borderBottomColor: '#6B58D7', transform: [{ rotate: '-8deg' }] },
+  hangmanWizardHatBand: { position: 'absolute', top: 43, width: 70, height: 11, borderRadius: 6, backgroundColor: '#5140B5', borderWidth: 2, borderColor: '#E3A72A' },
+  hangmanWizardFace: { position: 'absolute', top: 49, width: 43, height: 41, alignItems: 'center', borderRadius: 22, borderWidth: 3, borderColor: '#6B58D7', backgroundColor: '#FFFDFE' },
+  hangmanWizardEyes: { flexDirection: 'row', gap: 12, marginTop: 13 },
+  hangmanWizardEye: { width: 4, height: 6, borderRadius: 2, backgroundColor: COLORS.ink },
+  hangmanWizardBeard: { position: 'absolute', bottom: -10, width: 27, height: 21, borderBottomLeftRadius: 14, borderBottomRightRadius: 14, borderBottomWidth: 3, borderBottomColor: '#D8C8F5', backgroundColor: '#EAE1FF' },
+  hangmanWizardRobe: { position: 'absolute', top: 86, width: 70, height: 54, alignItems: 'center', borderTopLeftRadius: 31, borderTopRightRadius: 31, borderBottomLeftRadius: 14, borderBottomRightRadius: 14, backgroundColor: '#7D69D8', borderWidth: 2, borderColor: '#5B49C3' },
+  hangmanWizardCollar: { position: 'absolute', top: -2, width: 26, height: 13, borderBottomLeftRadius: 14, borderBottomRightRadius: 14, backgroundColor: '#EAE1FF' },
+  hangmanWizardBelt: { position: 'absolute', top: 31, width: 61, height: 7, borderRadius: 4, backgroundColor: '#E3A72A' },
+  hangmanWizardBuckle: { position: 'absolute', top: -2, left: 25, width: 11, height: 11, borderRadius: 3, borderWidth: 2, borderColor: '#FFF1BA' },
+  hangmanWizardArm: { position: 'absolute', top: 96, width: 33, height: 8, borderRadius: 4, backgroundColor: '#6B58D7' },
+  hangmanWizardLeftArm: { left: 2, transform: [{ rotate: '28deg' }] },
+  hangmanWizardRightArm: { right: 2, transform: [{ rotate: '-28deg' }] },
+  hangmanWizardWand: { position: 'absolute', right: -8, top: 69, width: 23, height: 62, alignItems: 'center', transformOrigin: 'center bottom' },
+  hangmanWizardWandStick: { width: 4, height: 46, borderRadius: 2, backgroundColor: '#A9794D', transform: [{ rotate: '14deg' }] },
+  hangmanWizardBootLeft: { position: 'absolute', left: 19, bottom: -7, width: 16, height: 20, borderRadius: 8, backgroundColor: '#5140B5', transform: [{ rotate: '-12deg' }] },
+  hangmanWizardBootRight: { position: 'absolute', right: 19, bottom: -7, width: 16, height: 20, borderRadius: 8, backgroundColor: '#5140B5', transform: [{ rotate: '12deg' }] },
+  hangmanStatusRow: { width: '100%', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 2 },
+  hangmanStatusLabel: { color: COLORS.muted, fontSize: 9, fontWeight: '900', letterSpacing: 0.8 },
+  hangmanStatusValue: { color: COLORS.purpleDark, fontSize: 12, fontWeight: '900' },
+  hangmanStatusValueWarning: { color: COLORS.red },
+  hangmanWord: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-end', justifyContent: 'center', gap: 5, marginTop: 13 },
+  hangmanLetterTile: { width: 24, height: 33, alignItems: 'center', justifyContent: 'flex-end', borderBottomWidth: 3, borderBottomColor: '#6B58D7' },
+  hangmanLetter: { color: COLORS.ink, fontSize: 21, lineHeight: 27, fontWeight: '900' },
+  hangmanWordSpace: { width: 10, height: 33 },
+  hangmanPunctuation: { color: COLORS.ink, fontSize: 21, lineHeight: 27, fontWeight: '900' },
+  hangmanHelper: { marginTop: 11, color: COLORS.muted, fontSize: 11, lineHeight: 16, fontWeight: '700', textAlign: 'center' },
+  hangmanKeyboard: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 6 },
+  hangmanKey: { width: 31, height: 38, alignItems: 'center', justifyContent: 'center', borderRadius: 11, borderWidth: 1, borderColor: '#D9D0F2', backgroundColor: COLORS.white },
+  hangmanKeyCorrect: { borderColor: '#A7DFC6', backgroundColor: '#ECFAF3' },
+  hangmanKeyWrong: { borderColor: '#F0B4C2', backgroundColor: '#FFF1F4' },
+  hangmanKeyText: { color: COLORS.purpleDark, fontSize: 12, fontWeight: '900' },
+  hangmanKeyTextUsed: { color: COLORS.muted },
   crosswordBoard: { alignSelf: 'center', padding: 7, borderRadius: 15, backgroundColor: '#DCC9A7', gap: 1 },
   crosswordRow: { flexDirection: 'row', gap: 1 },
   crosswordCell: { width: 18, height: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.white },
@@ -1409,6 +1915,7 @@ const gameStyles = StyleSheet.create({
   belowSubmitHintRow: { flexDirection: 'row', justifyContent: 'flex-end' },
   textInput: { minHeight: 53, paddingHorizontal: 15, borderRadius: 16, borderWidth: 1, borderColor: '#DCD3EE', backgroundColor: COLORS.white, color: COLORS.ink, fontSize: 16, fontWeight: '800' },
   primaryButton: { minHeight: 52, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, borderRadius: 16, backgroundColor: COLORS.purple, ...SOFT_SHADOW },
+  resultPrimaryButton: { alignSelf: 'stretch', minHeight: 58, marginHorizontal: 8, marginTop: 14, paddingHorizontal: 22, borderRadius: 19 },
   primaryButtonText: { color: COLORS.white, fontSize: 13, fontWeight: '900', letterSpacing: 0.5 },
   secondaryButton: { minHeight: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 14 },
   secondaryButtonText: { color: COLORS.purpleDark, fontSize: 12, fontWeight: '900' },

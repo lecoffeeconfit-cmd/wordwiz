@@ -11,6 +11,7 @@ import {
   getSynonyms,
   inferOriginPeriod,
   makeSimpleDefinition,
+  stripPlainEnglishLeadIn,
 } from '../utils';
 import { lookupWordnikEnrichment, type WordnikEnrichment } from './wordnik';
 
@@ -281,7 +282,9 @@ export async function lookupWordDetails(rawTerm: string): Promise<WordDetails> {
     (meaning.definitions ?? []).map((item) => item.example ?? ''),
   );
   const simpleDefinition =
-    fallback?.simpleDefinition ?? makeSimpleDefinition(definition, rawTerm);
+    stripPlainEnglishLeadIn(
+      fallback?.simpleDefinition ?? makeSimpleDefinition(definition, rawTerm),
+    );
   const pronunciation =
     entry?.phonetic ??
     entry?.phonetics?.find((phonetic) => phonetic.text)?.text ??

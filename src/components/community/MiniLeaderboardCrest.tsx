@@ -4,6 +4,7 @@ import {
   AccessibilityInfo,
   Animated,
   Easing,
+  Image,
   StyleSheet,
   Text,
   View,
@@ -22,6 +23,7 @@ type LeaderboardRankBadgeProps = {
   testID?: string;
   accessibilityLabel?: string;
   rankTextStyle?: StyleProp<TextStyle>;
+  championVisual?: boolean;
 };
 
 type LevelMagicIconProps = {
@@ -44,10 +46,41 @@ type LevelBadgeConfig = {
 };
 
 const TOP_THREE = {
-  1: { color: '#D3A12C', background: '#FFF3C9' },
-  2: { color: '#9AA6B6', background: '#F1F3F6' },
-  3: { color: '#B8754F', background: '#FBE9DE' },
+  1: { color: '#7462E8', background: '#F0ECFF' },
+  2: { color: '#D3A12C', background: '#FFF3C9' },
+  3: { color: '#D3A12C', background: '#FFF3C9' },
 } as const;
+
+const RANK_TIER_BADGES = {
+  gold: { color: '#D3A12C', background: '#FFF3C9' },
+  silver: { color: '#8E9BAE', background: '#F1F3F6' },
+  bronze: { color: '#B8754F', background: '#FBE9DE' },
+} as const;
+
+type ChampionSparkle = {
+  top?: number;
+  right?: number;
+  bottom?: number;
+  left?: number;
+  color: string;
+  scale: number;
+};
+
+const CHAMPION_SPARKLES: readonly ChampionSparkle[] = [
+  { top: 3, left: 4, color: COLORS.pink, scale: 0.82 },
+  { top: 3, right: 4, color: COLORS.blue, scale: 0.76 },
+  { bottom: 4, left: 6, color: COLORS.greenDark, scale: 0.7 },
+  { bottom: 3, right: 5, color: COLORS.orange, scale: 0.66 },
+] as const;
+
+function rankBadgeFor(rank: number | null | undefined, level: CommunityLevel, championVisual: boolean) {
+  if (rank === 1 && (level === 'Grandmaster' || championVisual)) return TOP_THREE[1];
+  if (rank === 1 || rank === 2 || rank === 3) return RANK_TIER_BADGES.gold;
+  if (typeof rank === 'number' && rank >= 4 && rank <= 5) return RANK_TIER_BADGES.gold;
+  if (typeof rank === 'number' && rank >= 6 && rank <= 15) return RANK_TIER_BADGES.silver;
+  if (typeof rank === 'number' && rank >= 16 && rank <= 30) return RANK_TIER_BADGES.bronze;
+  return null;
+}
 
 const LEVEL_BADGES: Record<CommunityLevel, LevelBadgeConfig> = {
   Novice: {
@@ -334,9 +367,13 @@ export function LevelMagicIcon({ level, size, variant = 'filled', color }: Level
 }
 
 function rankLabel(rank: number | null | undefined, level: CommunityLevel) {
-  if (rank === 1) return 'First place';
-  if (rank === 2) return 'Second place';
-  if (rank === 3) return 'Third place';
+  if (rank === 1 && level === 'Grandmaster') return 'WordWizard champion, First place';
+  if (rank === 1) return 'Gold tier, First place';
+  if (rank === 2) return 'Gold tier, Second place';
+  if (rank === 3) return 'Gold tier, Third place';
+  if (typeof rank === 'number' && rank >= 4 && rank <= 5) return `Gold tier, Rank ${rank}, ${level}`;
+  if (typeof rank === 'number' && rank >= 6 && rank <= 15) return `Silver tier, Rank ${rank}, ${level}`;
+  if (typeof rank === 'number' && rank >= 16 && rank <= 30) return `Bronze tier, Rank ${rank}, ${level}`;
   if (rank) return `Rank ${rank}, ${level}`;
   return `Unranked, ${level}`;
 }
@@ -348,13 +385,16 @@ export function LeaderboardRankBadge({
   testID,
   accessibilityLabel,
   rankTextStyle,
+  championVisual = false,
 }: LeaderboardRankBadgeProps) {
   const label = accessibilityLabel ?? rankLabel(rank, level);
-  const isTopThree = rank === 1 || rank === 2 || rank === 3;
+  const isChampionVisual = rank === 1 && (level === 'Grandmaster' || championVisual);
+  const medal = rankBadgeFor(rank, level, championVisual);
+  const isTieredRank = medal !== null;
   const reduceMotion = useReducedMotion();
-  const shineProgress = useSoftLoop(isTopThree, 1100, (rank ?? 0) * 180, reduceMotion);
+  const shineProgress = useSoftLoop(isTieredRank, 1100, (rank ?? 0) * 180, reduceMotion);
 
-  if (!isTopThree) {
+  if (!isTieredRank || !medal) {
     return (
       <View
         testID={testID}
@@ -371,7 +411,6 @@ export function LeaderboardRankBadge({
     );
   }
 
-  const medal = TOP_THREE[rank];
   const emblemSize = Math.max(15, Math.round(size * 0.58));
   const shineX = shineProgress.interpolate({
     inputRange: [0, 1],
@@ -393,13 +432,37 @@ export function LeaderboardRankBadge({
             width: size,
             height: size,
             borderRadius: size / 2,
-            borderColor: medal.color,
+            borderColor: isChampionVisual ? '#D3A12C' : medal.color,
             backgroundColor: medal.background,
-            shadowColor: medal.color,
+            shadowColor: isChampionVisual ? '#D3A12C' : medal.color,
           },
         ]}
       >
-        <Ionicons name="book-outline" size={emblemSize} color={medal.color} />
+        {isChampionVisual ? (
+          <Image
+            source={require('../../../assets/splash-icon.png')}
+            accessibilityLabel="WordWizard app icon"
+            style={[styles.championIcon, { width: Math.min(size, Math.max(27, Math.round(size * 0.98) + 1)), height: Math.min(size, Math.max(27, Math.round(size * 0.98) + 1)), borderRadius: Math.max(6, Math.round(size * 0.25)) }]}
+          />
+        ) : (
+          <Ionicons name="book-outline" size={emblemSize} color={medal.color} />
+        )}
+        {isChampionVisual ? CHAMPION_SPARKLES.map((sparkle, index) => (
+          <Animated.View
+            key={`${sparkle.color}-${index}`}
+            pointerEvents="none"
+            style={[
+              styles.championSparkle,
+              { top: sparkle.top, left: sparkle.left, right: sparkle.right, bottom: sparkle.bottom },
+              {
+                opacity: shineProgress.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0.5, 1, 0.5] }),
+                transform: [{ scale: shineProgress.interpolate({ inputRange: [0, 0.5, 1], outputRange: [sparkle.scale, sparkle.scale * 1.35, sparkle.scale] }) }],
+              },
+            ]}
+          >
+            <FontAwesome6 name="star" solid size={Math.max(7, Math.round(size * 0.22))} color={sparkle.color} />
+          </Animated.View>
+        )) : null}
         <Animated.View
           pointerEvents="none"
           style={[
@@ -442,6 +505,14 @@ const styles = StyleSheet.create({
     top: -15,
     left: '42%',
     backgroundColor: 'rgba(255, 255, 255, 0.5)',
+  },
+  championIcon: {
+    overflow: 'hidden',
+    borderWidth: 2,
+    borderColor: '#D3A12C',
+  },
+  championSparkle: {
+    position: 'absolute',
   },
   magicShell: {
     position: 'relative',

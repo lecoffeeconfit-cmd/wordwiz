@@ -215,8 +215,8 @@ test('flashcard swipes only claim deliberate horizontal movement', () => {
   assert.equal(cards.isHorizontalCardGesture(20, 0), true);
   assert.equal(cards.isHorizontalCardGesture(20, 18), false);
   assert.equal(cards.isHorizontalCardGesture(13, 0), false);
-  assert.equal(cards.getCardSwipeDirection(-72, 10), 'previous');
-  assert.equal(cards.getCardSwipeDirection(72, -10), 'next');
+  assert.equal(cards.getCardSwipeDirection(-72, 10), 'next');
+  assert.equal(cards.getCardSwipeDirection(72, -10), 'previous');
   assert.equal(cards.getCardSwipeDirection(42, 0), null);
   assert.equal(cards.getCardSwipeDirection(72, 60), null);
 });
@@ -643,7 +643,25 @@ test('simple definitions preserve the full first sentence', () => {
 
   assert.equal(
     simpleDefinition,
-    'In plain English, the process by which non-Chinese societies or groups are acculturated or assimilated into Chinese culture.',
+    'The process by which non-Chinese societies or groups are acculturated or assimilated into Chinese culture.',
+  );
+});
+
+test('legacy plain-English definition lead-ins are removed for display and speech', () => {
+  assert.equal(
+    dictionaryUtils.stripPlainEnglishLeadIn('In plain English, belonging to a different time.'),
+    'Belonging to a different time.',
+  );
+  assert.equal(
+    dictionaryUtils.getCompleteFlashcardDefinition(
+      'Belonging to a different time.',
+      'In plain English, belonging to a different time.',
+    ),
+    'Belonging to a different time.',
+  );
+  assert.equal(
+    dictionaryUtils.stripPlainEnglishLeadIn('A direct definition.'),
+    'A direct definition.',
   );
 });
 
@@ -3636,10 +3654,52 @@ test('dated game rounds are deterministic and XP is bounded by the round total',
   const secondOrder = games.getGameRoundWords('fill-gap', [...words].reverse(), 4).map((word) => word.id);
 
   assert.deepEqual(firstOrder, secondOrder);
+  const history = [{
+    answers: [
+      { wordId: 'one', correct: true },
+      { wordId: 'two', correct: false },
+    ],
+  }];
+  const rotatedOrder = games.getGameRoundWords('fill-gap', words, 2, history).map((word) => word.id);
+  assert.equal(rotatedOrder.includes('one'), false);
+  assert.equal(rotatedOrder.includes('two'), false);
   assert.equal(
     games.getGameXp({ gameType: 'fill-gap', gameKey: '2026-08-26:fill-gap', score: 99, total: 5 }),
     19,
   );
+});
+
+test('game preferences keep relaxed defaults and expose coverage and pace controls', () => {
+  const words = [
+    makeWord('one', 'Alpha', 'First'),
+    makeWord('two', 'Bravo', 'Second'),
+    makeWord('three', 'Charlie', 'Third'),
+    makeWord('four', 'Delta', 'Fourth'),
+  ];
+  const coverage = games.getGameCoverage(words, [
+    { answers: [{ wordId: 'one' }, { wordId: 'two' }, { wordId: 'outside' }] },
+  ]);
+
+  assert.deepEqual(coverage, { practiced: 2, total: 4, remaining: 2 });
+  assert.equal(games.getGameTimerSeconds('off'), null);
+  assert.equal(games.getGameTimerSeconds('relaxed'), 45);
+  assert.equal(games.getGameTimerSeconds('focused'), 30);
+  assert.equal(games.getGameTimerSeconds('challenge'), 15);
+  assert.equal(games.getRapidFireDurationSeconds('relaxed'), 90);
+  assert.deepEqual(games.normalizeGamePreferences({ hintsEnabled: false, timerMode: 'challenge' }), {
+    hintsEnabled: false,
+    timerMode: 'challenge',
+  });
+
+  const gameSource = fs.readFileSync(path.join(projectRoot, 'src/components/quiz/QuizGames.tsx'), 'utf8');
+  const dashboardSource = fs.readFileSync(path.join(projectRoot, 'src/screens/DashboardScreen.tsx'), 'utf8');
+  const appContentSource = fs.readFileSync(path.join(projectRoot, 'src/application/AppContent.tsx'), 'utf8');
+  assert.match(gameSource, /GameCoverageFlag/);
+  assert.match(gameSource, /useGameTimer/);
+  assert.match(gameSource, /hintsEnabled/);
+  assert.match(dashboardSource, /GAME CONTROL CENTER/);
+  assert.match(dashboardSource, /GAME TIMER/);
+  assert.match(appContentSource, /game-preferences/);
 });
 
 test('games and widgets participate in retention, time, and persisted app flows', () => {
@@ -3672,13 +3732,20 @@ test('games and widgets participate in retention, time, and persisted app flows'
     path.join(projectRoot, 'supabase/migrations/20260826000004_quiz_attempt_validation_and_goal_read.sql'),
     'utf8',
   );
+  const hangmanValidation = fs.readFileSync(
+    path.join(projectRoot, 'supabase/migrations/20260827000000_hangman_game.sql'),
+    'utf8',
+  );
 
   assert.match(gameSource, /wrongResetTimeout/);
   assert.match(gameSource, /getPlayableGameWords/);
+  assert.match(gameSource, /type: 'hangman'/);
+  assert.match(gameSource, /function HangmanGame/);
   assert.match(widgetService, /saveWordWizWidgetConfig/);
   assert.match(widgetService, /updateTimeline/);
   assert.match(widgetSetup, /loadWordWizWidgetConfig/);
   assert.match(appConfig, /"expo-widgets"/);
   assert.match(validation, /community_validate_quiz_attempt/);
   assert.match(validation, /quiz_score_does_not_match_answers/);
+  assert.match(hangmanValidation, /when 'hangman' then 5/);
 });

@@ -8,6 +8,7 @@ import {
   getDueReviewWords,
   getWordMastery,
   sortWordsForReview,
+  stripPlainEnglishLeadIn,
 } from '../utils';
 import type {
   WordWizWidgetConfig,
@@ -55,8 +56,8 @@ function getWidgetWord(word: Word | undefined): WordWizWidgetWord {
   return {
     id: word?.id ?? '',
     term: word?.term ?? 'serendipity',
-    definition: word?.definition ?? 'A fortunate discovery made by chance.',
-    plainDefinition: word?.simpleDefinition ?? word?.definition ?? 'A fortunate discovery made by chance.',
+    definition: stripPlainEnglishLeadIn(word?.definition ?? 'A fortunate discovery made by chance.'),
+    plainDefinition: stripPlainEnglishLeadIn(word?.simpleDefinition ?? word?.definition ?? 'A fortunate discovery made by chance.'),
     example: word?.example ?? '',
     partOfSpeech: word?.partOfSpeech ?? '',
     pronunciation: word?.pronunciation ?? '',

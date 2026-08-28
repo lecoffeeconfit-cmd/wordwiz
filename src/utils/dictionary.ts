@@ -1,5 +1,7 @@
 import type { Word } from '../types';
 
+const PLAIN_ENGLISH_LEAD_IN = /^in\s+plain\s+english\s*[,;:\u2013\u2014-]?\s*/i;
+
 export function cleanLookupWord(value: string) {
   return value.trim().toLowerCase().replace(/[^a-z'-]/g, '');
 }
@@ -26,7 +28,7 @@ export function buildWordContextExamples({
   sourceExamples?: string[];
 }) {
   const cleanTerm = term.trim();
-  const meaning = lowercaseFirst(cleanDefinitionText(definition));
+  const meaning = lowercaseFirst(stripPlainEnglishLeadIn(definition));
   const sourced = uniqueContextSentences(
     [example, ...sourceExamples],
     cleanTerm,
@@ -82,19 +84,16 @@ function uniqueContextSentences(candidates: string[], term: string) {
 
 export function makeSimpleDefinition(definition: string, word: string) {
   const displayWord = word.trim() || 'this word';
+  const cleanedDefinition = stripPlainEnglishLeadIn(definition);
   const firstSentence = cleanDefinitionText(
-    definition.split(/[.;:]/)[0] ?? '',
+    cleanedDefinition.split(/[.;:]/)[0] ?? '',
   );
   if (!firstSentence) {
     return `A plain meaning for ${displayWord}.`;
   }
 
   const simpleDefinition = simplifyDefinitionText(firstSentence);
-  if (!definitionsMatch(simpleDefinition, definition)) {
-    return simpleDefinition;
-  }
-
-  return `In plain English, ${lowercaseFirst(simpleDefinition)}`;
+  return simpleDefinition;
 }
 
 export function makeDistinctSimpleDefinition(
@@ -102,24 +101,32 @@ export function makeDistinctSimpleDefinition(
   definition: string,
   word: string,
 ) {
-  const cleanedSimpleDefinition = cleanDefinitionText(simpleDefinition ?? '');
+  const cleanedSimpleDefinition = stripPlainEnglishLeadIn(simpleDefinition ?? '');
+  const cleanedDefinition = stripPlainEnglishLeadIn(definition);
   if (
     cleanedSimpleDefinition &&
-    !isIncompleteDefinitionPrefix(cleanedSimpleDefinition, definition) &&
-    !definitionsMatch(cleanedSimpleDefinition, definition)
+    !isIncompleteDefinitionPrefix(cleanedSimpleDefinition, cleanedDefinition) &&
+    !definitionsMatch(cleanedSimpleDefinition, cleanedDefinition)
   ) {
     return cleanedSimpleDefinition;
   }
 
-  return makeSimpleDefinition(definition, word);
+  return makeSimpleDefinition(cleanedDefinition, word);
+}
+
+/** Removes the old instructional prefix from saved definitions at display time. */
+export function stripPlainEnglishLeadIn(value: string) {
+  const cleaned = cleanDefinitionText(value);
+  const withoutLeadIn = cleaned.replace(PLAIN_ENGLISH_LEAD_IN, '').trim();
+  return withoutLeadIn === cleaned ? cleaned : capitalizeFirst(withoutLeadIn);
 }
 
 export function getCompleteFlashcardDefinition(
   definition: string,
   simpleDefinition?: string,
 ) {
-  const cleanedDefinition = cleanDefinitionText(definition);
-  const cleanedSimpleDefinition = cleanDefinitionText(simpleDefinition ?? '');
+  const cleanedDefinition = stripPlainEnglishLeadIn(definition);
+  const cleanedSimpleDefinition = stripPlainEnglishLeadIn(simpleDefinition ?? '');
 
   if (
     !cleanedSimpleDefinition ||
@@ -149,7 +156,7 @@ export function getAlternateLearningExplanation(
     word.definition,
     word.simpleDefinition,
   ]
-    .map((candidate) => cleanDefinitionText(candidate ?? ''))
+    .map((candidate) => stripPlainEnglishLeadIn(candidate ?? ''))
     .filter((candidate) => candidate.length >= 12 && candidate.length <= 180)
     .filter((candidate) => !definitionsMatch(candidate, primary));
 

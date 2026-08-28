@@ -106,6 +106,7 @@ import type {
   AchievementWallet,
   AuthUser,
   GameAttempt,
+  GamePreferences,
   LegalPage,
   QuizAnswer,
   QuizAttempt,
@@ -130,6 +131,7 @@ import {
   buildWordFromInput,
   calculateStreakStats,
   DEFAULT_TIME_BASED_LEARNING_SETTINGS,
+  DEFAULT_GAME_PREFERENCES,
   getDayKey,
   getDailyLearningProgress,
   getDueReviewWords,
@@ -141,6 +143,7 @@ import {
   buildGameMasteryAnswers,
   getGameXp,
   getWordMastery,
+  normalizeGamePreferences,
   mergeWordLists,
   normalizeQuestionTypePreferences,
   upsertSavedWord,
@@ -171,7 +174,7 @@ export default function AppContent() {
   const subscription = useSubscription();
   const insets = useSafeAreaInsets();
   const [activeTab, setActiveTab] = useState<Tab>('home');
-  const [dashboardFocusSection, setDashboardFocusSection] = useState<'achievements' | null>(null);
+  const [dashboardFocusSection, setDashboardFocusSection] = useState<'achievements' | 'reminder' | null>(null);
   const [communityInitialCompetitiveMetric, setCommunityInitialCompetitiveMetric] = useState<CompetitiveMetric | null>(null);
   const [words, setWords] = useState<Word[]>([]);
   const [sortMode, setSortMode] = useState<SortMode>('alphabetical');
@@ -203,6 +206,8 @@ export default function AppContent() {
   const [timedLearningEnabled, setTimedLearningEnabled] = useState(false);
   const [timeBasedLearningSettings, setTimeBasedLearningSettings] =
     useState<TimeBasedLearningSettings>(DEFAULT_TIME_BASED_LEARNING_SETTINGS);
+  const [gamePreferences, setGamePreferences] =
+    useState<GamePreferences>(DEFAULT_GAME_PREFERENCES);
   const [quizPreferences, setQuizPreferences] =
     useState<QuizPreferences>(DEFAULT_QUIZ_PREFERENCES);
   const [startupState, setStartupState] = useState<StartupState>(initialStartupState);
@@ -497,6 +502,7 @@ export default function AppContent() {
           setDailyLearningGoal(1);
           setTimedLearningEnabled(false);
           setTimeBasedLearningSettings(DEFAULT_TIME_BASED_LEARNING_SETTINGS);
+          setGamePreferences(DEFAULT_GAME_PREFERENCES);
           setQuizPreferences(DEFAULT_QUIZ_PREFERENCES);
         }
         completed = true;
@@ -521,6 +527,7 @@ export default function AppContent() {
         setDailyLearningGoal(1);
         setTimedLearningEnabled(false);
         setTimeBasedLearningSettings(DEFAULT_TIME_BASED_LEARNING_SETTINGS);
+        setGamePreferences(DEFAULT_GAME_PREFERENCES);
         setQuizPreferences(DEFAULT_QUIZ_PREFERENCES);
         setStartupState((current) => failStartup(current, failedStage, failureCode));
       } finally {
@@ -757,7 +764,7 @@ export default function AppContent() {
     try {
       achievementWalletLoadedUserId.current = null;
       setAchievementWallet(EMPTY_ACHIEVEMENT_WALLET);
-      const [savedWords, savedQuiz, savedAnalytics, savedPausedQuizSession, savedReminder, savedDailyLearningGoal, savedDailyQuizGoal, savedTimedLearning, savedTimeBasedLearningSettings, savedQuizPreferences, savedAchievementWallet, savedOnboarding, legacyOnboarding] =
+      const [savedWords, savedQuiz, savedAnalytics, savedPausedQuizSession, savedReminder, savedDailyLearningGoal, savedDailyQuizGoal, savedTimedLearning, savedTimeBasedLearningSettings, savedGamePreferences, savedQuizPreferences, savedAchievementWallet, savedOnboarding, legacyOnboarding] =
         await Promise.all([
           AsyncStorage.getItem(getUserCacheKey(userId, 'words')),
           AsyncStorage.getItem(getUserCacheKey(userId, 'quiz-progress')),
@@ -768,6 +775,7 @@ export default function AppContent() {
           AsyncStorage.getItem(getUserCacheKey(userId, 'daily-quiz-goal')),
           AsyncStorage.getItem(getUserCacheKey(userId, 'timed-learning-enabled')),
           AsyncStorage.getItem(getUserCacheKey(userId, 'time-based-learning-settings')),
+          AsyncStorage.getItem(getUserCacheKey(userId, 'game-preferences')),
           AsyncStorage.getItem(getUserCacheKey(userId, 'quiz-preferences')),
           AsyncStorage.getItem(getUserCacheKey(userId, 'achievement-wallet')),
           AsyncStorage.getItem(getUserCacheKey(userId, 'onboarding-complete')),
@@ -798,6 +806,11 @@ export default function AppContent() {
               ...JSON.parse(savedTimeBasedLearningSettings),
             }
           : DEFAULT_TIME_BASED_LEARNING_SETTINGS,
+      );
+      setGamePreferences(
+        savedGamePreferences
+          ? normalizeGamePreferences(JSON.parse(savedGamePreferences) as Partial<GamePreferences>)
+          : DEFAULT_GAME_PREFERENCES,
       );
       const savedPreferences = savedQuizPreferences
         ? JSON.parse(savedQuizPreferences) as QuizPreferences
@@ -850,6 +863,7 @@ export default function AppContent() {
       setDailyLearningGoal(1);
       setTimedLearningEnabled(false);
       setTimeBasedLearningSettings(DEFAULT_TIME_BASED_LEARNING_SETTINGS);
+      setGamePreferences(DEFAULT_GAME_PREFERENCES);
       dailyLearningGoalLoadedUserId.current = userId;
       setQuizPreferences(DEFAULT_QUIZ_PREFERENCES);
       setAppNotice('Saved data on this device could not be read. Please try again when you are connected.');
@@ -1563,6 +1577,15 @@ export default function AppContent() {
       );
     }
   }, [currentUser, isReady, timeBasedLearningSettings]);
+
+  useEffect(() => {
+    if (isReady && currentUser) {
+      AsyncStorage.setItem(
+        getUserCacheKey(currentUser.id, 'game-preferences'),
+        JSON.stringify(gamePreferences),
+      );
+    }
+  }, [currentUser, gamePreferences, isReady]);
 
   useEffect(() => {
     if (isReady && currentUser) {
@@ -2879,6 +2902,10 @@ export default function AppContent() {
             setDashboardFocusSection(null);
             setActiveTab('dashboard');
           }}
+          onOpenReminder={() => {
+            setDashboardFocusSection('reminder');
+            setActiveTab('dashboard');
+          }}
           onOpenAchievements={() => {
             setDashboardFocusSection('achievements');
             setActiveTab('dashboard');
@@ -2967,6 +2994,7 @@ export default function AppContent() {
           initialStudyGroup={initialQuizStudyGroup}
           timedLearningEnabled={timedLearningEnabled}
           timeBasedLearningSettings={timeBasedLearningSettings}
+          gamePreferences={gamePreferences}
           quizPreferences={quizPreferences}
           refreshTokens={achievementWallet.refreshTokens}
           onUseRefreshToken={useAchievementRefreshToken}
@@ -2995,6 +3023,8 @@ export default function AppContent() {
           onUnreadNudgesChange={setCommunityUnreadNudges}
           initialCompetitiveMetric={communityInitialCompetitiveMetric}
           onInitialCompetitiveMetricHandled={() => setCommunityInitialCompetitiveMetric(null)}
+          refreshTokens={achievementWallet.refreshTokens}
+          onUseGoldenTicket={useAchievementRefreshToken}
         />
       );
     }
@@ -3010,6 +3040,7 @@ export default function AppContent() {
         }
         timedLearningEnabled={timedLearningEnabled}
         timeBasedLearningSettings={timeBasedLearningSettings}
+        gamePreferences={gamePreferences}
         quizPreferences={quizPreferences}
         currentUser={currentUser}
         reminderSettings={reminderSettings}
@@ -3027,6 +3058,7 @@ export default function AppContent() {
         }
         onTimedLearningChange={setTimedLearningEnabled}
         onTimeBasedLearningSettingsChange={setTimeBasedLearningSettings}
+        onGamePreferencesChange={(preferences) => setGamePreferences(normalizeGamePreferences(preferences))}
         onQuizPreferencesChange={setQuizPreferences}
         onOpenLegal={openLegalPage}
         onLogout={logout}
@@ -3429,6 +3461,7 @@ async function clearLocalLearningData(userId: string) {
     getUserCacheKey(userId, 'widget-config'),
     getUserCacheKey(userId, 'timed-learning-enabled'),
     getUserCacheKey(userId, 'time-based-learning-settings'),
+    getUserCacheKey(userId, 'game-preferences'),
     getUserCacheKey(userId, 'quiz-preferences'),
     getUserCacheKey(userId, 'achievement-wallet'),
     getUserCacheKey(userId, 'cloud-hydrated-at'),
@@ -3549,10 +3582,7 @@ function WordSyncLoadingScreen({
 }) {
   return (
     <SafeAreaView style={styles.loadingScreen}>
-      <View style={styles.loadingSparkleCluster} pointerEvents="none">
-        <Text style={styles.loadingSparkleMain}>✦</Text>
-        <Text style={styles.loadingSparkleAccent}>✧</Text>
-      </View>
+      <Ionicons name="sparkles" size={34} color={COLORS.purpleDark} />
       <Text style={styles.loadingTitle}>Getting your words ready...</Text>
       <Text style={styles.startupStageText}>
         {getStartupStageLabel(stage)}

@@ -1,6 +1,6 @@
 import type { AnalyticsData, QuizAnswer, QuizAttempt, QuizDifficultyPreference, QuizQuestion, QuizQuestionDifficulty, QuizQuestionMode, QuizQuestionTypePreference, QuizQuestionTypePreferences, QuizRecallPaceSignal, QuizSessionMode, TimeBasedLearningSettings, Word } from '../types';
 import { FALLBACK_DEFINITIONS } from '../constants/data';
-import { getCompleteFlashcardDefinition } from './dictionary';
+import { getCompleteFlashcardDefinition, stripPlainEnglishLeadIn } from './dictionary';
 
 const MAX_QUIZ_QUESTIONS = 10;
 export const MAX_QUICK_PRACTICE_QUESTIONS = 20;
@@ -2262,7 +2262,7 @@ function getSafeRecallPrompt(
         word.definition,
         word.simpleDefinition,
       ]
-        .map((definition) => definition?.replace(/\s+/g, ' ').trim())
+        .map((definition) => definition ? stripPlainEnglishLeadIn(definition) : '')
         .filter((definition): definition is string => Boolean(definition)),
     ),
   );

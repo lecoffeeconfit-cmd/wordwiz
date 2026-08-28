@@ -4,7 +4,7 @@ import { Pressable, Text, View } from 'react-native';
 import { COLORS, TILE_COLORS } from '../../constants/theme';
 import type { Word } from '../../types';
 import { styles } from '../../styles';
-import { formatWordAddedDate, formatWordFlaggedDate } from '../../utils';
+import { formatWordAddedDate, formatWordFlaggedDate, stripPlainEnglishLeadIn } from '../../utils';
 import { SpeakButton, SpeakDefinitionButton } from '../shared/SpeakButton';
 
 function getLetterColor(term: string) {
@@ -98,7 +98,7 @@ export function WordRow({
           </View>
           <View style={styles.wordDefinitionRow}>
             <Text maxFontSizeMultiplier={1.2} numberOfLines={2} style={styles.wordDefinition}>
-              {word.simpleDefinition || word.definition}
+              {stripPlainEnglishLeadIn(word.simpleDefinition || word.definition)}
             </Text>
           </View>
           {word.commonWords && word.commonWords.length > 0 && (
@@ -189,7 +189,7 @@ export function WordRow({
         <View style={styles.wordRowAudioActions}>
           <SpeakButton term={word.term} />
           <SpeakDefinitionButton
-            definition={word.simpleDefinition || word.definition}
+            definition={stripPlainEnglishLeadIn(word.simpleDefinition || word.definition)}
             term={word.term}
           />
         </View>

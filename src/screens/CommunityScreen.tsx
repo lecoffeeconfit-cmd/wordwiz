@@ -1,4 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -18,9 +19,11 @@ import {
   Text,
   TextInput,
   View,
+  type StyleProp,
+  type TextStyle,
 } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
-import { COLORS, SOFT_SHADOW } from '../constants/theme';
+import { COLORS, SOFT_SHADOW, WORDWIZ_GRADIENT_COLORS } from '../constants/theme';
 import { LevelMagicIcon, MiniLeaderboardCrest } from '../components';
 import {
   type CommunityConnection,
@@ -64,6 +67,7 @@ type CommunitySection = 'leaderboard' | 'friends' | 'nudges';
 
 const PAGE_SIZE = 10;
 const RAPID_ACCORDION_TOGGLE_GUARD_MS = 400;
+const GOLDEN_NUDGE_MAX_LENGTH = 140;
 const PERIODS: CommunityPeriod[] = ['daily', 'weekly', 'all_time'];
 const WORD_COLLECTOR_PERIODS: WordCollectorPeriod[] = ['week', 'month', 'all_time'];
 const WORD_COLLECTOR_AUDIENCES: WordCollectorAudience[] = ['all', 'nearby', 'state', 'global'];
@@ -92,7 +96,7 @@ const COMPETITIVE_METRICS: Array<{
 }> = [
   { key: 'collectors', label: 'Collectors', icon: 'library-outline', color: COLORS.blue, background: '#EAF6FF' },
   { key: 'retention', label: 'Retention', icon: 'bulb-outline', color: COLORS.purpleDark, background: '#EEE9FF' },
-  { key: 'streaks', label: 'Learning Streaks', icon: 'flame-outline', color: '#C88612', background: '#FFF1CB' },
+  { key: 'streaks', label: 'Learning Streaks', icon: 'flame-outline', color: '#D9900A', background: '#FFF1CB' },
 ];
 type NudgeOption = {
   key: string;
@@ -143,14 +147,33 @@ const NUDGE_GROUPS: NudgeGroup[] = [
 ];
 const NUDGE_OPTIONS = NUDGE_GROUPS.flatMap((group) => group.options);
 const NUDGE_BY_KEY = new Map(NUDGE_OPTIONS.map((option) => [option.key, option]));
+const GOLDEN_NUDGE_GROUP: NudgeGroup = {
+  group: 'Golden nudges',
+  icon: 'ticket-outline',
+  color: '#B98416',
+  background: '#FFF3C9',
+  options: [],
+};
 const LEGACY_NUDGE_KEYS: Record<CommunityNudge['nudgeType'], string> = {
   study_reminder: 'study_break',
   streak_reminder: 'keep_momentum',
   five_word_challenge: 'quiz_challenge',
   encouragement: 'you_got_this',
+  golden_nudge: 'golden_custom',
 };
 
 function nudgeOptionFor(nudge: CommunityNudge) {
+  if (nudge.nudgeType === 'golden_nudge' || nudge.messageKey === 'golden_custom') {
+    return {
+      key: 'golden_custom',
+      type: 'golden_nudge' as const,
+      title: nudge.customMessage?.trim() || 'A golden nudge',
+      group: GOLDEN_NUDGE_GROUP.group,
+      icon: GOLDEN_NUDGE_GROUP.icon,
+      color: GOLDEN_NUDGE_GROUP.color,
+      background: GOLDEN_NUDGE_GROUP.background,
+    };
+  }
   return NUDGE_BY_KEY.get(nudge.messageKey) ?? NUDGE_BY_KEY.get(LEGACY_NUDGE_KEYS[nudge.nudgeType])!;
 }
 const TIER_LEGEND: CommunityLevel[] = ['Novice', 'Apprentice', 'Journeyman', 'Adept', 'Mage', 'Master', 'Grandmaster'];
@@ -218,6 +241,67 @@ function LevelPresentationIcon({ level, size }: { level: CommunityLevel; size: n
   return <Ionicons name={tier.icon} size={size} color={tier.color} />;
 }
 
+function WordWizardLabel({ style }: { style?: StyleProp<TextStyle> }) {
+  return (
+    <Text style={style}>
+      <Text style={{ color: COLORS.purpleDark }}>W</Text>
+      <Text style={{ color: COLORS.blue }}>o</Text>
+      <Text style={{ color: COLORS.teal }}>r</Text>
+      <Text style={{ color: COLORS.purple }}>d</Text>
+      <Text style={{ color: COLORS.orange }}>W</Text>
+      <Text style={{ color: COLORS.pink }}>i</Text>
+      <Text style={{ color: COLORS.blue }}>z</Text>
+      <Text style={{ color: COLORS.greenDark }}>a</Text>
+      <Text style={{ color: COLORS.purpleDark }}>r</Text>
+      <Text style={{ color: COLORS.orange }}>d</Text>
+    </Text>
+  );
+}
+
+type LeaderboardPlacement = 'champion' | 'gold' | 'silver' | 'bronze' | null;
+
+function leaderboardPlacementFor(rank: number | null | undefined, level?: CommunityLevel): LeaderboardPlacement {
+  if (rank === 1 && level === 'Grandmaster') return 'champion';
+  if (rank === 1) return 'gold';
+  if (typeof rank === 'number' && rank >= 2 && rank <= 5) return 'gold';
+  if (typeof rank === 'number' && rank >= 6 && rank <= 15) return 'silver';
+  if (typeof rank === 'number' && rank >= 16 && rank <= 30) return 'bronze';
+  return null;
+}
+
+function ChampionRankBackdrop({ reduceMotion }: { reduceMotion: boolean }) {
+  const pulse = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    pulse.stopAnimation();
+    pulse.setValue(0);
+    if (reduceMotion) return;
+
+    const animation = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 1, duration: 1800, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 0, duration: 1800, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+      ]),
+    );
+    animation.start();
+    return () => animation.stop();
+  }, [pulse, reduceMotion]);
+
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={[community.rankRowChampionBackdrop, { opacity: pulse.interpolate({ inputRange: [0, 1], outputRange: [0.72, 1] }) }]}
+    >
+      <LinearGradient
+        colors={WORDWIZ_GRADIENT_COLORS}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={StyleSheet.absoluteFill}
+      />
+    </Animated.View>
+  );
+}
+
 function CommunityAvatar({
   name,
   avatarPath,
@@ -243,18 +327,27 @@ function CommunityAvatar({
   );
 }
 
-function TierBadge({ level, compact = false, modal = false }: { level: CommunityLevel; compact?: boolean; modal?: boolean }) {
+function TierBadge({ level, rank, compact = false, modal = false }: { level: CommunityLevel; rank?: number | null; compact?: boolean; modal?: boolean }) {
   const tier = levelPresentation(level);
+  const isChampion = rank === 1 && level === 'Grandmaster';
   return (
     <View style={[
       community.tierBadge,
       compact && community.tierBadgeCompact,
       modal && community.tierBadgeModal,
-      { backgroundColor: tier.background },
-      modal && { borderColor: level === 'Grandmaster' ? '#E9CF89' : tier.background },
+      { backgroundColor: isChampion ? '#F0ECFF' : tier.background },
+      modal && { borderColor: isChampion ? '#C9BFFF' : level === 'Grandmaster' ? '#E9CF89' : tier.background },
     ]}>
-      <LevelPresentationIcon level={level} size={compact ? 12 : 13} />
-      <Text style={[community.tierBadgeText, compact && community.tierBadgeTextCompact, { color: tier.color }]}>{tier.name}</Text>
+      {isChampion ? (
+        <Image source={require('../../assets/splash-icon.png')} style={[community.tierBadgeAppIcon, compact && community.tierBadgeAppIconCompact]} />
+      ) : (
+        <LevelPresentationIcon level={level} size={compact ? 12 : 13} />
+      )}
+      {isChampion ? (
+        <WordWizardLabel style={[community.tierBadgeText, compact && community.tierBadgeTextCompact]} />
+      ) : (
+        <Text style={[community.tierBadgeText, compact && community.tierBadgeTextCompact, { color: tier.color }]}>{tier.name}</Text>
+      )}
     </View>
   );
 }
@@ -506,10 +599,14 @@ export function CommunityScreen({
   onUnreadNudgesChange,
   initialCompetitiveMetric,
   onInitialCompetitiveMetricHandled,
+  refreshTokens,
+  onUseGoldenTicket,
 }: {
   onUnreadNudgesChange?: (count: number) => void;
   initialCompetitiveMetric?: CompetitiveMetric | null;
   onInitialCompetitiveMetricHandled?: () => void;
+  refreshTokens: number;
+  onUseGoldenTicket: () => boolean;
 }) {
   const reduceMotion = useReducedMotionPreference();
   const [section, setSection] = useState<CommunitySection>('leaderboard');
@@ -556,6 +653,10 @@ export function CommunityScreen({
   const [friendPage, setFriendPage] = useState(0);
   const [nudgePage, setNudgePage] = useState(0);
   const [expandedNudgeCategory, setExpandedNudgeCategory] = useState<string | null>(null);
+  const [nudgeComposerExpanded, setNudgeComposerExpanded] = useState(false);
+  const [goldenNudgeComposerOpen, setGoldenNudgeComposerOpen] = useState(false);
+  const [goldenNudgeMessage, setGoldenNudgeMessage] = useState('');
+  const [goldenNudgeSending, setGoldenNudgeSending] = useState(false);
 
   const leaderboardCacheRef = useRef(new Map<string, CommunityLeaderboardEntry[]>());
   const collectorCacheRef = useRef(new Map<string, WordCollectorEntry[]>());
@@ -1124,6 +1225,48 @@ export function CommunityScreen({
     }
   }, [selectedNudgeRecipient]);
 
+  const openGoldenNudgeComposer = useCallback(() => {
+    if (!selectedNudgeRecipient) {
+      Alert.alert('Connect with a friend first', 'Once you are connected, choose them here and send a Golden Nudge.');
+      return;
+    }
+    if (refreshTokens < 1) {
+      Alert.alert('No Golden Tickets yet', 'Unlock achievements to earn a Golden Ticket for a one-of-a-kind nudge.');
+      return;
+    }
+    setGoldenNudgeComposerOpen(true);
+  }, [refreshTokens, selectedNudgeRecipient]);
+
+  const sendGoldenNudge = useCallback(async () => {
+    const message = goldenNudgeMessage.trim();
+    if (!selectedNudgeRecipient) {
+      Alert.alert('Connect with a friend first', 'Choose a connected friend before sending a Golden Nudge.');
+      return;
+    }
+    if (refreshTokens < 1) {
+      Alert.alert('No Golden Tickets yet', 'Unlock achievements to earn another Golden Ticket.');
+      return;
+    }
+    if (!message) {
+      Alert.alert('Write a message first', 'Add a personal message for your friend.');
+      return;
+    }
+    if (message.length > GOLDEN_NUDGE_MAX_LENGTH) return;
+
+    setGoldenNudgeSending(true);
+    try {
+      await sendCommunityNudge(selectedNudgeRecipient.publicId, 'golden_nudge', 'golden_custom', message);
+      onUseGoldenTicket();
+      setGoldenNudgeMessage('');
+      setGoldenNudgeComposerOpen(false);
+      Alert.alert('Golden nudge sent', `Your message was sent to ${selectedNudgeRecipient.displayName}.`);
+    } catch (error) {
+      Alert.alert('Could not send Golden Nudge', error instanceof Error ? error.message : 'Please try again later.');
+    } finally {
+      setGoldenNudgeSending(false);
+    }
+  }, [goldenNudgeMessage, onUseGoldenTicket, refreshTokens, selectedNudgeRecipient]);
+
   const renderSocialPagination = (currentPage: number, pageCount: number, onChange: (page: number) => void) => {
     if (pageCount <= 1) return null;
     return (
@@ -1137,6 +1280,16 @@ export function CommunityScreen({
         </Pressable>
       </View>
     );
+  };
+
+  const leaderboardPlacementStyle = (rank: number | null | undefined, level?: CommunityLevel) => {
+    switch (leaderboardPlacementFor(rank, level)) {
+      case 'champion': return community.rankRowChampion;
+      case 'gold': return community.rankRowGold;
+      case 'silver': return community.rankRowSilver;
+      case 'bronze': return community.rankRowBronze;
+      default: return undefined;
+    }
   };
 
   const renderWordCollectorsHero = () => {
@@ -1369,10 +1522,21 @@ export function CommunityScreen({
             {collectors.map((entry, index) => {
               const medal = entry.rank === 1 ? '🥇' : entry.rank === 2 ? '🥈' : entry.rank === 3 ? '🥉' : null;
               return (
-                <View key={entry.publicId} style={[community.rankRow, index > 0 && community.rankRowAfter, community.collectorRankRow, entry.isMe && community.rankRowMe, entry.rank <= 3 && community.collectorTopRank]}>
-                  <View style={community.collectorRankNumber}>
-                    <Text style={entry.rank <= 3 ? community.collectorMedal : community.collectorRankText}>{medal ?? `#${entry.rank}`}</Text>
-                  </View>
+                <View key={entry.publicId} style={[community.rankRow, index > 0 && community.rankRowAfter, community.collectorRankRow, entry.isMe && community.rankRowMe, entry.rank <= 3 && community.collectorTopRank, entry.rank === 1 && community.rankRowChampion]}>
+                  {entry.rank === 1 ? <ChampionRankBackdrop reduceMotion={reduceMotion} /> : null}
+                  {entry.rank === 1 ? (
+                    <MiniLeaderboardCrest
+                      rank={1}
+                      level="Novice"
+                      championVisual
+                      accessibilityLabel="Top Word Collector, First place"
+                      testID={`collector-rank-${entry.rank}`}
+                    />
+                  ) : (
+                    <View style={community.collectorRankNumber}>
+                      <Text style={entry.rank <= 3 ? community.collectorMedal : community.collectorRankText}>{medal ?? `#${entry.rank}`}</Text>
+                    </View>
+                  )}
                   <View style={entry.rank === 1 ? community.rankOneAvatarFrame : undefined}>
                     <CommunityAvatar name={entry.displayName} avatarPath={entry.avatarPath} small />
                   </View>
@@ -1527,20 +1691,29 @@ export function CommunityScreen({
       {leaderboardMode === 'collectors' ? renderWordCollectors() : <>
       <View style={community.myLeaderboardCard}>
         <Text style={community.myLeaderboardEyebrow}>YOUR LEADERBOARD STATUS</Text>
-        <View style={[community.rankRow, community.rankRowMe]}>
+        <View style={[community.rankRow, community.rankRowMe, leaderboardPlacementStyle(context?.rank, context?.level)]}>
+          {context?.rank === 1 && context.level === 'Grandmaster' ? <ChampionRankBackdrop reduceMotion={reduceMotion} /> : null}
           <MiniLeaderboardCrest
             rank={context?.rank}
             level={context?.level ?? 'Novice'}
             testID="community-your-rank"
           />
-          <View style={context?.rank === 1 ? community.rankOneAvatarFrame : undefined}>
+          <View style={context?.rank === 1 && context.level === 'Grandmaster' ? community.rankOneAvatarFrame : undefined}>
             <CommunityAvatar name={context?.profile?.displayName ?? 'You'} avatarPath={context?.profile?.avatarPath} small />
           </View>
-          <View style={community.rankName}>
+            <View style={community.rankName}>
             <Text numberOfLines={1} style={community.rankNameText}>{context?.profile?.displayName} (you)</Text>
             <View style={community.rankDetailRow}>
-              <LevelPresentationIcon level={context?.level ?? 'Novice'} size={12} />
-              <Text style={[community.rankDetail, { color: levelPresentation(context?.level ?? 'Novice').color }]}>{context?.level ?? 'Novice'}</Text>
+              {context?.rank === 1 && context.level === 'Grandmaster' ? (
+                <Image source={require('../../assets/splash-icon.png')} style={community.rankWordWizardIcon} />
+              ) : (
+                <LevelPresentationIcon level={context?.level ?? 'Novice'} size={12} />
+              )}
+              {context?.rank === 1 && context.level === 'Grandmaster' ? (
+                <WordWizardLabel style={community.rankDetail} />
+              ) : (
+                <Text style={[community.rankDetail, { color: levelPresentation(context?.level ?? 'Novice').color }]}>{context?.level ?? 'Novice'}</Text>
+              )}
               <Text style={community.rankDetailDivider}>·</Text>
               <Text style={community.rankSocialXp}>Social XP</Text>
             </View>
@@ -1576,21 +1749,30 @@ export function CommunityScreen({
               accessibilityRole="button"
               accessibilityLabel={`Open ${entry.displayName}'s Connect profile`}
               onPress={() => setSelectedLeaderboardEntry(entry)}
-              style={({ pressed }) => [community.rankRow, index > 0 && community.rankRowAfter, entry.isMe && community.rankRowMe, pressed && community.rankRowPressed]}
+              style={({ pressed }) => [community.rankRow, index > 0 && community.rankRowAfter, entry.isMe && community.rankRowMe, leaderboardPlacementStyle(entry.rank, entry.level), pressed && community.rankRowPressed]}
             >
+              {entry.rank === 1 && entry.level === 'Grandmaster' ? <ChampionRankBackdrop reduceMotion={reduceMotion} /> : null}
               <MiniLeaderboardCrest
                 rank={entry.rank}
                 level={entry.level}
                 testID={`community-rank-${entry.rank}`}
               />
-              <View style={entry.rank === 1 ? community.rankOneAvatarFrame : undefined}>
+              <View style={entry.rank === 1 && entry.level === 'Grandmaster' ? community.rankOneAvatarFrame : undefined}>
                 <CommunityAvatar name={entry.displayName} avatarPath={entry.avatarPath} small />
               </View>
               <View style={community.rankName}>
                 <Text numberOfLines={1} style={community.rankNameText}>{entry.displayName}{entry.isMe ? ' (you)' : ''}</Text>
                 <View style={community.rankDetailRow}>
-                  <LevelPresentationIcon level={entry.level} size={12} />
-                  <Text style={[community.rankDetail, { color: tier.color }]}>{tier.name}</Text>
+                  {entry.rank === 1 && entry.level === 'Grandmaster' ? (
+                    <Image source={require('../../assets/splash-icon.png')} style={community.rankWordWizardIcon} />
+                  ) : (
+                    <LevelPresentationIcon level={entry.level} size={12} />
+                  )}
+                  {entry.rank === 1 && entry.level === 'Grandmaster' ? (
+                    <WordWizardLabel style={community.rankDetail} />
+                  ) : (
+                    <Text style={[community.rankDetail, { color: tier.color }]}>{tier.name}</Text>
+                  )}
                   <Text style={community.rankDetailDivider}>·</Text>
                   <Text style={community.rankSocialXp}>Social XP</Text>
                 </View>
@@ -1732,7 +1914,7 @@ export function CommunityScreen({
   );
 
   const renderNudges = () => {
-    const groupedNudges = NUDGE_GROUPS.map((group) => ({
+    const groupedNudges = [...NUDGE_GROUPS, GOLDEN_NUDGE_GROUP].map((group) => ({
       ...group,
       nudges: visibleNudges.filter((nudge) => nudgeOptionFor(nudge).group === group.group),
     })).filter((group) => group.nudges.length > 0);
@@ -1740,7 +1922,14 @@ export function CommunityScreen({
     return (
       <>
         <View style={community.nudgeComposer}>
-          <View style={community.nudgeComposerHeading}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Send a nudge"
+            accessibilityHint={nudgeComposerExpanded ? 'Hide the nudge message library' : 'Show friends and message categories'}
+            accessibilityState={{ expanded: nudgeComposerExpanded }}
+            onPress={() => setNudgeComposerExpanded((current) => !current)}
+            style={({ pressed }) => [community.nudgeComposerHeading, pressed && community.nudgeComposerHeaderPressed]}
+          >
             <View style={community.nudgeComposerIcon}>
               <Ionicons name="paper-plane-outline" size={20} color={COLORS.purpleDark} />
             </View>
@@ -1748,68 +1937,142 @@ export function CommunityScreen({
               <Text style={community.nudgeComposerTitle}>Send a nudge</Text>
               <Text style={community.nudgeComposerHelp}>Pick a friend, then choose a message that fits.</Text>
             </View>
-          </View>
-          {nudgeRecipients.length ? (
+            <Ionicons name={nudgeComposerExpanded ? 'chevron-up' : 'chevron-down'} size={19} color={COLORS.muted} />
+          </Pressable>
+          {nudgeComposerExpanded ? (
             <>
-              <Text style={community.nudgeComposerLabel}>TO</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={community.nudgeRecipientList}>
-                {nudgeRecipients.map((friend) => {
-                  const selected = friend.publicId === selectedNudgeRecipient?.publicId;
-                  return (
+              {nudgeRecipients.length ? (
+                <>
+                  <Text style={community.nudgeComposerLabel}>TO</Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={community.nudgeRecipientList}>
+                    {nudgeRecipients.map((friend) => {
+                      const selected = friend.publicId === selectedNudgeRecipient?.publicId;
+                      return (
+                        <Pressable
+                          key={friend.publicId}
+                          onPress={() => setSelectedNudgeRecipientId(friend.publicId)}
+                          style={[community.nudgeRecipient, selected && community.nudgeRecipientSelected]}
+                        >
+                          <CommunityAvatar name={friend.displayName} avatarPath={friend.avatarPath} small />
+                          <Text numberOfLines={1} style={[community.nudgeRecipientText, selected && community.nudgeRecipientTextSelected]}>{friend.displayName}</Text>
+                        </Pressable>
+                      );
+                    })}
+                  </ScrollView>
+                </>
+              ) : (
+                <View style={community.nudgeNoRecipient}>
+                  <Ionicons name="people-outline" size={17} color={COLORS.muted} />
+                  <Text style={community.nudgeNoRecipientText}>Connect with a friend in Friends to send nudges.</Text>
+                </View>
+              )}
+              <Text style={community.nudgeComposerLabel}>CHOOSE A MESSAGE</Text>
+              {NUDGE_GROUPS.map((group) => {
+                const expanded = expandedNudgeCategory === group.group;
+                return (
+                  <View key={group.group} style={community.nudgeComposerGroup}>
                     <Pressable
-                      key={friend.publicId}
-                      onPress={() => setSelectedNudgeRecipientId(friend.publicId)}
-                      style={[community.nudgeRecipient, selected && community.nudgeRecipientSelected]}
+                      accessibilityRole="button"
+                      accessibilityState={{ expanded }}
+                      onPress={() => setExpandedNudgeCategory((current) => current === group.group ? null : group.group)}
+                      style={[community.nudgeCategoryTrigger, expanded && community.nudgeCategoryTriggerExpanded]}
                     >
-                      <CommunityAvatar name={friend.displayName} avatarPath={friend.avatarPath} small />
-                      <Text numberOfLines={1} style={[community.nudgeRecipientText, selected && community.nudgeRecipientTextSelected]}>{friend.displayName}</Text>
+                      <View style={[community.nudgePickerGroupIcon, { backgroundColor: group.background }]}>
+                        <Ionicons name={group.icon} size={15} color={group.color} />
+                      </View>
+                      <View style={community.nudgeCategoryCopy}>
+                        <Text style={community.nudgePickerGroupText}>{group.group}</Text>
+                        <Text style={community.nudgeCategoryCount}>{group.options.length} messages</Text>
+                      </View>
+                      <Ionicons name={expanded ? 'chevron-up' : 'chevron-down'} size={17} color={COLORS.muted} />
                     </Pressable>
-                  );
-                })}
-              </ScrollView>
-            </>
-          ) : (
-            <View style={community.nudgeNoRecipient}>
-              <Ionicons name="people-outline" size={17} color={COLORS.muted} />
-              <Text style={community.nudgeNoRecipientText}>Connect with a friend in Friends to send nudges.</Text>
-            </View>
-          )}
-          <Text style={community.nudgeComposerLabel}>CHOOSE A MESSAGE</Text>
-          {NUDGE_GROUPS.map((group) => {
-            const expanded = expandedNudgeCategory === group.group;
-            return (
-              <View key={group.group} style={community.nudgeComposerGroup}>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityState={{ expanded }}
-                  onPress={() => setExpandedNudgeCategory((current) => current === group.group ? null : group.group)}
-                  style={[community.nudgeCategoryTrigger, expanded && community.nudgeCategoryTriggerExpanded]}
-                >
-                  <View style={[community.nudgePickerGroupIcon, { backgroundColor: group.background }]}>
-                    <Ionicons name={group.icon} size={15} color={group.color} />
+                    {expanded ? group.options.map((option) => (
+                      <Pressable
+                        key={option.key}
+                        onPress={() => void sendNudgeFromInbox(option)}
+                        style={({ pressed }) => [community.nudgeOption, pressed && community.nudgeOptionPressed, !selectedNudgeRecipient && community.nudgeOptionUnavailable]}
+                      >
+                        <View style={[community.nudgeOptionIcon, { backgroundColor: option.background }]}>
+                          <Ionicons name={option.icon} size={18} color={option.color} />
+                        </View>
+                        <Text style={community.nudgeOptionTitle}>{option.title}</Text>
+                        <Ionicons name={selectedNudgeRecipient ? 'paper-plane-outline' : 'lock-closed-outline'} size={16} color={selectedNudgeRecipient ? COLORS.purpleDark : COLORS.muted} />
+                      </Pressable>
+                    )) : null}
                   </View>
-                  <View style={community.nudgeCategoryCopy}>
-                    <Text style={community.nudgePickerGroupText}>{group.group}</Text>
-                    <Text style={community.nudgeCategoryCount}>{group.options.length} messages</Text>
+                );
+              })}
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Create a Golden Nudge"
+                accessibilityHint="Use one Golden Ticket to write a custom message for a friend"
+                onPress={openGoldenNudgeComposer}
+                style={({ pressed }) => [
+                  community.goldenNudgeCard,
+                  pressed && community.goldenNudgeCardPressed,
+                  (refreshTokens < 1 || !selectedNudgeRecipient) && community.goldenNudgeUnavailable,
+                ]}
+              >
+                <View style={community.goldenNudgeIcon}>
+                  <Ionicons name="ticket-outline" size={19} color="#B98416" />
+                </View>
+                <View style={community.goldenNudgeCopy}>
+                  <View style={community.goldenNudgeTitleRow}>
+                    <Text style={community.goldenNudgeTitle}>Golden Nudge</Text>
+                    <Text style={community.goldenNudgeCount}>{refreshTokens} {refreshTokens === 1 ? 'ticket' : 'tickets'}</Text>
                   </View>
-                  <Ionicons name={expanded ? 'chevron-up' : 'chevron-down'} size={17} color={COLORS.muted} />
-                </Pressable>
-                {expanded ? group.options.map((option) => (
-                  <Pressable
-                    key={option.key}
-                    onPress={() => void sendNudgeFromInbox(option)}
-                    style={({ pressed }) => [community.nudgeOption, pressed && community.nudgeOptionPressed, !selectedNudgeRecipient && community.nudgeOptionUnavailable]}
-                  >
-                    <View style={[community.nudgeOptionIcon, { backgroundColor: option.background }]}>
-                      <Ionicons name={option.icon} size={18} color={option.color} />
+                  <Text style={community.goldenNudgeHelp}>Write a one-of-a-kind message for a friend.</Text>
+                </View>
+                <Ionicons name={goldenNudgeComposerOpen ? 'chevron-up' : 'chevron-forward'} size={17} color="#B98416" />
+              </Pressable>
+              {goldenNudgeComposerOpen ? (
+                <View style={community.goldenNudgeEditor}>
+                  <View style={community.goldenNudgeEditorHeader}>
+                    <View style={community.goldenNudgeEditorTitleRow}>
+                      <Ionicons name="sparkles-outline" size={17} color="#B98416" />
+                      <Text style={community.goldenNudgeEditorTitle}>Write your golden nudge</Text>
                     </View>
-                    <Text style={community.nudgeOptionTitle}>{option.title}</Text>
-                    <Ionicons name={selectedNudgeRecipient ? 'paper-plane-outline' : 'lock-closed-outline'} size={16} color={selectedNudgeRecipient ? COLORS.purpleDark : COLORS.muted} />
-                  </Pressable>
-                )) : null}
-              </View>
-            );
-          })}
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Close Golden Nudge editor"
+                      onPress={() => setGoldenNudgeComposerOpen(false)}
+                      hitSlop={8}
+                    >
+                      <Ionicons name="close-circle-outline" size={21} color={COLORS.muted} />
+                    </Pressable>
+                  </View>
+                  <TextInput
+                    accessibilityLabel="Golden Nudge message"
+                    value={goldenNudgeMessage}
+                    onChangeText={setGoldenNudgeMessage}
+                    placeholder="Write something kind, funny, or encouraging…"
+                    placeholderTextColor={COLORS.muted}
+                    maxLength={GOLDEN_NUDGE_MAX_LENGTH}
+                    multiline
+                    textAlignVertical="top"
+                    style={community.goldenNudgeInput}
+                  />
+                  <View style={community.goldenNudgeEditorFooter}>
+                    <Text style={community.goldenNudgeCharacterCount}>{goldenNudgeMessage.length}/{GOLDEN_NUDGE_MAX_LENGTH}</Text>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Use one Golden Ticket and send nudge"
+                      disabled={goldenNudgeSending || !goldenNudgeMessage.trim() || !selectedNudgeRecipient || refreshTokens < 1}
+                      onPress={() => void sendGoldenNudge()}
+                      style={({ pressed }) => [
+                        community.goldenNudgeSend,
+                        pressed && community.goldenNudgeSendPressed,
+                        (goldenNudgeSending || !goldenNudgeMessage.trim() || !selectedNudgeRecipient || refreshTokens < 1) && community.goldenNudgeSendDisabled,
+                      ]}
+                    >
+                      <Ionicons name="ticket-outline" size={15} color={COLORS.white} />
+                      <Text style={community.goldenNudgeSendText}>{goldenNudgeSending ? 'Sending…' : 'Use 1 ticket · Send'}</Text>
+                    </Pressable>
+                  </View>
+                </View>
+              ) : null}
+            </>
+          ) : null}
         </View>
         {groupedNudges.map((group) => (
           <View key={group.group} style={community.nudgeInboxGroup}>
@@ -2053,7 +2316,7 @@ export function CommunityScreen({
                     <CommunityAvatar name={selectedLeaderboardEntry.displayName} avatarPath={selectedLeaderboardEntry.avatarPath} large />
                   </View>
                   <Text style={community.memberSheetName}>{selectedLeaderboardEntry.displayName}{selectedLeaderboardEntry.isMe ? ' (you)' : ''}</Text>
-                  <TierBadge level={selectedLeaderboardEntry.level} modal />
+                  <TierBadge level={selectedLeaderboardEntry.level} rank={selectedLeaderboardEntry.rank} modal />
                   <Text style={community.memberSheetScore}>
                     <Text style={community.memberSheetRank}>#{selectedLeaderboardEntry.rank}</Text>
                     <Text style={community.memberSheetScoreSeparator}> · </Text>
@@ -2223,12 +2486,12 @@ const community = StyleSheet.create({
   primaryButton: { minHeight: 54, marginTop: 8, alignItems: 'center', justifyContent: 'center', borderRadius: 18, backgroundColor: COLORS.blue, ...SOFT_SHADOW },
   primaryButtonText: { color: COLORS.white, fontSize: 16, fontWeight: '900', letterSpacing: 0.3 },
   disabledButton: { opacity: 0.48 },
-  profileHeader: { position: 'relative', alignItems: 'center', padding: 20, borderRadius: 28, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, gap: 17, ...SOFT_SHADOW },
+  profileHeader: { position: 'relative', alignItems: 'center', padding: 20, borderRadius: 28, backgroundColor: '#F8F6FF', borderWidth: 1, borderColor: '#DDD4FF', gap: 17, ...SOFT_SHADOW },
   profileHeaderTop: { alignItems: 'center', gap: 7 },
   profileSettings: { position: 'absolute', top: 15, right: 15, width: 32, height: 32, alignItems: 'center', justifyContent: 'center' },
   avatar: { width: 48, height: 48, borderRadius: 17, alignItems: 'center', justifyContent: 'center', overflow: 'hidden', backgroundColor: COLORS.purplePale },
   avatarSmall: { width: 38, height: 38, borderRadius: 14 },
-  avatarLarge: { width: 70, height: 70, borderRadius: 25 },
+  avatarLarge: { width: 70, height: 70, borderRadius: 25, backgroundColor: COLORS.white },
   avatarImage: { width: '100%', height: '100%' },
   avatarPress: { position: 'relative' },
   avatarEdit: { position: 'absolute', right: -3, bottom: -3, width: 23, height: 23, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.purpleDark, borderWidth: 2, borderColor: COLORS.white },
@@ -2292,7 +2555,7 @@ const community = StyleSheet.create({
   metricTab: { flex: 1, minHeight: 43, alignItems: 'center', justifyContent: 'center', gap: 2, paddingHorizontal: 3, borderRadius: 14 },
   metricTabActive: { backgroundColor: COLORS.white, ...SOFT_SHADOW },
   metricTabPressed: { opacity: 0.78 },
-  metricTabText: { color: COLORS.muted, fontSize: 10, fontWeight: '900' },
+  metricTabText: { color: COLORS.muted, fontSize: 10, fontWeight: '900', textAlign: 'center' },
   collectorControlGroup: { gap: 6 },
   collectorControlLabel: { marginLeft: 3, color: COLORS.purpleDark, fontSize: 9, letterSpacing: 1, fontWeight: '900' },
   collectorAudienceRow: { flexDirection: 'row', gap: 6 },
@@ -2366,8 +2629,14 @@ const community = StyleSheet.create({
   rankRow: { minHeight: 68, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, borderWidth: 1, borderColor: COLORS.border, borderRadius: 18, backgroundColor: COLORS.surface },
   rankRowAfter: { marginTop: 5 },
   rankRowMe: { borderColor: '#B6DBFF', backgroundColor: '#F3F9FF' },
+  rankRowChampion: { overflow: 'hidden', borderColor: '#C9BFFF', backgroundColor: 'transparent', boxShadow: '0 4px 14px rgba(116, 98, 232, 0.14)' },
+  rankRowGold: { borderColor: '#E9CD7C', backgroundColor: '#FFFDF5' },
+  rankRowSilver: { borderColor: '#D7DDE6', backgroundColor: '#FBFCFE' },
+  rankRowBronze: { borderColor: '#E4BCA5', backgroundColor: '#FFF8F4' },
+  rankRowChampionBackdrop: { ...StyleSheet.absoluteFill, borderRadius: 17 },
   rankRowPressed: { opacity: 0.78, transform: [{ scale: 0.992 }] },
-  rankOneAvatarFrame: { padding: 2, borderRadius: 16, backgroundColor: '#D9A72B', boxShadow: '0 4px 12px rgba(185, 132, 22, 0.22)' },
+  rankOneAvatarFrame: { padding: 2, borderRadius: 16, backgroundColor: '#EEE9FF', boxShadow: '0 4px 12px rgba(116, 98, 232, 0.20)' },
+  rankWordWizardIcon: { width: 13, height: 13, borderRadius: 4 },
   rankName: { flex: 1 },
   rankNameText: { color: COLORS.ink, fontSize: 16, fontWeight: '800' },
   rankDetailRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
@@ -2380,6 +2649,8 @@ const community = StyleSheet.create({
   tierBadge: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 8, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 12 },
   tierBadgeCompact: { marginTop: 0, paddingHorizontal: 7, paddingVertical: 4, borderRadius: 9 },
   tierBadgeModal: { marginTop: 0, paddingHorizontal: 11, paddingVertical: 5, borderWidth: 1, borderRadius: 13 },
+  tierBadgeAppIcon: { width: 13, height: 13, borderRadius: 4 },
+  tierBadgeAppIconCompact: { width: 12, height: 12, borderRadius: 4 },
   tierBadgeText: { fontSize: 12, fontWeight: '900' },
   tierBadgeTextCompact: { fontSize: 10 },
   empty: { alignItems: 'center', padding: 26, borderRadius: 20, borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.surface, gap: 8 },
@@ -2460,6 +2731,7 @@ const community = StyleSheet.create({
   nudgeUnread: { backgroundColor: '#F6F3FF', borderColor: '#D6CBFF' },
   nudgeComposer: { gap: 10, padding: 14, borderRadius: 20, borderWidth: 1, borderColor: '#DDD4FF', backgroundColor: '#F8F5FF' },
   nudgeComposerHeading: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  nudgeComposerHeaderPressed: { opacity: 0.76 },
   nudgeComposerIcon: { width: 39, height: 39, alignItems: 'center', justifyContent: 'center', borderRadius: 13, backgroundColor: '#EAE4FF' },
   nudgeComposerHeadingCopy: { flex: 1 },
   nudgeComposerTitle: { color: COLORS.ink, fontSize: 16, fontWeight: '900' },
@@ -2478,6 +2750,26 @@ const community = StyleSheet.create({
   nudgeCategoryCopy: { flex: 1 },
   nudgeCategoryCount: { marginTop: 1, color: COLORS.muted, fontSize: 10, fontWeight: '700' },
   nudgeOptionUnavailable: { opacity: 0.68 },
+  goldenNudgeCard: { minHeight: 64, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 10, paddingVertical: 9, borderRadius: 16, borderWidth: 1, borderColor: '#E9C96A', backgroundColor: '#FFF9E8' },
+  goldenNudgeCardPressed: { opacity: 0.78 },
+  goldenNudgeUnavailable: { opacity: 0.62 },
+  goldenNudgeIcon: { width: 38, height: 38, alignItems: 'center', justifyContent: 'center', borderRadius: 12, backgroundColor: '#FFEFC1' },
+  goldenNudgeCopy: { flex: 1 },
+  goldenNudgeTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+  goldenNudgeTitle: { color: '#8F6510', fontSize: 14, fontWeight: '900' },
+  goldenNudgeCount: { color: '#B98416', fontSize: 10, fontWeight: '900' },
+  goldenNudgeHelp: { marginTop: 2, color: '#9A8251', fontSize: 11, lineHeight: 15, fontWeight: '600' },
+  goldenNudgeEditor: { gap: 9, padding: 11, borderRadius: 16, borderWidth: 1, borderColor: '#EFDCA1', backgroundColor: '#FFFDF5' },
+  goldenNudgeEditorHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  goldenNudgeEditorTitleRow: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 7 },
+  goldenNudgeEditorTitle: { color: '#8F6510', fontSize: 13, fontWeight: '900' },
+  goldenNudgeInput: { minHeight: 92, paddingHorizontal: 12, paddingVertical: 11, borderRadius: 13, borderWidth: 1, borderColor: '#E9D9A9', backgroundColor: COLORS.white, color: COLORS.ink, fontSize: 14, lineHeight: 20, fontWeight: '600' },
+  goldenNudgeEditorFooter: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  goldenNudgeCharacterCount: { color: COLORS.muted, fontSize: 11, fontWeight: '700' },
+  goldenNudgeSend: { minHeight: 36, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingHorizontal: 12, borderRadius: 12, backgroundColor: '#C88714' },
+  goldenNudgeSendPressed: { opacity: 0.78 },
+  goldenNudgeSendDisabled: { opacity: 0.45 },
+  goldenNudgeSendText: { color: COLORS.white, fontSize: 11, fontWeight: '900' },
   nudgeInboxGroup: { gap: 7 },
   nudgeInboxGroupTitle: { flexDirection: 'row', alignItems: 'center', gap: 7, marginTop: 3 },
   nudgeInboxGroupIcon: { width: 27, height: 27, alignItems: 'center', justifyContent: 'center', borderRadius: 9 },

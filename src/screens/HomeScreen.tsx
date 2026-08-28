@@ -4,7 +4,7 @@ import { AccessibilityInfo, Animated, FlatList, Image, Pressable, ScrollView, Te
 import { COLORS } from '../constants/theme';
 import type { AnalyticsData, LegalPage, QuizAnswer, QuizProgress, QuizQuestion, ReminderSettings, SortMode, Word } from '../types';
 import { styles } from '../styles';
-import { buildAchievements, buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, getDailyLearningProgress, getDayKey, getDueReviewWords, getProgressColor, getProgressPaleColor, getRecentDays, getStreakMessage, getStreakMilestone, getStreakWeek, getTotalLearningSeconds, getWordMastery, sortWordsForReview, shuffle } from '../utils';
+import { buildAchievements, buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, getDailyLearningProgress, getDayKey, getDueReviewWords, getProgressColor, getProgressPaleColor, getRecentDays, getStreakMessage, getStreakMilestone, getStreakWeek, getTotalLearningSeconds, getWordMastery, sortWordsForReview, stripPlainEnglishLeadIn, shuffle } from '../utils';
 import { CompactPagination, DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, ProgressFill, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 
 const EXPANDED_REVIEW_WORD_PAGE_SIZE = 8;
@@ -33,6 +33,7 @@ export function HomeScreen({
   onQuiz,
   onOmegaTest,
   onStats,
+  onOpenReminder,
   onOpenAchievements,
   onOpenWidgets,
   onOpenPlus,
@@ -50,6 +51,7 @@ export function HomeScreen({
   onQuiz: () => void;
   onOmegaTest: () => void;
   onStats: () => void;
+  onOpenReminder: () => void;
   onOpenAchievements: () => void;
   onOpenWidgets: () => void;
   onOpenPlus: () => void;
@@ -413,10 +415,10 @@ export function HomeScreen({
               adjustsFontSizeToFit
               maxFontSizeMultiplier={1.1}
               minimumFontScale={0.82}
-              numberOfLines={1}
+              numberOfLines={2}
               style={styles.homeSectionTitle}
             >
-              Today’s learning
+              Today’s{ '\n' }progress
             </Text>
           </View>
           <View
@@ -725,7 +727,7 @@ export function HomeScreen({
               <View style={styles.nextWordCopy}>
                 <Text style={styles.nextWordTerm}>{word.term}</Text>
                 <Text numberOfLines={1} style={styles.nextWordDefinition}>
-                  {word.simpleDefinition || word.definition}
+                  {stripPlainEnglishLeadIn(word.simpleDefinition || word.definition)}
                 </Text>
               </View>
               <View style={styles.nextWordReason}>
@@ -760,7 +762,16 @@ export function HomeScreen({
         </View>
       )}
 
-      <View style={styles.homeReminderStrip}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Edit daily reminder"
+        accessibilityHint="Opens reminder settings in Stats"
+        onPress={onOpenReminder}
+        style={({ pressed }) => [
+          styles.homeReminderStrip,
+          pressed && styles.pressed,
+        ]}
+      >
         <Ionicons
           name={reminderSettings.enabled ? 'notifications' : 'notifications-outline'}
           size={18}
@@ -771,7 +782,7 @@ export function HomeScreen({
             ? `Daily reminder set for ${formatReminderTime(reminderSettings)}`
             : 'Daily reminders are off. Turn them on in Stats.'}
         </Text>
-      </View>
+      </Pressable>
       </ScrollView>
     </View>
   );

@@ -23,7 +23,7 @@ import {
 import { COLORS } from '../constants/theme';
 import type { AnalyticsData, LegalPage, QuizAnswer, QuizProgress, QuizQuestion, ReminderSettings, SortMode, Word } from '../types';
 import { styles } from '../styles';
-import { getStudySets, isPersonalLibraryWord } from '../utils';
+import { getStudySets, isPersonalLibraryWord, stripPlainEnglishLeadIn } from '../utils';
 import { DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 
 export function WordsScreen({
@@ -579,7 +579,7 @@ export function WordsScreen({
                 ]}
               >
                 <View style={styles.addIcon}>
-                  <Ionicons name="add" size={26} color={COLORS.purpleDark} />
+                  <Ionicons name="add" size={26} color={COLORS.greenDark} />
                 </View>
                 <View style={styles.addButtonCopy}>
                   <Text style={styles.addButtonTitle}>Add a new word</Text>
@@ -594,7 +594,7 @@ export function WordsScreen({
                     color="#F4C558"
                     style={styles.addButtonSparkle}
                   />
-                  <Ionicons name="chevron-forward" size={24} color="#4034B3" />
+                  <Ionicons name="chevron-forward" size={24} color={COLORS.greenDark} />
                 </View>
               </Pressable>
             </Animated.View>
@@ -1141,7 +1141,7 @@ export function WordsScreen({
                         {word.commonWords?.[0] ? (
                           <Text style={styles.collectionDetailWordGroup}>{word.commonWords[0]}</Text>
                         ) : null}
-                        <Text style={styles.collectionDetailWordDefinition}>{word.simpleDefinition || word.definition}</Text>
+                        <Text style={styles.collectionDetailWordDefinition}>{stripPlainEnglishLeadIn(word.simpleDefinition || word.definition)}</Text>
                         <Text numberOfLines={1} style={styles.collectionDetailWordExample}>{word.example}</Text>
                       </View>
                     </View>
@@ -1264,7 +1264,7 @@ export function WordsScreen({
                     </View>
                     <View style={styles.studySetWordCopy}>
                       <Text numberOfLines={1} style={styles.studySetWordTerm}>{word.term}</Text>
-                      <Text numberOfLines={1} style={styles.studySetWordDefinition}>{word.simpleDefinition || word.definition}</Text>
+                      <Text numberOfLines={1} style={styles.studySetWordDefinition}>{stripPlainEnglishLeadIn(word.simpleDefinition || word.definition)}</Text>
                     </View>
                   </Pressable>
                 );

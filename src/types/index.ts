@@ -42,7 +42,15 @@ export type GameType =
   | 'word-connections'
   | 'crossword'
   | 'word-scramble'
+  | 'hangman'
   | 'rapid-fire';
+
+export type GameTimerMode = 'off' | 'relaxed' | 'focused' | 'challenge';
+
+export type GamePreferences = {
+  hintsEnabled: boolean;
+  timerMode: GameTimerMode;
+};
 
 export type QuizPreferences = {
   enabled: boolean;

@@ -1,4 +1,5 @@
 import * as Speech from 'expo-speech';
+import { stripPlainEnglishLeadIn } from '../utils';
 import { reportError } from './errorReporting';
 
 export async function speakWord(term: string) {
@@ -6,7 +7,7 @@ export async function speakWord(term: string) {
 }
 
 export async function speakDefinition(definition: string) {
-  return speakText(definition, 'definition');
+  return speakText(stripPlainEnglishLeadIn(definition), 'definition');
 }
 
 async function speakText(text: string, kind: 'word' | 'definition') {

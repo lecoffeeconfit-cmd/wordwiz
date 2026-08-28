@@ -971,6 +971,7 @@ function parseQuizAnswers(value: unknown): QuizAnswer[] {
             answer.gameType === 'word-connections' ||
             answer.gameType === 'crossword' ||
             answer.gameType === 'word-scramble' ||
+            answer.gameType === 'hangman' ||
             answer.gameType === 'rapid-fire')
             ? answer.gameType
             : undefined;

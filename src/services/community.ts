@@ -90,8 +90,9 @@ export type CommunityConnection = {
 };
 export type CommunityNudge = {
   id: string;
-  nudgeType: 'study_reminder' | 'streak_reminder' | 'five_word_challenge' | 'encouragement';
+  nudgeType: 'study_reminder' | 'streak_reminder' | 'five_word_challenge' | 'encouragement' | 'golden_nudge';
   messageKey: string;
+  customMessage?: string | null;
   readAt: string | null;
   createdAt: string;
   senderPublicId: string;
@@ -469,9 +470,16 @@ export async function sendCommunityNudge(
   publicId: string,
   nudgeType: CommunityNudge['nudgeType'],
   messageKey = 'time_for_review',
+  customMessage?: string,
 ) {
   const { error } = await supabase.functions.invoke('send-study-nudge', {
-    body: { recipientPublicId: publicId, nudgeType, messageKey, idempotencyKey: requestId() },
+    body: {
+      recipientPublicId: publicId,
+      nudgeType,
+      messageKey,
+      ...(customMessage ? { customMessage } : {}),
+      idempotencyKey: requestId(),
+    },
   });
   if (error) throw new Error('Community is temporarily unavailable. Please try again.');
 }

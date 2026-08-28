@@ -2,9 +2,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Animated, FlatList, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { COLORS } from '../constants/theme';
-import type { AnalyticsData, GameAttempt, LegalPage, QuizAnswer, QuizDifficultyPreference, QuizPreferences, QuizProgress, QuizQuestion, QuizSessionMode, ReminderSettings, ReviewRating, SortMode, TimeBasedLearningSettings, Word } from '../types';
+import type { AnalyticsData, GameAttempt, GamePreferences, LegalPage, QuizAnswer, QuizDifficultyPreference, QuizPreferences, QuizProgress, QuizQuestion, QuizSessionMode, ReminderSettings, ReviewRating, SortMode, TimeBasedLearningSettings, Word } from '../types';
 import { styles } from '../styles';
-import { buildCategoryPracticeQuiz, buildOmegaTestAsync, buildQuiz, calculateStreakStats, evaluateQuizAnswer, formatReminderTime, formatStudyTime, formatWordFlaggedDate, getAlternateLearningExplanation, getDayKey, getEffectiveQuizDifficulty, getGameWords, getMistakeReviewWordIds, getNewStudyWords, getOmegaTestStatus, getQuizQuestionPace, getQuizRecallPaceSignal, getRecentDays, getStreakMessage, getStreakWeek, getStudySets, getTimedLearningBonusXp, getTypedRecallHint, getWordMastery, getWordMasteryCategoryForWord, isPersonalLibraryWord, NEW_STUDY_GROUP, normalizeTimeBasedLearningSettings, shuffle, TIMED_LEARNING_SECONDS, WORD_MASTERY_CATEGORIES, type WordMasteryCategoryId } from '../utils';
+import { buildCategoryPracticeQuiz, buildOmegaTestAsync, buildQuiz, calculateStreakStats, evaluateQuizAnswer, formatReminderTime, formatStudyTime, formatWordFlaggedDate, getAlternateLearningExplanation, getDayKey, getEffectiveQuizDifficulty, getGameCoverage, getGameWords, getMistakeReviewWordIds, getNewStudyWords, getOmegaTestStatus, getQuizQuestionPace, getQuizRecallPaceSignal, getRecentDays, getStreakMessage, getStreakWeek, getStudySets, getTimedLearningBonusXp, getTypedRecallHint, getWordMastery, getWordMasteryCategoryForWord, isPersonalLibraryWord, NEW_STUDY_GROUP, normalizeTimeBasedLearningSettings, shuffle, TIMED_LEARNING_SECONDS, WORD_MASTERY_CATEGORIES, type WordMasteryCategoryId } from '../utils';
 import { DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, ProgressFill, QuizComplete, QuizFact, QuizGames, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 import { reportError, trackEvent } from '../services';
 
@@ -163,6 +163,7 @@ export function QuizScreen({
   initialStudyGroup,
   timedLearningEnabled,
   timeBasedLearningSettings,
+  gamePreferences,
   quizPreferences,
   refreshTokens,
   onUseRefreshToken,
@@ -183,6 +184,7 @@ export function QuizScreen({
   initialStudyGroup?: 'flagged';
   timedLearningEnabled: boolean;
   timeBasedLearningSettings: TimeBasedLearningSettings;
+  gamePreferences: GamePreferences;
   quizPreferences: QuizPreferences;
   refreshTokens: number;
   onUseRefreshToken: () => boolean;
@@ -378,6 +380,10 @@ export function QuizScreen({
   const gameSelectionWords = useMemo(
     () => getGameWords(filteredQuizWords),
     [filteredQuizWords],
+  );
+  const gameCoverage = useMemo(
+    () => getGameCoverage(gameSelectionWords, analytics.gameHistory ?? []),
+    [analytics.gameHistory, gameSelectionWords],
   );
   const masteryTestWords = useMemo(
     () =>
@@ -1644,6 +1650,21 @@ export function QuizScreen({
         {categorySelector}
         {studySetSelector}
       </View>
+      {gameCoverage.total > 12 ? (
+        <View style={styles.gamesCoverageBanner}>
+          <View style={styles.gamesCoverageIcon}>
+            <Ionicons name="layers-outline" size={16} color={COLORS.purpleDark} />
+          </View>
+          <View style={styles.gamesCoverageCopy}>
+            <Text style={styles.gamesCoverageTitle}>
+              {gameCoverage.practiced} of {gameCoverage.total} words practiced
+            </Text>
+            <Text style={styles.gamesCoverageText}>
+              {gameCoverage.remaining} {gameCoverage.remaining === 1 ? 'word' : 'words'} still waiting · new rounds start with fresh words
+            </Text>
+          </View>
+        </View>
+      ) : null}
     </View>
   );
 
@@ -1682,6 +1703,7 @@ export function QuizScreen({
     <QuizGames
       words={gameSelectionWords}
       gameHistory={analytics.gameHistory ?? []}
+      gamePreferences={gamePreferences}
       onComplete={onGameComplete}
       wordChoicePicker={gamesWordChoiceCard}
       onInputFocus={() => {

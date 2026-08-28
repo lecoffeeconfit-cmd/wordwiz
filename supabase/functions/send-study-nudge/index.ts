@@ -6,7 +6,7 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const NUDGE_TYPES = new Set(['study_reminder', 'streak_reminder', 'five_word_challenge', 'encouragement']);
+const NUDGE_TYPES = new Set(['study_reminder', 'streak_reminder', 'five_word_challenge', 'encouragement', 'golden_nudge']);
 const NUDGE_MESSAGES: Record<string, { nudgeType: string; title: string }> = {
   time_for_review: { nudgeType: 'study_reminder', title: 'Time for a quick word review!' },
   brain_workout: { nudgeType: 'study_reminder', title: 'Give your brain a WordWiz workout' },
@@ -130,14 +130,16 @@ Deno.serve(async (request) => {
   if (!url || !anonKey || !serviceKey) return response({ error: 'Community service is not configured' }, 500);
   if (!authorization) return response({ error: 'Sign in is required' }, 401);
 
-  let body: { recipientPublicId?: string; nudgeType?: string; messageKey?: string; idempotencyKey?: string };
+  let body: { recipientPublicId?: string; nudgeType?: string; messageKey?: string; customMessage?: string; idempotencyKey?: string };
   try { body = await request.json(); } catch { return response({ error: 'Invalid request' }, 400); }
   if (!body.recipientPublicId || !UUID_PATTERN.test(body.recipientPublicId) || !body.nudgeType || !NUDGE_TYPES.has(body.nudgeType)) {
     return response({ error: 'Invalid nudge request' }, 400);
   }
   const messageKey = body.messageKey ?? 'time_for_review';
-  const messageTemplate = NUDGE_MESSAGES[messageKey];
-  if (!messageTemplate || messageTemplate.nudgeType !== body.nudgeType) {
+  const isGoldenNudge = body.nudgeType === 'golden_nudge' && messageKey === 'golden_custom';
+  const customMessage = typeof body.customMessage === 'string' ? body.customMessage.trim() : '';
+  const messageTemplate = isGoldenNudge ? null : NUDGE_MESSAGES[messageKey];
+  if (isGoldenNudge ? customMessage.length < 1 || customMessage.length > 140 : !messageTemplate || messageTemplate.nudgeType !== body.nudgeType) {
     return response({ error: 'Invalid nudge message' }, 400);
   }
   const idempotencyKey = body.idempotencyKey && UUID_PATTERN.test(body.idempotencyKey) ? body.idempotencyKey : crypto.randomUUID();
@@ -150,6 +152,7 @@ Deno.serve(async (request) => {
     p_nudge_type: body.nudgeType,
     p_message_key: messageKey,
     p_idempotency_key: idempotencyKey,
+    p_custom_message: isGoldenNudge ? customMessage : null,
   });
   if (nudgeError) return response({ error: 'That nudge cannot be sent right now' }, 400);
 
@@ -168,8 +171,12 @@ Deno.serve(async (request) => {
     .eq('active', true);
   if (!tokens?.length) return response({ queued: true, push: 'not_registered' });
 
-  const title = body.nudgeType === 'five_word_challenge' ? 'A WordWiz challenge is waiting' : 'A friend nudged you in WordWiz';
-  const message = messageTemplate.title;
+  const title = isGoldenNudge
+    ? 'A golden nudge is waiting'
+    : body.nudgeType === 'five_word_challenge'
+      ? 'A WordWiz challenge is waiting'
+      : 'A friend nudged you in WordWiz';
+  const message = isGoldenNudge ? customMessage : messageTemplate?.title ?? 'A friend sent you a nudge';
   const headers: Record<string, string> = { 'Content-Type': 'application/json', Accept: 'application/json' };
   const expoToken = Deno.env.get('EXPO_ACCESS_TOKEN');
   if (expoToken) headers.Authorization = `Bearer ${expoToken}`;

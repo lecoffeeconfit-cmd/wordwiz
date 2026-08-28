@@ -1,4 +1,15 @@
-import type { GameAnswer, GameAttempt, GameType, QuizAnswer, ReviewRating, Word } from '../types';
+import type { GameAnswer, GameAttempt, GamePreferences, GameTimerMode, GameType, QuizAnswer, ReviewRating, Word } from '../types';
+
+export const DEFAULT_GAME_PREFERENCES: GamePreferences = {
+  hintsEnabled: true,
+  timerMode: 'off',
+};
+
+const GAME_TIMER_SECONDS: Record<Exclude<GameTimerMode, 'off'>, number> = {
+  relaxed: 45,
+  focused: 30,
+  challenge: 15,
+};
 
 export const GAME_XP_PER_CORRECT: Record<GameType, number> = {
   'speed-match': 2,
@@ -6,6 +17,7 @@ export const GAME_XP_PER_CORRECT: Record<GameType, number> = {
   'word-connections': 2,
   crossword: 3,
   'word-scramble': 2,
+  hangman: 2,
   'rapid-fire': 2,
 };
 
@@ -15,6 +27,7 @@ export const GAME_PERFECT_BONUS: Record<GameType, number> = {
   'word-connections': 3,
   crossword: 8,
   'word-scramble': 3,
+  hangman: 3,
   'rapid-fire': 6,
 };
 
@@ -114,10 +127,64 @@ export function getGameWords(words: Word[]) {
   );
 }
 
-export function getGameRoundWords(gameType: GameType, words: Word[], count?: number) {
+export function normalizeGamePreferences(
+  preferences: Partial<GamePreferences> | undefined,
+): GamePreferences {
+  const timerMode = preferences?.timerMode;
+  return {
+    hintsEnabled: preferences?.hintsEnabled !== false,
+    timerMode: timerMode === 'relaxed' || timerMode === 'focused' || timerMode === 'challenge'
+      ? timerMode
+      : 'off',
+  };
+}
+
+export function getGameTimerSeconds(mode: GameTimerMode) {
+  return mode === 'off' ? null : GAME_TIMER_SECONDS[mode];
+}
+
+export function getRapidFireDurationSeconds(mode: GameTimerMode) {
+  if (mode === 'relaxed') return 90;
+  if (mode === 'challenge') return 30;
+  return 60;
+}
+
+export function getGameCoverage(words: Word[], history: GameAttempt[] = []) {
+  const wordIds = new Set(words.map((word) => word.id));
+  const practicedWordIds = new Set(
+    history
+      .flatMap((attempt) => attempt.answers ?? [])
+      .map((answer) => answer.wordId)
+      .filter((wordId) => wordIds.has(wordId)),
+  );
+  const practiced = practicedWordIds.size;
+  return {
+    practiced,
+    total: words.length,
+    remaining: Math.max(0, words.length - practiced),
+  };
+}
+
+export function getGameRoundWords(
+  gameType: GameType,
+  words: Word[],
+  count?: number,
+  history: GameAttempt[] = [],
+) {
   const periodKey = gameType === 'crossword' ? getGameWeekKey() : getGameDateKey();
-  const ordered = deterministicShuffle(words, `${periodKey}:${gameType}`);
-  return count === undefined ? ordered : ordered.slice(0, count);
+  const ordered = deterministicShuffle(
+    words,
+    `${periodKey}:${gameType}:round:${history.length}`,
+  );
+  const usedWordIds = new Set(
+    history.flatMap((attempt) => attempt.answers)
+      .map((answer) => answer.wordId)
+      .filter((wordId) => wordId && !wordId.startsWith('__')),
+  );
+  const freshWords = ordered.filter((word) => !usedWordIds.has(word.id));
+  const previouslyUsedWords = ordered.filter((word) => usedWordIds.has(word.id));
+  const rotated = [...freshWords, ...previouslyUsedWords];
+  return count === undefined ? rotated : rotated.slice(0, count);
 }
 
 export function createUuid() {

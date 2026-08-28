@@ -7,7 +7,7 @@
     "orientation": "portrait",
     "icon": "./assets/splash-icon.png",
     "userInterfaceStyle": "light",
-    "backgroundColor": "#F8F4FF",
+    "backgroundColor": "#F2EFFF",
     "plugins": [
       [
         "@sentry/react-native/expo",
@@ -54,10 +54,10 @@
           "image": "./assets/splash-icon.png",
           "imageWidth": 200,
           "resizeMode": "contain",
-          "backgroundColor": "#F8F4FF",
+          "backgroundColor": "#F2EFFF",
           "dark": {
             "image": "./assets/splash-icon.png",
-            "backgroundColor": "#F8F4FF"
+            "backgroundColor": "#F2EFFF"
           }
         }
       ],
@@ -98,7 +98,7 @@
         "NSMotionUsageDescription": "WordWiz may access motion data to support interactive device features.",
         "NSLocationWhenInUseUsageDescription": "Allow $(PRODUCT_NAME) to use your approximate location to place you in a broad Word Collectors leaderboard. Your exact location is never shown to other learners."
       },
-      "buildNumber": "48"
+      "buildNumber": "50"
     },
     "android": {
       "package": "com.lecoffeeconfit.wordwiz",
