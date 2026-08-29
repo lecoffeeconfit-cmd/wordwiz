@@ -418,7 +418,7 @@ export function HomeScreen({
               numberOfLines={2}
               style={styles.homeSectionTitle}
             >
-              Today’s{ '\n' }progress
+              Today’s{ '\n' }Learning
             </Text>
           </View>
           <View

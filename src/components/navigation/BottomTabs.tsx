@@ -52,7 +52,7 @@ export function BottomTabs({
     },
   ];
 
-  const bottomPadding = Math.max(8, Math.min(bottomInset, 14));
+  const bottomPadding = Math.max(6, Math.min(bottomInset, 10));
 
   return (
     <View style={[styles.bottomTabs, { paddingBottom: bottomPadding }]}>

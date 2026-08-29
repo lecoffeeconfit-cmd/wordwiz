@@ -579,12 +579,12 @@ export function WordsScreen({
                 ]}
               >
                 <View style={styles.addIcon}>
-                  <Ionicons name="add" size={26} color={COLORS.greenDark} />
+                  <Ionicons name="add" size={27} color={COLORS.white} />
                 </View>
                 <View style={styles.addButtonCopy}>
                   <Text style={styles.addButtonTitle}>Add a new word</Text>
                   <Text style={styles.addButtonSubtitle}>
-                    What did you discover today?
+                    What did you <Text style={styles.addButtonSubtitleAccent}>discover</Text> today?
                   </Text>
                 </View>
                 <View style={styles.addButtonEndcap}>
@@ -594,7 +594,7 @@ export function WordsScreen({
                     color="#F4C558"
                     style={styles.addButtonSparkle}
                   />
-                  <Ionicons name="chevron-forward" size={24} color={COLORS.greenDark} />
+                  <Ionicons name="chevron-forward" size={22} color={COLORS.greenDark} />
                 </View>
               </Pressable>
             </Animated.View>

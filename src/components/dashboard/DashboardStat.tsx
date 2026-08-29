@@ -11,6 +11,7 @@ export function DashboardStat({
   color,
   background,
   value,
+  valueColor,
   label,
   onPress,
   grandmaster = false,
@@ -19,6 +20,7 @@ export function DashboardStat({
   color: string;
   background: string;
   value: string;
+  valueColor?: string;
   label: string;
   onPress?: () => void;
   grandmaster?: boolean;
@@ -47,7 +49,7 @@ export function DashboardStat({
       <View style={[styles.dashboardStatIcon, { backgroundColor: COLORS.white }]}>
         <Ionicons name={icon} size={20} color={color} />
       </View>
-      <Text style={styles.dashboardStatValue}>{value}</Text>
+      <Text style={[styles.dashboardStatValue, valueColor ? { color: valueColor } : null]}>{value}</Text>
       <Text style={styles.dashboardStatLabel}>{label}</Text>
       <Ionicons name="chevron-forward" size={14} color={color} style={styles.dashboardStatChevron} />
     </Pressable>

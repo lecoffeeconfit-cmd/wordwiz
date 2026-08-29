@@ -858,6 +858,7 @@ export function DashboardScreen({
       quizCount: dayQuizAttempts.length - dayTestAttempts.length,
       testCount: dayTestAttempts.length,
       gameCount: dayGameAttempts.length,
+      cardCount: dailyLearningProgress.cardReviews,
       studySeconds,
       dailyProgress: getDailyActivityProgress(studySeconds, dailyLearningProgress.completed),
     };
@@ -1273,6 +1274,7 @@ export function DashboardScreen({
         color={COLORS.blue}
         background="#F3F7FF"
         value={formatStudyTime(totalSeconds)}
+        valueColor={COLORS.blueDark}
         label="Study time"
         onPress={() => setDashboardDetail('study-time')}
         grandmaster={isGrandmaster}
@@ -1282,6 +1284,7 @@ export function DashboardScreen({
         color={COLORS.orange}
         background="#FFF7EB"
         value={`${analytics.quizHistory.length}`}
+        valueColor={COLORS.orangeDark}
         label="Quizzes"
         onPress={() => setDashboardDetail('quizzes')}
         grandmaster={isGrandmaster}
@@ -1291,6 +1294,7 @@ export function DashboardScreen({
         color={COLORS.red}
         background="#FFF5F8"
         value={`${totalWrong}`}
+        valueColor={COLORS.redDark}
         label="Missed"
         onPress={() => setDashboardDetail('missed')}
         grandmaster={isGrandmaster}
@@ -1323,7 +1327,7 @@ export function DashboardScreen({
             <Ionicons name="bulb-outline" size={19} color={COLORS.purpleDark} />
           </View>
           <Text style={styles.competitiveMetricLabel}>RETENTION</Text>
-          <Text style={styles.competitiveMetricValue}>{retentionReviewCount ? `${retentionPercent}%` : '—'}</Text>
+          <Text style={[styles.competitiveMetricValue, { color: COLORS.purpleDark }]}>{retentionReviewCount ? `${retentionPercent}%` : '—'}</Text>
           <Text numberOfLines={2} style={styles.competitiveMetricDetail}>
             {retentionQualified
               ? `${retentionRememberedCount} of ${retentionReviewCount} reviews remembered`
@@ -1350,16 +1354,18 @@ export function DashboardScreen({
             />
           ) : null}
           <View style={[styles.competitiveMetricIcon, styles.competitiveStreakIcon]}>
-            <Ionicons name="flame-outline" size={19} color="#D9900A" />
+            <Ionicons name="flame-outline" size={19} color={COLORS.greenDark} />
           </View>
-          <Text style={styles.competitiveMetricLabel}>LEARNING STREAK</Text>
-          <Text style={styles.competitiveMetricValue}>{streak}d</Text>
-          <Text numberOfLines={1} style={styles.competitiveMetricDetail}>Current active streak</Text>
+          <Text style={styles.competitiveMetricLabel}>DAILY LEARNING GOAL</Text>
+          <Text style={[styles.competitiveMetricValue, styles.competitiveMetricGoalValue, { color: COLORS.greenDark }]}>
+            {completedActivitiesToday}/{dailyLearningGoal}
+          </Text>
+          <Text numberOfLines={1} style={styles.competitiveMetricDetail}>Activities completed today</Text>
           <Text numberOfLines={1} style={styles.competitiveMetricSubdetail}>
-            Daily goal: {completedActivitiesToday}/{dailyLearningGoal} activities today
+            Complete your goal to keep your streak alive
           </Text>
           <Text numberOfLines={1} style={styles.competitiveMetricRank}>{competitiveRankLabel(streakRankContext)}</Text>
-          <Ionicons name="arrow-forward-circle-outline" size={18} color="#D9900A" style={styles.competitiveMetricChevron} />
+          <Ionicons name="arrow-forward-circle-outline" size={18} color={COLORS.greenDark} style={styles.competitiveMetricChevron} />
         </Pressable>
       </View>
 
@@ -1486,27 +1492,33 @@ export function DashboardScreen({
         <View style={styles.chartLegendRow}>
           <View style={styles.chartLegendItem}>
             <View
-              style={[styles.legendDot, { backgroundColor: COLORS.blue }]}
-            />
-            <Text style={styles.chartLegendText}>Past days</Text>
-          </View>
-          <View style={styles.chartLegendItem}>
-            <View
-              style={[styles.legendDot, { backgroundColor: COLORS.green }]}
-            />
-            <Text style={styles.chartLegendText}>Today</Text>
-          </View>
-          <View style={styles.chartLegendItem}>
-            <View
               style={[styles.legendDot, { backgroundColor: COLORS.yellow }]}
             />
             <Text style={styles.chartLegendText}>Quizzes</Text>
           </View>
           <View style={styles.chartLegendItem}>
             <View
+              style={[styles.legendDot, { backgroundColor: COLORS.orange }]}
+            />
+            <Text style={styles.chartLegendText}>Games</Text>
+          </View>
+          <View style={styles.chartLegendItem}>
+            <View
+              style={[styles.legendDot, { backgroundColor: COLORS.aqua }]}
+            />
+            <Text style={styles.chartLegendText}>Flashcards</Text>
+          </View>
+          <View style={styles.chartLegendItem}>
+            <View
               style={[styles.legendDot, { backgroundColor: COLORS.purple }]}
             />
             <Text style={styles.chartLegendText}>Tests</Text>
+          </View>
+          <View style={styles.chartLegendItem}>
+            <View
+              style={[styles.legendDot, { backgroundColor: COLORS.blue }]}
+            />
+            <Text style={styles.chartLegendText}>Past days</Text>
           </View>
         </View>
       </DashboardSection>
@@ -5150,6 +5162,7 @@ function DailyActivityBar({
     quizCount: number;
     testCount: number;
     gameCount: number;
+    cardCount: number;
     studySeconds: number;
     dailyProgress: number;
   };
@@ -5175,31 +5188,64 @@ function DailyActivityBar({
         ),
       )
     : 0;
+  const gameShare = day.gameCount
+    ? Math.max(
+        22,
+        Math.min(
+          58,
+          (day.gameCount / Math.max(1, day.activityCount)) * 100,
+        ),
+      )
+    : 0;
+  const cardShare = day.cardCount
+    ? Math.max(
+        22,
+        Math.min(
+          58,
+          (day.cardCount / Math.max(1, day.activityCount)) * 100,
+        ),
+      )
+    : 0;
   const fillColor = isToday ? COLORS.green : COLORS.blue;
   const fillPercent = Math.max(isActive ? 12 : 18, day.dailyProgress);
-  const quizPercent = fillPercent * (quizShare / 100);
-  const testPercent = fillPercent * (testShare / 100);
+  const segmentShareTotal = quizShare + testShare + gameShare + cardShare;
+  const segmentShareScale = Math.min(1, 100 / Math.max(1, segmentShareTotal));
+  const quizPercent = fillPercent * ((quizShare * segmentShareScale) / 100);
+  const testPercent = fillPercent * ((testShare * segmentShareScale) / 100);
+  const gamePercent = fillPercent * ((gameShare * segmentShareScale) / 100);
+  const cardPercent = fillPercent * ((cardShare * segmentShareScale) / 100);
 
   return (
     <View style={[styles.barColumn, compact && styles.barColumnCompact]}>
       <Text style={styles.barValue}>
         {isActive ? formatStudyTime(day.studySeconds) : ''}
       </Text>
-      <View style={styles.barTrack}>
+      <View style={[styles.barTrack, isToday && styles.barTrackToday]}>
         <View
           style={[
             styles.barFill,
             { height: `${fillPercent}%`, backgroundColor: fillColor },
           ]}
         />
-        {quizShare ? (
+        {cardShare ? (
           <View
             pointerEvents="none"
             style={[
-              styles.barQuizSegment,
+              styles.barFlashcardSegment,
               styles.barActivitySegmentOverlay,
-              testPercent === 0 && styles.barQuizSegmentRounded,
-              { height: `${quizPercent}%`, bottom: `${testPercent}%` },
+              !gamePercent && !testPercent && !quizPercent && styles.barFlashcardSegmentRounded,
+              { height: `${cardPercent}%` },
+            ]}
+          />
+        ) : null}
+        {gameShare ? (
+          <View
+            pointerEvents="none"
+            style={[
+              styles.barGameSegment,
+              styles.barActivitySegmentOverlay,
+              !cardPercent && styles.barGameSegmentRounded,
+              { height: `${gamePercent}%`, bottom: `${cardPercent}%` },
             ]}
           />
         ) : null}
@@ -5209,7 +5255,19 @@ function DailyActivityBar({
             style={[
               styles.barTestSegment,
               styles.barActivitySegmentOverlay,
-              { height: `${testPercent}%` },
+              !gamePercent && !cardPercent && styles.barTestSegmentRounded,
+              { height: `${testPercent}%`, bottom: `${gamePercent + cardPercent}%` },
+            ]}
+          />
+        ) : null}
+        {quizShare ? (
+          <View
+            pointerEvents="none"
+            style={[
+              styles.barQuizSegment,
+              styles.barActivitySegmentOverlay,
+              !testPercent && !gamePercent && !cardPercent && styles.barQuizSegmentRounded,
+              { height: `${quizPercent}%`, bottom: `${testPercent + gamePercent + cardPercent}%` },
             ]}
           />
         ) : null}
@@ -5225,7 +5283,9 @@ function DailyActivityBar({
               ? `${day.quizCount}q`
               : day.gameCount > 0
                 ? `${day.gameCount}g`
-                : ''
+                : day.cardCount > 0
+                  ? `${day.cardCount}f`
+                  : ''
           : ''}
       </Text>
     </View>

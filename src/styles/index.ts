@@ -735,13 +735,15 @@ export const styles = StyleSheet.create({
   },
   overviewHeader: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 10,
   },
   overviewTitleGroup: {
     flex: 1,
-    minWidth: 0,
+    minWidth: 102,
+    flexShrink: 0,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 9,
@@ -795,8 +797,14 @@ export const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '900',
   },
+  overviewTitleCompact: {
+    fontSize: 12,
+    lineHeight: 15,
+    letterSpacing: -0.3,
+  },
   overviewDailyGoal: {
     flexShrink: 0,
+    marginLeft: 'auto',
     flexDirection: 'row',
     alignItems: 'center',
     gap: 9,
@@ -1444,14 +1452,14 @@ export const styles = StyleSheet.create({
     borderRadius: 24,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#ECF7F2',
-    borderWidth: 1.75,
-    borderColor: COLORS.greenDark,
-    shadowColor: '#6C9F8E',
+    borderWidth: 1.5,
+    borderColor: '#BDE8D8',
+    backgroundColor: '#EDFBF5',
+    shadowColor: '#4DAF92',
     shadowOffset: { width: 0, height: 5 },
-    shadowOpacity: 0.15,
-    shadowRadius: 10,
-    elevation: 3,
+    shadowOpacity: 0.2,
+    shadowRadius: 14,
+    elevation: 4,
   },
   addButtonPressFeedback: {
     alignSelf: 'stretch',
@@ -1461,19 +1469,26 @@ export const styles = StyleSheet.create({
   },
   addIcon: {
     position: 'relative',
-    width: 39,
-    height: 39,
-    borderRadius: 13,
+    width: 43,
+    height: 43,
+    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#9FD3BE',
-    backgroundColor: '#CDEBDD',
+    backgroundColor: COLORS.greenDark,
+    shadowColor: COLORS.greenDark,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.22,
+    shadowRadius: 5,
+    elevation: 3,
   },
   addButtonEndcap: {
     position: 'relative',
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: '#D9F4E9',
   },
   addButtonSparkle: {
     position: 'absolute',
@@ -1486,14 +1501,19 @@ export const styles = StyleSheet.create({
   },
   addButtonTitle: {
     color: COLORS.ink,
-    fontSize: 17,
+    fontSize: 18,
     fontWeight: '900',
+    letterSpacing: -0.2,
   },
   addButtonSubtitle: {
     marginTop: 3,
     color: '#5F8C7C',
     fontSize: 12,
     fontWeight: '600',
+  },
+  addButtonSubtitleAccent: {
+    color: COLORS.purpleDark,
+    fontWeight: '800',
   },
   wordCollectionsButton: {
     minHeight: 70,
@@ -5480,7 +5500,7 @@ export const styles = StyleSheet.create({
     position: 'absolute',
     top: 14,
     right: 14,
-    color: COLORS.ink,
+    color: COLORS.metricInk,
     fontSize: 22,
     fontWeight: '900',
     letterSpacing: -0.5,
@@ -5516,8 +5536,8 @@ export const styles = StyleSheet.create({
     backgroundColor: '#F8F5FF',
   },
   competitiveStreakCard: {
-    borderColor: '#F0DDA6',
-    backgroundColor: '#FFFEFA',
+    borderColor: '#C9E9DE',
+    backgroundColor: '#F2FAF7',
   },
   competitiveGrandmasterCard: {
     overflow: 'hidden',
@@ -5543,7 +5563,7 @@ export const styles = StyleSheet.create({
     backgroundColor: '#EAE4FF',
   },
   competitiveStreakIcon: {
-    backgroundColor: '#FFF6DF',
+    backgroundColor: '#E0F5EC',
   },
   competitiveMetricLabel: {
     marginTop: 10,
@@ -5554,10 +5574,14 @@ export const styles = StyleSheet.create({
   },
   competitiveMetricValue: {
     marginTop: 1,
-    color: COLORS.ink,
+    color: COLORS.metricInk,
     fontSize: 26,
     lineHeight: 30,
     fontWeight: '900',
+  },
+  competitiveMetricGoalValue: {
+    fontSize: 22,
+    lineHeight: 26,
   },
   competitiveMetricDetail: {
     minHeight: 28,
@@ -5626,7 +5650,7 @@ export const styles = StyleSheet.create({
     backgroundColor: COLORS.white,
   },
   streakHistoryStatCurrent: {
-    color: COLORS.ink,
+    color: COLORS.greenDark,
     fontSize: 22,
     letterSpacing: -0.5,
     fontWeight: '900',
@@ -6106,6 +6130,10 @@ export const styles = StyleSheet.create({
     justifyContent: 'flex-end',
     backgroundColor: '#EFEAF8',
   },
+  barTrackToday: {
+    borderWidth: 1.5,
+    borderColor: COLORS.greenDark,
+  },
   barFill: {
     width: '100%',
     minHeight: 4,
@@ -6156,12 +6184,32 @@ export const styles = StyleSheet.create({
     minHeight: 5,
     backgroundColor: COLORS.yellow,
   },
+  barFlashcardSegment: {
+    width: '100%',
+    minHeight: 5,
+    backgroundColor: COLORS.aqua,
+  },
+  barFlashcardSegmentRounded: {
+    borderBottomLeftRadius: 7,
+    borderBottomRightRadius: 7,
+  },
+  barGameSegment: {
+    width: '100%',
+    minHeight: 5,
+    backgroundColor: COLORS.orange,
+  },
+  barGameSegmentRounded: {
+    borderBottomLeftRadius: 7,
+    borderBottomRightRadius: 7,
+  },
   barTestSegment: {
     width: '100%',
     minHeight: 5,
+    backgroundColor: COLORS.purple,
+  },
+  barTestSegmentRounded: {
     borderBottomLeftRadius: 7,
     borderBottomRightRadius: 7,
-    backgroundColor: COLORS.purple,
   },
   barActivitySegmentOverlay: {
     position: 'absolute',
@@ -6180,7 +6228,7 @@ export const styles = StyleSheet.create({
     fontWeight: '900',
   },
   barLabelToday: {
-    color: COLORS.purpleDark,
+    color: COLORS.greenDark,
   },
   practiceBarQuizText: {
     height: 13,
@@ -6190,12 +6238,18 @@ export const styles = StyleSheet.create({
     fontWeight: '900',
   },
   chartLegendRow: {
+    width: '100%',
     marginTop: 10,
     flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
     justifyContent: 'center',
-    gap: 10,
+    rowGap: 8,
+    columnGap: 12,
+    paddingHorizontal: 2,
   },
   chartLegendItem: {
+    flexShrink: 0,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
@@ -7406,7 +7460,7 @@ export const styles = StyleSheet.create({
   },
   bottomTabs: {
     marginHorizontal: 20,
-    marginBottom: 6,
+    marginBottom: 0,
     paddingTop: 7,
     paddingHorizontal: 10,
     borderWidth: 1,

@@ -3618,7 +3618,10 @@ test('Learning Streaks use each learner daily goal and current completed-day run
 
   assert.match(screen, /label: 'Learning Streaks'/);
   assert.match(screen, /Current Learning Streak/);
-  assert.match(dashboard, /Daily goal: \{completedActivitiesToday\}\/\{dailyLearningGoal\} activities today/);
+  assert.match(dashboard, /DAILY LEARNING GOAL/);
+  assert.match(dashboard, /\{completedActivitiesToday\}\/\{dailyLearningGoal\}/);
+  assert.match(dashboard, /Activities completed today/);
+  assert.match(dashboard, /Complete your goal to keep your streak alive/);
   assert.match(appContent, /setCommunityDailyLearningGoal\(dailyLearningGoal, currentDayKey\)/);
   assert.match(service, /community_set_daily_learning_goal/);
   assert.match(learningSource, /Counts completed learning activities/);

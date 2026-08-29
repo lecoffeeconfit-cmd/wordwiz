@@ -96,7 +96,7 @@ const COMPETITIVE_METRICS: Array<{
 }> = [
   { key: 'collectors', label: 'Collectors', icon: 'library-outline', color: COLORS.blue, background: '#EAF6FF' },
   { key: 'retention', label: 'Retention', icon: 'bulb-outline', color: COLORS.purpleDark, background: '#EEE9FF' },
-  { key: 'streaks', label: 'Learning Streaks', icon: 'flame-outline', color: '#D9900A', background: '#FFF1CB' },
+  { key: 'streaks', label: 'Learning Streaks', icon: 'flame-outline', color: COLORS.greenDark, background: '#F2FAF7' },
 ];
 type NudgeOption = {
   key: string;
@@ -1365,7 +1365,12 @@ export function CommunityScreen({
                 setCollectorRankView(false);
                 void loadWordCollectors(item.key === 'retention' ? 'all_time' : 'week', collectorAudience, 0, true, item.key);
               }}
-              style={({ pressed }) => [community.metricTab, collectorMetric === item.key && community.metricTabActive, pressed && community.metricTabPressed]}
+              style={({ pressed }) => [
+                community.metricTab,
+                collectorMetric === item.key && community.metricTabActive,
+                collectorMetric === 'streaks' && item.key === 'streaks' && community.metricTabActiveStreak,
+                pressed && community.metricTabPressed,
+              ]}
             >
               <Ionicons name={item.icon} size={16} color={collectorMetric === item.key ? item.color : COLORS.muted} />
               <Text style={[community.metricTabText, collectorMetric === item.key && { color: item.color }]}>{item.label}</Text>
@@ -2547,13 +2552,14 @@ const community = StyleSheet.create({
   collectorHeroIcon: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center', borderRadius: 15, backgroundColor: '#EAE4FF' },
   collectorHeroCopy: { flex: 1 },
   collectorHeroEyebrow: { color: COLORS.purple, fontSize: 10, letterSpacing: 1, fontWeight: '900' },
-  collectorHeroTitle: { marginTop: 2, color: COLORS.ink, fontSize: 15, lineHeight: 20, fontWeight: '900' },
+  collectorHeroTitle: { marginTop: 2, color: COLORS.ink, fontSize: 15, lineHeight: 20, fontWeight: '800' },
   collectorBackButton: { alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 5, minHeight: 34, paddingHorizontal: 10, borderRadius: 11, backgroundColor: COLORS.white },
   collectorBackButtonPressed: { opacity: 0.72 },
   collectorBackButtonText: { color: COLORS.purpleDark, fontSize: 12, fontWeight: '900' },
   metricTabs: { flexDirection: 'row', gap: 6, padding: 4, borderRadius: 18, borderWidth: 1, borderColor: '#E3DDF5', backgroundColor: '#F0EDF8' },
   metricTab: { flex: 1, minHeight: 43, alignItems: 'center', justifyContent: 'center', gap: 2, paddingHorizontal: 3, borderRadius: 14 },
   metricTabActive: { backgroundColor: COLORS.white, ...SOFT_SHADOW },
+  metricTabActiveStreak: { backgroundColor: '#F2FAF7' },
   metricTabPressed: { opacity: 0.78 },
   metricTabText: { color: COLORS.muted, fontSize: 10, fontWeight: '900', textAlign: 'center' },
   collectorControlGroup: { gap: 6 },
