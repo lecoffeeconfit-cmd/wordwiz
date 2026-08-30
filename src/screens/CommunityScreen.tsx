@@ -758,6 +758,9 @@ export function CommunityScreen({
   const [selectedFriendForNudge, setSelectedFriendForNudge] = useState<CommunityConnection | null>(null);
   const [friendNudgeGroup, setFriendNudgeGroup] = useState<string | null>(null);
   const [friendNudgeSendingKey, setFriendNudgeSendingKey] = useState<string | null>(null);
+  const [friendGoldenNudgeOpen, setFriendGoldenNudgeOpen] = useState(false);
+  const [friendGoldenNudgeMessage, setFriendGoldenNudgeMessage] = useState('');
+  const [friendGoldenNudgeSending, setFriendGoldenNudgeSending] = useState(false);
   const [friendPage, setFriendPage] = useState(0);
   const [friendSort, setFriendSort] = useState<FriendSort>('recent');
   const [nudgePage, setNudgePage] = useState(0);
@@ -1216,17 +1219,22 @@ export function CommunityScreen({
   const openFriendNudgePicker = useCallback((friend: CommunityConnection) => {
     setFriendNudgeGroup(null);
     setFriendNudgeSendingKey(null);
+    setFriendGoldenNudgeOpen(false);
+    setFriendGoldenNudgeMessage('');
+    setFriendGoldenNudgeSending(false);
     setSelectedFriendForNudge(friend);
   }, []);
 
   const closeFriendNudgePicker = useCallback(() => {
-    if (friendNudgeSendingKey) return;
+    if (friendNudgeSendingKey || friendGoldenNudgeSending) return;
     setSelectedFriendForNudge(null);
     setFriendNudgeGroup(null);
-  }, [friendNudgeSendingKey]);
+    setFriendGoldenNudgeOpen(false);
+    setFriendGoldenNudgeMessage('');
+  }, [friendGoldenNudgeSending, friendNudgeSendingKey]);
 
   const sendFriendNudge = useCallback(async (option: NudgeOption) => {
-    if (!selectedFriendForNudge || friendNudgeSendingKey) return;
+    if (!selectedFriendForNudge || friendNudgeSendingKey || friendGoldenNudgeSending) return;
     const friendName = selectedFriendForNudge.displayName;
     setFriendNudgeSendingKey(option.key);
     try {
@@ -1239,7 +1247,37 @@ export function CommunityScreen({
     } finally {
       setFriendNudgeSendingKey(null);
     }
-  }, [friendNudgeSendingKey, selectedFriendForNudge]);
+  }, [friendGoldenNudgeSending, friendNudgeSendingKey, selectedFriendForNudge]);
+
+  const sendFriendGoldenNudge = useCallback(async () => {
+    const message = friendGoldenNudgeMessage.trim();
+    if (!selectedFriendForNudge || friendGoldenNudgeSending) return;
+    if (refreshTokens < 1) {
+      Alert.alert('No Golden Tickets yet', 'Unlock achievements to earn a Golden Ticket for a one-of-a-kind nudge.');
+      return;
+    }
+    if (!message) {
+      Alert.alert('Write a message first', 'Add a personal message for your friend.');
+      return;
+    }
+    if (message.length > GOLDEN_NUDGE_MAX_LENGTH) return;
+
+    const friendName = selectedFriendForNudge.displayName;
+    setFriendGoldenNudgeSending(true);
+    try {
+      await sendCommunityNudge(selectedFriendForNudge.publicId, 'golden_nudge', 'golden_custom', message);
+      onUseGoldenTicket();
+      setFriendGoldenNudgeMessage('');
+      setFriendGoldenNudgeOpen(false);
+      setFriendNudgeGroup(null);
+      setSelectedFriendForNudge(null);
+      Alert.alert('Golden nudge sent', `Your message was sent to ${friendName}.`);
+    } catch (error) {
+      Alert.alert('Could not send Golden Nudge', error instanceof Error ? error.message : 'Please try again later.');
+    } finally {
+      setFriendGoldenNudgeSending(false);
+    }
+  }, [friendGoldenNudgeMessage, friendGoldenNudgeSending, onUseGoldenTicket, refreshTokens, selectedFriendForNudge]);
 
   const sendLeaderboardNudge = useCallback(async (option: NudgeOption) => {
     if (!selectedLeaderboardEntry) return;
@@ -1423,6 +1461,10 @@ export function CommunityScreen({
   }, [selectedNudgeRecipient]);
 
   const openGoldenNudgeComposer = useCallback(() => {
+    if (goldenNudgeComposerOpen) {
+      setGoldenNudgeComposerOpen(false);
+      return;
+    }
     if (!selectedNudgeRecipient) {
       Alert.alert('Connect with a friend first', 'Once you are connected, choose them here and send a Golden Nudge.');
       return;
@@ -1432,7 +1474,7 @@ export function CommunityScreen({
       return;
     }
     setGoldenNudgeComposerOpen(true);
-  }, [refreshTokens, selectedNudgeRecipient]);
+  }, [goldenNudgeComposerOpen, refreshTokens, selectedNudgeRecipient]);
 
   const sendGoldenNudge = useCallback(async () => {
     const message = goldenNudgeMessage.trim();
@@ -2200,7 +2242,10 @@ export function CommunityScreen({
             accessibilityLabel="Send a nudge"
             accessibilityHint={nudgeComposerExpanded ? 'Hide the nudge message library' : 'Show friends and message categories'}
             accessibilityState={{ expanded: nudgeComposerExpanded }}
-            onPress={() => setNudgeComposerExpanded((current) => !current)}
+            onPress={() => setNudgeComposerExpanded((current) => {
+              if (current) setGoldenNudgeComposerOpen(false);
+              return !current;
+            })}
             style={({ pressed }) => [community.nudgeComposerHeading, pressed && community.nudgeComposerHeaderPressed]}
           >
             <View style={community.nudgeComposerIcon}>
@@ -2327,10 +2372,11 @@ export function CommunityScreen({
                   start={{ x: 0, y: 0 }}
                   end={{ x: 1, y: 1 }}
                   pointerEvents="none"
-                  style={community.goldenNudgeIcon}
-                >
-                  <Ionicons name="ticket-outline" size={19} color="#76560A" />
-                </LinearGradient>
+                  style={community.goldenNudgeCardGradient}
+                />
+                <View style={community.goldenNudgeIcon}>
+                  <Ionicons name="ticket-outline" size={19} color="#B98416" />
+                </View>
                 <View style={community.goldenNudgeCopy}>
                   <View style={community.goldenNudgeTitleRow}>
                     <Text style={community.goldenNudgeTitle}>Golden Nudge</Text>
@@ -2704,7 +2750,7 @@ export function CommunityScreen({
                 accessibilityRole="button"
                 accessibilityLabel="Close nudge picker"
                 accessibilityHint="Closes the nudge menu"
-                disabled={Boolean(friendNudgeSendingKey)}
+                disabled={Boolean(friendNudgeSendingKey) || friendGoldenNudgeSending}
                 onPress={closeFriendNudgePicker}
                 hitSlop={8}
                 style={community.friendNudgeClose}
@@ -2724,7 +2770,10 @@ export function CommunityScreen({
                     <Pressable
                       accessibilityRole="button"
                       accessibilityState={{ expanded }}
-                      onPress={() => setFriendNudgeGroup((current) => current === group.group ? null : group.group)}
+                      onPress={() => {
+                        setFriendGoldenNudgeOpen(false);
+                        setFriendNudgeGroup((current) => current === group.group ? null : group.group);
+                      }}
                       style={[community.nudgeCategoryTrigger, expanded && community.nudgeCategoryTriggerExpanded]}
                     >
                       <View style={[community.nudgePickerGroupIcon, { backgroundColor: group.background }]}>
@@ -2741,12 +2790,12 @@ export function CommunityScreen({
                         key={option.key}
                         accessibilityRole="button"
                         accessibilityLabel={`Send ${option.title}`}
-                        disabled={Boolean(friendNudgeSendingKey)}
+                        disabled={Boolean(friendNudgeSendingKey) || friendGoldenNudgeSending}
                         onPress={() => void sendFriendNudge(option)}
                         style={({ pressed }) => [
                           community.nudgeOption,
                           pressed && community.nudgeOptionPressed,
-                          friendNudgeSendingKey && community.disabledButton,
+                          (friendNudgeSendingKey || friendGoldenNudgeSending) && community.disabledButton,
                         ]}
                       >
                         <View style={[community.nudgeOptionIcon, { backgroundColor: option.background }]}>
@@ -2761,6 +2810,102 @@ export function CommunityScreen({
                   </View>
                 );
               })}
+              <View style={community.nudgePickerGroup}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Create a Golden Nudge"
+                  accessibilityHint="Use one Golden Ticket to write a custom message for this friend"
+                  accessibilityState={{ expanded: friendGoldenNudgeOpen }}
+                  onPress={() => {
+                    if (friendGoldenNudgeOpen) {
+                      setFriendGoldenNudgeOpen(false);
+                      return;
+                    }
+                    if (refreshTokens < 1) {
+                      Alert.alert('No Golden Tickets yet', 'Unlock achievements to earn a Golden Ticket for a one-of-a-kind nudge.');
+                      return;
+                    }
+                    setFriendNudgeGroup(null);
+                    setFriendGoldenNudgeOpen(true);
+                  }}
+                  disabled={Boolean(friendNudgeSendingKey) || friendGoldenNudgeSending}
+                  style={({ pressed }) => [
+                    community.goldenNudgeCard,
+                    community.friendGoldenNudgeCard,
+                    friendGoldenNudgeOpen && community.goldenNudgeCardOpen,
+                    pressed && community.goldenNudgeCardPressed,
+                    refreshTokens < 1 && community.goldenNudgeUnavailable,
+                    (friendNudgeSendingKey || friendGoldenNudgeSending) && community.disabledButton,
+                  ]}
+                >
+                  <LinearGradient
+                    colors={WORDWIZ_GRADIENT_COLORS}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    pointerEvents="none"
+                    style={community.goldenNudgeCardGradient}
+                  />
+                  <View style={community.goldenNudgeIcon}>
+                    <Ionicons name="ticket-outline" size={19} color="#B98416" />
+                  </View>
+                  <View style={community.goldenNudgeCopy}>
+                    <View style={community.goldenNudgeTitleRow}>
+                      <Text style={community.goldenNudgeTitle}>Golden Nudge</Text>
+                      <Text style={community.goldenNudgeCount}>{refreshTokens} {refreshTokens === 1 ? 'ticket' : 'tickets'}</Text>
+                    </View>
+                    <Text style={community.goldenNudgeHelp}>
+                      {refreshTokens > 0 ? 'Write a one-of-a-kind message · uses 1 ticket' : 'Earn a Golden Ticket to unlock custom nudges.'}
+                    </Text>
+                  </View>
+                  <Ionicons name={friendGoldenNudgeOpen ? 'chevron-up' : 'chevron-down'} size={17} color="#B98416" />
+                </Pressable>
+                {friendGoldenNudgeOpen ? (
+                  <View style={community.goldenNudgeEditor}>
+                    <View style={community.goldenNudgeEditorHeader}>
+                      <View style={community.goldenNudgeEditorTitleRow}>
+                        <Ionicons name="sparkles-outline" size={17} color="#B98416" />
+                        <Text style={community.goldenNudgeEditorTitle}>Write your golden nudge</Text>
+                      </View>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Close Golden Nudge editor"
+                        onPress={() => setFriendGoldenNudgeOpen(false)}
+                        hitSlop={8}
+                      >
+                        <Ionicons name="close-circle-outline" size={21} color={COLORS.muted} />
+                      </Pressable>
+                    </View>
+                    <TextInput
+                      accessibilityLabel="Golden Nudge message"
+                      value={friendGoldenNudgeMessage}
+                      onChangeText={setFriendGoldenNudgeMessage}
+                      placeholder="Write something kind, funny, or encouraging…"
+                      placeholderTextColor={COLORS.muted}
+                      maxLength={GOLDEN_NUDGE_MAX_LENGTH}
+                      multiline
+                      textAlignVertical="top"
+                      style={community.goldenNudgeInput}
+                    />
+                    <View style={community.goldenNudgeEditorFooter}>
+                      <Text style={community.goldenNudgeCharacterCount}>{friendGoldenNudgeMessage.length}/{GOLDEN_NUDGE_MAX_LENGTH}</Text>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Use one Golden Ticket and send nudge"
+                        disabled={friendGoldenNudgeSending || !friendGoldenNudgeMessage.trim() || refreshTokens < 1}
+                        onPress={() => void sendFriendGoldenNudge()}
+                        style={({ pressed }) => [
+                          community.goldenNudgeSend,
+                          pressed && community.goldenNudgeSendPressed,
+                          (friendGoldenNudgeSending || !friendGoldenNudgeMessage.trim() || refreshTokens < 1) && community.goldenNudgeSendDisabled,
+                        ]}
+                      >
+                        <Ionicons name="ticket-outline" size={15} color={COLORS.white} />
+                        <Text style={community.goldenNudgeSendText}>{friendGoldenNudgeSending ? 'Sending…' : 'Use 1 ticket · Send'}</Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                ) : null}
+              </View>
             </ScrollView>
           </Pressable>
         </Pressable>
@@ -3274,6 +3419,7 @@ const community = StyleSheet.create({
   friendNudgeHelp: { marginTop: 2, color: COLORS.muted, fontSize: 12, lineHeight: 17, fontWeight: '700' },
   friendNudgeClose: { position: 'absolute', top: 0, right: 0, width: 40, height: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 14, borderWidth: 1, borderColor: '#E3DDF5', backgroundColor: '#F4F1FA' },
   friendNudgeScroll: { width: '100%' },
+  friendGoldenNudgeCard: { borderColor: '#E3BB50' },
   nudgePicker: { width: '100%', marginTop: 8, gap: 8 },
   nudgePickerTitle: { color: COLORS.ink, fontSize: 16, fontWeight: '900', textAlign: 'center' },
   nudgePickerHelp: { color: COLORS.muted, fontSize: 12, fontWeight: '600', textAlign: 'center' },
@@ -3333,11 +3479,12 @@ const community = StyleSheet.create({
   nudgeCategoryCopy: { flex: 1 },
   nudgeCategoryCount: { marginTop: 1, color: COLORS.muted, fontSize: 10, fontWeight: '700' },
   nudgeOptionUnavailable: { opacity: 0.68 },
-  goldenNudgeCard: { minHeight: 64, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 10, paddingVertical: 9, borderRadius: 16, borderWidth: 1, borderColor: '#E9C96A', backgroundColor: '#FFF9E8' },
-  goldenNudgeCardOpen: { borderColor: '#D9AA3B', backgroundColor: '#FFF6D8', boxShadow: '0 3px 10px rgba(185, 132, 22, 0.10)' },
+  goldenNudgeCard: { minHeight: 64, position: 'relative', overflow: 'hidden', flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 10, paddingVertical: 9, borderRadius: 16, borderWidth: 1, borderColor: '#D3C1FF', backgroundColor: 'transparent' },
+  goldenNudgeCardGradient: { ...StyleSheet.absoluteFill, borderRadius: 15 },
+  goldenNudgeCardOpen: { borderColor: '#D9AA3B', boxShadow: '0 3px 10px rgba(185, 132, 22, 0.10)' },
   goldenNudgeCardPressed: { opacity: 0.78 },
   goldenNudgeUnavailable: { opacity: 0.62 },
-  goldenNudgeIcon: { width: 38, height: 38, alignItems: 'center', justifyContent: 'center', borderRadius: 12, overflow: 'hidden' },
+  goldenNudgeIcon: { width: 38, height: 38, alignItems: 'center', justifyContent: 'center', borderRadius: 12, borderWidth: 1, borderColor: '#E9C96A', backgroundColor: '#FFF1C2' },
   goldenNudgeCopy: { flex: 1 },
   goldenNudgeTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },
   goldenNudgeTitle: { color: '#8F6510', fontSize: 14, fontWeight: '900' },
