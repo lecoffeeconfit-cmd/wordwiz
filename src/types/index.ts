@@ -372,4 +372,6 @@ export type AchievementWallet = {
   claimedAchievementIds: string[];
   points: number;
   refreshTokens: number;
+  /** Number of daily activity ticket milestones already paid out per day. */
+  dailyActivityTicketClaims?: Record<string, number>;
 };

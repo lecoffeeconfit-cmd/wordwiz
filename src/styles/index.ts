@@ -581,7 +581,7 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'flex-end',
     gap: 11,
-    transform: [{ translateY: -34 }],
+    transform: [{ translateY: -26 }],
     zIndex: 10,
   },
   homeFloatingSecondaryButton: {
@@ -661,19 +661,6 @@ export const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '900',
   },
-  paperPlane: {
-    position: 'absolute',
-    top: 148,
-    alignSelf: 'center',
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.48)',
-    opacity: 0.85,
-    transform: [{ rotate: '-12deg' }],
-  },
   heroGreeting: {
     position: 'absolute',
     left: 22,
@@ -708,7 +695,7 @@ export const styles = StyleSheet.create({
     color: COLORS.ink,
     textAlign: 'center',
     fontSize: 13,
-    fontWeight: '700',
+    fontWeight: '900',
   },
   homeSubtitleRow: {
     width: '100%',
@@ -716,6 +703,44 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 5,
+  },
+  homeTodayMetaRow: {
+    marginTop: 5,
+    maxWidth: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+  },
+  homeTodayWordsText: {
+    color: COLORS.teal,
+    fontSize: 10,
+    lineHeight: 13,
+    fontWeight: '900',
+  },
+  homeTodayWordsTextQuiet: {
+    color: '#92DCC2',
+  },
+  homeTodayWordsTextMedium: {
+    color: '#66CFA9',
+  },
+  homeTodayMetaDivider: {
+    color: '#B8C1D8',
+    fontSize: 11,
+    lineHeight: 13,
+    fontWeight: '900',
+  },
+  homeTodayActivityText: {
+    color: COLORS.purple,
+    fontSize: 10,
+    lineHeight: 13,
+    fontWeight: '800',
+  },
+  homeTodayActivityTextQuiet: {
+    color: '#A397E0',
+  },
+  homeTodayActivityTextMedium: {
+    color: '#9B86D8',
   },
   homeOverviewCard: {
     marginTop: 4,
@@ -728,6 +753,15 @@ export const styles = StyleSheet.create({
     ...SOFT_SHADOW,
     zIndex: 2,
   },
+  homeOverviewCardChampionBackdrop: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    borderRadius: 24,
+    opacity: 0.36,
+  },
   homeOverviewCardAfterTrial: {
     marginTop: 2,
   },
@@ -736,18 +770,18 @@ export const styles = StyleSheet.create({
   },
   overviewHeader: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
+    flexWrap: 'nowrap',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: 10,
+    gap: 8,
   },
   overviewTitleGroup: {
     flex: 1,
-    minWidth: 102,
-    flexShrink: 0,
+    minWidth: 0,
+    flexShrink: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 9,
+    gap: 7,
   },
   overviewTitleIcon: {
     width: 32,
@@ -792,6 +826,11 @@ export const styles = StyleSheet.create({
     right: -2,
     top: 1,
   },
+  wordWizHatSparkleChampion: {
+    textShadowColor: 'rgba(235, 169, 42, 0.48)',
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 4,
+  },
   homeSectionTitle: {
     flexShrink: 1,
     color: COLORS.ink,
@@ -804,13 +843,16 @@ export const styles = StyleSheet.create({
     letterSpacing: -0.3,
   },
   overviewDailyGoal: {
-    flexShrink: 0,
+    minWidth: 0,
+    flexShrink: 1,
     marginLeft: 'auto',
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 9,
+    gap: 7,
   },
   overviewDailyGoalCopy: {
+    minWidth: 0,
+    flexShrink: 1,
     alignItems: 'flex-end',
   },
   overviewDailyGoalLabel: {
@@ -819,6 +861,15 @@ export const styles = StyleSheet.create({
     lineHeight: 12,
     fontWeight: '900',
     letterSpacing: 0.8,
+  },
+  overviewDailyGoalLabelMint: {
+    color: COLORS.teal,
+  },
+  overviewDailyGoalLabelBlue: {
+    color: COLORS.blue,
+  },
+  overviewDailyGoalLabelPurple: {
+    color: COLORS.purpleDark,
   },
   overviewDailyGoalCaption: {
     marginTop: 1,
@@ -837,8 +888,30 @@ export const styles = StyleSheet.create({
     borderColor: COLORS.teal,
     backgroundColor: COLORS.tealPale,
   },
+  overviewProgressRingChampion: {
+    borderWidth: 0,
+    backgroundColor: 'transparent',
+  },
+  overviewProgressRingGradient: {
+    width: 43,
+    height: 43,
+    padding: 2,
+    borderRadius: 22,
+  },
+  overviewProgressRingInner: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 20,
+    backgroundColor: COLORS.tealPale,
+  },
   overviewProgressText: {
     color: COLORS.teal,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  overviewProgressTextChampion: {
+    color: COLORS.purpleDark,
     fontSize: 12,
     fontWeight: '900',
   },
@@ -5316,8 +5389,8 @@ export const styles = StyleSheet.create({
     paddingBottom: 34,
   },
   dashboardHero: {
-    minHeight: 176,
-    padding: 21,
+    minHeight: 160,
+    padding: 17,
     borderRadius: 31,
     flexDirection: 'row',
     alignItems: 'center',
@@ -5326,7 +5399,7 @@ export const styles = StyleSheet.create({
   },
   heroCopy: {
     flex: 1,
-    paddingRight: 14,
+    paddingRight: 10,
   },
   heroLabel: {
     color: '#E9E4FF',
@@ -5343,22 +5416,22 @@ export const styles = StyleSheet.create({
     letterSpacing: -1.5,
   },
   heroLevelTitle: {
-    marginTop: 8,
+    marginTop: 5,
     color: COLORS.white,
-    fontSize: 19,
-    lineHeight: 24,
+    fontSize: 18,
+    lineHeight: 22,
     fontWeight: '900',
   },
   heroText: {
-    marginTop: 5,
+    marginTop: 3,
     color: '#F1EEFF',
-    fontSize: 12,
-    lineHeight: 17,
+    fontSize: 11,
+    lineHeight: 15,
     fontWeight: '600',
   },
   heroLevelTrack: {
     height: 8,
-    marginTop: 11,
+    marginTop: 8,
     borderRadius: 4,
     overflow: 'visible',
     backgroundColor: 'rgba(255,255,255,0.28)',
@@ -5368,10 +5441,10 @@ export const styles = StyleSheet.create({
     borderRadius: 4,
   },
   heroLevelNext: {
-    marginTop: 6,
+    marginTop: 4,
     color: '#F1EEFF',
-    fontSize: 10,
-    lineHeight: 13,
+    fontSize: 9,
+    lineHeight: 12,
     fontWeight: '800',
   },
   masteryGauge: {
@@ -10406,17 +10479,19 @@ export const styles = StyleSheet.create({
     fontWeight: '700',
   },
   wordOverviewScoreCircle: {
-    width: 61,
-    height: 61,
+    width: 68,
+    height: 68,
     borderWidth: 4,
-    borderRadius: 31,
+    borderRadius: 34,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: COLORS.white,
   },
   wordOverviewScore: {
-    fontSize: 16,
+    fontSize: 17,
+    lineHeight: 21,
     fontWeight: '900',
+    textAlign: 'center',
   },
   wordOverviewStatsGrid: {
     marginTop: 11,

@@ -3681,6 +3681,171 @@ test('daily learning goals count completed activities instead of unique words', 
   assert.equal(learning.getActivityDates(analytics, 5).has(day), false);
 });
 
+test('daily activity tickets use growing cumulative activity milestones', () => {
+  const day = '2026-08-20';
+  const completedQuiz = (id, index) => ({
+    id,
+    date: day,
+    score: 1,
+    total: 1,
+    durationSeconds: 12,
+    completedAt: `${day}T0${index}:00:00.000Z`,
+    completed: true,
+    answers: [{ wordId: `word-${id}`, correct: true }],
+  });
+  const fiveActivities = {
+    quizHistory: Array.from({ length: 4 }, (_, index) => completedQuiz(`quiz-${index}`, index + 1)),
+    gameHistory: [],
+    cardHistory: [{
+      id: 'card-1',
+      wordId: 'word-card',
+      date: day,
+      studiedAt: `${day}T05:00:00.000Z`,
+      remembered: true,
+      durationSeconds: 8,
+    }],
+  };
+
+  const firstReward = learning.getDailyActivityTicketReward(fiveActivities, {}, day);
+  assert.deepEqual(
+    {
+      activityCount: firstReward.activityCount,
+      ticketsToAward: firstReward.ticketsToAward,
+    },
+    { activityCount: 5, ticketsToAward: 1 },
+  );
+  assert.equal(
+    learning.getDailyActivityTicketReward(
+      fiveActivities,
+      { [day]: firstReward.earnedMilestones },
+      day,
+    ).ticketsToAward,
+    0,
+  );
+
+  const thirteenActivities = {
+    ...fiveActivities,
+    cardHistory: Array.from({ length: 9 }, (_, index) => ({
+      id: `card-${index + 1}`,
+      wordId: `word-card-${index + 1}`,
+      date: day,
+      studiedAt: `${day}T${String(index + 5).padStart(2, '0')}:00:00.000Z`,
+      remembered: true,
+      durationSeconds: 8,
+    })),
+  };
+  assert.equal(
+    learning.getDailyActivityTicketReward(thirteenActivities, { [day]: 1 }, day).ticketsToAward,
+    1,
+  );
+
+  const twelveActivities = {
+    ...fiveActivities,
+    cardHistory: Array.from({ length: 8 }, (_, index) => ({
+      id: `card-before-next-${index + 1}`,
+      wordId: `word-before-next-${index + 1}`,
+      date: day,
+      studiedAt: `${day}T${String(index + 5).padStart(2, '0')}:00:00.000Z`,
+      remembered: true,
+      durationSeconds: 8,
+    })),
+  };
+  assert.equal(
+    learning.getDailyActivityTicketReward(twelveActivities, { [day]: 1 }, day).ticketsToAward,
+    0,
+  );
+
+  const twentyFourActivities = {
+    ...fiveActivities,
+    cardHistory: Array.from({ length: 20 }, (_, index) => ({
+      id: `card-next-${index + 1}`,
+      wordId: `word-next-${index + 1}`,
+      date: day,
+      studiedAt: `${day}T${String(index + 5).padStart(2, '0')}:00:00.000Z`,
+      remembered: true,
+      durationSeconds: 8,
+    })),
+  };
+  assert.equal(
+    learning.getDailyActivityTicketReward(twentyFourActivities, { [day]: 2 }, day).ticketsToAward,
+    1,
+  );
+
+  const incompleteActivities = {
+    quizHistory: [
+      ...Array.from({ length: 4 }, (_, index) => completedQuiz(`complete-${index}`, index + 1)),
+      {
+        ...completedQuiz('incomplete', 5),
+        completed: false,
+        answers: [{ wordId: 'word-incomplete', correct: true, attemptStatus: 'incomplete' }],
+      },
+    ],
+    gameHistory: [],
+    cardHistory: [],
+  };
+  assert.equal(
+    learning.getDailyActivityTicketReward(incompleteActivities, {}, day).ticketsToAward,
+    0,
+  );
+});
+
+test('golden ticket surprise stays non-blocking and cleans up its animation', () => {
+  const surprise = fs.readFileSync(
+    path.join(projectRoot, 'src/components/shared/GoldenTicketSurprise.tsx'),
+    'utf8',
+  );
+  const appContent = fs.readFileSync(
+    path.join(projectRoot, 'src/application/AppContent.tsx'),
+    'utf8',
+  );
+
+  assert.match(surprise, /pointerEvents="none"/);
+  assert.match(surprise, /useNativeDriver: true/);
+  assert.match(surprise, /animation\.stop\(\)/);
+  assert.doesNotMatch(surprise, /activityCount|next ticket|upcoming ticket/i);
+  assert.match(appContent, /area: 'daily_activity_ticket_reward'/);
+});
+
+test('achievement reward icon carries the compact Admit One ticket accent', () => {
+  const dashboard = fs.readFileSync(
+    path.join(projectRoot, 'src/screens/DashboardScreen.tsx'),
+    'utf8',
+  );
+  const styles = fs.readFileSync(path.join(projectRoot, 'src/styles/index.ts'), 'utf8');
+
+  assert.match(dashboard, /<AdmitOneTicket size="small" \/>/);
+  assert.doesNotMatch(styles, /achievementTokenAdmitOne/);
+});
+
+test('Golden Ticket details keep the existing gold icon with the same Admit One accent', () => {
+  const modal = fs.readFileSync(
+    path.join(projectRoot, 'src/modals/GoldenTicketInfoModal.tsx'),
+    'utf8',
+  );
+
+  assert.match(modal, /<AdmitOneTicket size="large" \/>/);
+  assert.doesNotMatch(modal, /<Ionicons name="ticket" size=\{34\}/);
+});
+
+test('Admit One ticket matches the reference ticket shape', () => {
+  const ticket = fs.readFileSync(
+    path.join(projectRoot, 'src/components/shared/AdmitOneTicket.tsx'),
+    'utf8',
+  );
+
+  assert.match(ticket, /admit-one-ticket\.png/);
+  assert.match(ticket, /resizeMode="contain"/);
+  assert.match(ticket, /top: 0/);
+  assert.match(ticket, /right: 0/);
+  assert.match(ticket, /bottom: 0/);
+  assert.match(ticket, /left: 0/);
+  assert.match(ticket, /width: 44/);
+  assert.match(ticket, /height: 25/);
+  assert.match(ticket, /width: 26/);
+  assert.match(ticket, /height: 15/);
+  assert.ok(fs.statSync(path.join(projectRoot, 'assets/admit-one-ticket.png')).size > 0);
+});
+
 test('competitive collector hub has separate retention and streak metrics', () => {
   const screen = fs.readFileSync(path.join(projectRoot, 'src/screens/CommunityScreen.tsx'), 'utf8');
   const dashboard = fs.readFileSync(path.join(projectRoot, 'src/screens/DashboardScreen.tsx'), 'utf8');

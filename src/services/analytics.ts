@@ -13,6 +13,7 @@ export type AnalyticsEventName =
   | 'quiz_started'
   | 'quiz_completed'
   | 'game_completed'
+  | 'daily_activity_ticket_earned'
   | 'omega_test_ended_early'
   | 'timed_learning_toggled'
   | 'reminder_updated'

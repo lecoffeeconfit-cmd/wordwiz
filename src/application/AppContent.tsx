@@ -7,7 +7,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, AppState, PanResponder, Platform, Pressable, Text, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { BottomTabs } from '../components';
+import { BottomTabs, GoldenTicketSurprise } from '../components';
 import {
   DEFAULT_REMINDER,
   EMPTY_ANALYTICS,
@@ -133,6 +133,7 @@ import {
   DEFAULT_TIME_BASED_LEARNING_SETTINGS,
   DEFAULT_GAME_PREFERENCES,
   getDayKey,
+  getDailyActivityTicketReward,
   getDailyLearningProgress,
   getDueReviewWords,
   getNextMasteryLevel,
@@ -170,6 +171,7 @@ const EMPTY_ACHIEVEMENT_WALLET: AchievementWallet = {
   claimedAchievementIds: [],
   points: 0,
   refreshTokens: 0,
+  dailyActivityTicketClaims: {},
 };
 
 export default function AppContent() {
@@ -196,6 +198,10 @@ export default function AppContent() {
   const [analytics, setAnalytics] = useState<AnalyticsData>(EMPTY_ANALYTICS);
   const [achievementWallet, setAchievementWallet] =
     useState<AchievementWallet>(EMPTY_ACHIEVEMENT_WALLET);
+  const [goldenTicketSurprise, setGoldenTicketSurprise] = useState<{
+    id: string;
+    ticketsAwarded: number;
+  } | null>(null);
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [feedbackContext, setFeedbackContext] = useState<FeedbackContext | null>(null);
@@ -239,6 +245,8 @@ export default function AppContent() {
   const achievementWalletLoadedUserId = useRef<string | null>(null);
   const dailyLearningGoalLoadedUserId = useRef<string | null>(null);
   const latestWords = useRef<Word[]>([]);
+  const latestAnalytics = useRef<AnalyticsData>(EMPTY_ANALYTICS);
+  const latestAchievementWallet = useRef<AchievementWallet>(EMPTY_ACHIEVEMENT_WALLET);
   const starterCollectionEnrichmentIds = useRef(new Set<string>());
   const hasHiddenNativeSplash = useRef(false);
   const startupStageRef = useRef<StartupStage>('js_entry');
@@ -376,6 +384,14 @@ export default function AppContent() {
     latestWords.current = words;
   }, [words]);
 
+  useEffect(() => {
+    latestAnalytics.current = analytics;
+  }, [analytics]);
+
+  useEffect(() => {
+    latestAchievementWallet.current = achievementWallet;
+  }, [achievementWallet]);
+
   const flushScreenTime = useCallback(() => {
     const session = activeScreenTimeSession.current;
     activeScreenTimeSession.current = null;
@@ -499,6 +515,7 @@ export default function AppContent() {
         } else {
           setWords([]);
           setQuizProgress(null);
+          latestAnalytics.current = EMPTY_ANALYTICS;
           setAnalytics(EMPTY_ANALYTICS);
           setReminderSettings(DEFAULT_REMINDER);
           setDailyLearningGoal(1);
@@ -524,6 +541,7 @@ export default function AppContent() {
           reportStartupFailure(error, failedStage);
         }
         setWords([]);
+        latestAnalytics.current = EMPTY_ANALYTICS;
         setAnalytics(EMPTY_ANALYTICS);
         setReminderSettings(DEFAULT_REMINDER);
         setDailyLearningGoal(1);
@@ -740,10 +758,13 @@ export default function AppContent() {
       setWords([]);
       setQuizProgress(null);
       setPausedQuizSession(null);
+      latestAnalytics.current = EMPTY_ANALYTICS;
       setAnalytics(EMPTY_ANALYTICS);
       achievementWalletLoadedUserId.current = null;
       dailyLearningGoalLoadedUserId.current = null;
+      latestAchievementWallet.current = EMPTY_ACHIEVEMENT_WALLET;
       setAchievementWallet(EMPTY_ACHIEVEMENT_WALLET);
+      setGoldenTicketSurprise(null);
       setReminderSettings(DEFAULT_REMINDER);
       setDailyLearningGoal(1);
       setTimedLearningEnabled(false);
@@ -765,7 +786,9 @@ export default function AppContent() {
     setOnboardingCacheState('loading');
     try {
       achievementWalletLoadedUserId.current = null;
+      latestAchievementWallet.current = EMPTY_ACHIEVEMENT_WALLET;
       setAchievementWallet(EMPTY_ACHIEVEMENT_WALLET);
+      setGoldenTicketSurprise(null);
       const [savedWords, savedQuiz, savedAnalytics, savedPausedQuizSession, savedReminder, savedDailyLearningGoal, savedDailyQuizGoal, savedTimedLearning, savedTimeBasedLearningSettings, savedGamePreferences, savedQuizPreferences, savedAchievementWallet, savedOnboarding, legacyOnboarding] =
         await Promise.all([
           AsyncStorage.getItem(getUserCacheKey(userId, 'words')),
@@ -787,7 +810,11 @@ export default function AppContent() {
       const cachedWords = savedWords ? JSON.parse(savedWords) as Word[] : [];
       setWords(cachedWords.filter(isUserCreatedWord));
       setQuizProgress(savedQuiz ? JSON.parse(savedQuiz) : null);
-      setAnalytics(savedAnalytics ? JSON.parse(savedAnalytics) : EMPTY_ANALYTICS);
+      const cachedAnalytics = savedAnalytics
+        ? JSON.parse(savedAnalytics) as AnalyticsData
+        : EMPTY_ANALYTICS;
+      latestAnalytics.current = cachedAnalytics;
+      setAnalytics(cachedAnalytics);
       setPausedQuizSession(
         savedPausedQuizSession ? JSON.parse(savedPausedQuizSession) as PausedQuizSession : null,
       );
@@ -830,13 +857,18 @@ export default function AppContent() {
       const parsedWallet = savedAchievementWallet
         ? JSON.parse(savedAchievementWallet) as Partial<AchievementWallet>
         : null;
-      setAchievementWallet({
+      const nextAchievementWallet: AchievementWallet = {
         claimedAchievementIds: Array.isArray(parsedWallet?.claimedAchievementIds)
           ? parsedWallet.claimedAchievementIds
           : [],
         points: Math.max(0, Number(parsedWallet?.points) || 0),
         refreshTokens: Math.max(0, Number(parsedWallet?.refreshTokens) || 0),
-      });
+        dailyActivityTicketClaims: normalizeDailyActivityTicketClaims(
+          parsedWallet?.dailyActivityTicketClaims,
+        ),
+      };
+      latestAchievementWallet.current = nextAchievementWallet;
+      setAchievementWallet(nextAchievementWallet);
       const onboardingComplete =
         savedOnboarding === 'true' ||
         (savedOnboarding === null && legacyOnboarding === 'true');
@@ -856,7 +888,9 @@ export default function AppContent() {
       reportError(error, { area: 'load_user_cache' });
       setWords([]);
       setQuizProgress(null);
+      latestAnalytics.current = EMPTY_ANALYTICS;
       setAnalytics(EMPTY_ANALYTICS);
+      latestAchievementWallet.current = EMPTY_ACHIEVEMENT_WALLET;
       setAchievementWallet(EMPTY_ACHIEVEMENT_WALLET);
       setHasCompletedOnboarding(false);
       setOnboardingCacheUserId(userId);
@@ -969,6 +1003,7 @@ export default function AppContent() {
         }
 
         setQuizProgress(cloudData.quizProgress);
+        latestAnalytics.current = cloudData.analytics;
         setAnalytics(cloudData.analytics);
         if (cloudData.reminderSettings) {
           setReminderSettings((currentSettings) => ({
@@ -1625,7 +1660,7 @@ export default function AppContent() {
         return currentWallet;
       }
 
-      return {
+      const nextWallet: AchievementWallet = {
         claimedAchievementIds: [
           ...currentWallet.claimedAchievementIds,
           ...claimable.map((achievement) => achievement.id),
@@ -1638,7 +1673,10 @@ export default function AppContent() {
           (total, achievement) => total + achievement.refreshTokens,
           0,
         ),
+        dailyActivityTicketClaims: currentWallet.dailyActivityTicketClaims,
       };
+      latestAchievementWallet.current = nextWallet;
+      return nextWallet;
     });
   }, [achievementWallet.claimedAchievementIds, currentAchievements, currentUser, isReady]);
 
@@ -1661,6 +1699,53 @@ export default function AppContent() {
     });
   }, [sortMode, words]);
 
+  function awardDailyActivityTicketIfEarned(nextAnalytics: AnalyticsData) {
+    try {
+      if (
+        !currentUser ||
+        achievementWalletLoadedUserId.current !== currentUser.id
+      ) {
+        return;
+      }
+
+      const wallet = latestAchievementWallet.current;
+      const reward = getDailyActivityTicketReward(
+        nextAnalytics,
+        wallet.dailyActivityTicketClaims,
+      );
+      if (reward.ticketsToAward < 1) {
+        return;
+      }
+
+      const nextClaims = normalizeDailyActivityTicketClaims({
+        ...wallet.dailyActivityTicketClaims,
+        [reward.date]: reward.earnedMilestones,
+      });
+      const nextWallet: AchievementWallet = {
+        ...wallet,
+        refreshTokens: wallet.refreshTokens + reward.ticketsToAward,
+        dailyActivityTicketClaims: nextClaims,
+      };
+
+      // Keep the synchronous ref in step with the state update so a second
+      // completion in the same event loop cannot pay the same milestone twice.
+      latestAchievementWallet.current = nextWallet;
+      setAchievementWallet(nextWallet);
+      setGoldenTicketSurprise({
+        id: createUuid(),
+        ticketsAwarded: reward.ticketsToAward,
+      });
+      trackEvent('daily_activity_ticket_earned', {
+        activityCount: reward.activityCount,
+        ticketsAwarded: reward.ticketsToAward,
+      });
+    } catch (error) {
+      // The reward is optional feedback. Never let it interrupt the activity
+      // that was already recorded or take down the learning screen.
+      reportError(error, { area: 'daily_activity_ticket_reward' });
+    }
+  }
+
   const todayQuizProgress =
     quizProgress?.date === currentDayKey ? quizProgress : null;
 
@@ -1668,10 +1753,14 @@ export default function AppContent() {
     if (achievementWallet.refreshTokens < 1) {
       return false;
     }
-    setAchievementWallet((currentWallet) => ({
-      ...currentWallet,
-      refreshTokens: Math.max(0, currentWallet.refreshTokens - 1),
-    }));
+    setAchievementWallet((currentWallet) => {
+      const nextWallet = {
+        ...currentWallet,
+        refreshTokens: Math.max(0, currentWallet.refreshTokens - 1),
+      };
+      latestAchievementWallet.current = nextWallet;
+      return nextWallet;
+    });
     return true;
   }
 
@@ -1938,6 +2027,7 @@ export default function AppContent() {
       setCurrentUser(null);
       setWords([]);
       setQuizProgress(null);
+      latestAnalytics.current = EMPTY_ANALYTICS;
       setAnalytics(EMPTY_ANALYTICS);
       setReminderSettings(DEFAULT_REMINDER);
       setDailyLearningGoal(1);
@@ -2496,19 +2586,19 @@ export default function AppContent() {
       words,
       wordId,
       remembered,
-      analytics,
+      latestAnalytics.current,
       new Date(studiedAt),
     );
     const updatedWord = updatedWords.find((word) => word.id === wordId);
 
     setWords(updatedWords);
-    setAnalytics((currentAnalytics) => ({
-      ...currentAnalytics,
-      cardHistory: [
-        event,
-        ...currentAnalytics.cardHistory,
-      ].slice(0, 80),
-    }));
+    const nextAnalytics: AnalyticsData = {
+      ...latestAnalytics.current,
+      cardHistory: [event, ...latestAnalytics.current.cardHistory].slice(0, 80),
+    };
+    latestAnalytics.current = nextAnalytics;
+    setAnalytics(nextAnalytics);
+    awardDailyActivityTicketIfEarned(nextAnalytics);
     trackEvent('card_review_recorded', { remembered });
 
     if (currentUser && cloudHydratedUserId.current === currentUser.id) {
@@ -2585,10 +2675,17 @@ export default function AppContent() {
       const retryAccuracy = progress.total ? progress.score / progress.total : 0;
       return retryAccuracy >= currentAccuracy ? progress : currentProgress;
     });
-    const updatedWords = applyQuizMastery(words, answersWithWordContext, analytics);
+    const updatedWords = applyQuizMastery(
+      words,
+      answersWithWordContext,
+      latestAnalytics.current,
+    );
     setWords(updatedWords);
     setQuizPriorityWordIds([]);
-    setAnalytics((currentAnalytics) => addQuizAttempt(currentAnalytics, attempt));
+    const nextAnalytics = addQuizAttempt(latestAnalytics.current, attempt);
+    latestAnalytics.current = nextAnalytics;
+    setAnalytics(nextAnalytics);
+    awardDailyActivityTicketIfEarned(nextAnalytics);
     trackEvent('quiz_completed', { score, total, durationSeconds });
 
     if (currentUser && cloudHydratedUserId.current === currentUser.id) {
@@ -2631,7 +2728,7 @@ export default function AppContent() {
       return;
     }
 
-    const xpEarned = getGameXp(attempt, analytics.gameHistory ?? []);
+    const xpEarned = getGameXp(attempt, latestAnalytics.current.gameHistory ?? []);
     const recordedAttempt: GameAttempt = {
       ...attempt,
       xpEarned,
@@ -2644,16 +2741,23 @@ export default function AppContent() {
       }),
     };
     const masteryAnswers = buildGameMasteryAnswers(recordedAttempt.answers);
-    const updatedWords = applyQuizMastery(words, masteryAnswers, analytics);
+    const updatedWords = applyQuizMastery(
+      words,
+      masteryAnswers,
+      latestAnalytics.current,
+    );
 
     setWords(updatedWords);
-    setAnalytics((currentAnalytics) => ({
-      ...currentAnalytics,
+    const nextAnalytics: AnalyticsData = {
+      ...latestAnalytics.current,
       gameHistory: [
         recordedAttempt,
-        ...(currentAnalytics.gameHistory ?? []),
+        ...(latestAnalytics.current.gameHistory ?? []),
       ].slice(0, 100),
-    }));
+    };
+    latestAnalytics.current = nextAnalytics;
+    setAnalytics(nextAnalytics);
+    awardDailyActivityTicketIfEarned(nextAnalytics);
     trackEvent('game_completed', {
       gameType: recordedAttempt.gameType,
       score: recordedAttempt.score,
@@ -2720,13 +2824,15 @@ export default function AppContent() {
       completed: false,
     });
 
-    setAnalytics((currentAnalytics) => ({
-      ...currentAnalytics,
+    const nextAnalytics: AnalyticsData = {
+      ...latestAnalytics.current,
       omegaTestHistory: [
         attempt,
-        ...(currentAnalytics.omegaTestHistory ?? []),
+        ...(latestAnalytics.current.omegaTestHistory ?? []),
       ].slice(0, 30),
-    }));
+    };
+    latestAnalytics.current = nextAnalytics;
+    setAnalytics(nextAnalytics);
     trackEvent('omega_test_ended_early', {
       questionsCompleted: answers.length,
       totalQuestions: total,
@@ -3256,6 +3362,13 @@ export default function AppContent() {
         expiresAt={subscription.complimentaryExpiresAt}
         onClose={() => setShowComplimentaryWelcome(false)}
       />
+      {goldenTicketSurprise ? (
+        <GoldenTicketSurprise
+          celebrationId={goldenTicketSurprise.id}
+          ticketsAwarded={goldenTicketSurprise.ticketsAwarded}
+          onFinished={() => setGoldenTicketSurprise(null)}
+        />
+      ) : null}
     </SafeAreaView>
   );
 }
@@ -3297,7 +3410,7 @@ function OnboardingScreen({
       text: 'Stats show what is sticking, while achievements and reminders help you keep a relaxed rhythm.',
       steps: [
         ['bar-chart-outline', 'Watch mastery grow', 'See strong words, quiz accuracy, and the next best review.'],
-        ['ticket-outline', 'Earn useful rewards', 'Achievements earn refreshes for an extra daily quiz or Omega Test.'],
+        ['ticket-outline', 'Earn useful rewards', 'Achievements and growing daily activity milestones earn refreshes for an extra Daily Quiz or Omega Test.'],
       ],
     },
     {
@@ -3667,6 +3780,26 @@ function getStartupStageLabel(stage: StartupStage) {
     loading_state: 'Finishing startup…',
   };
   return labels[stage];
+}
+
+function normalizeDailyActivityTicketClaims(value: unknown): Record<string, number> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {};
+  }
+
+  const validClaims = Object.entries(value as Record<string, unknown>)
+    .filter(([dayKey, claimCount]) => {
+      const numericClaim = Number(claimCount);
+      return /^\d{4}-\d{2}-\d{2}$/.test(dayKey) && Number.isFinite(numericClaim);
+    })
+    .map(([dayKey, claimCount]) => [
+      dayKey,
+      Math.max(0, Math.floor(Number(claimCount))),
+    ] as const)
+    .sort(([firstDay], [secondDay]) => secondDay.localeCompare(firstDay))
+    .slice(0, 60);
+
+  return Object.fromEntries(validClaims);
 }
 
 function createUuid() {

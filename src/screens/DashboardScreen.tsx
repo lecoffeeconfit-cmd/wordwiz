@@ -11,7 +11,7 @@ import type { AuthUser } from '../types';
 import type { PausedQuizSession } from './QuizScreen';
 import { styles } from '../styles';
 import { DEFAULT_TIME_BASED_LEARNING_SETTINGS, MASTERY_LEVELS, buildAchievements, buildQuiz, calculateStreakStats, FLUENT_RECALL_SECONDS, formatReminderTime, formatStudyTime, getCompetitiveRetention, getDailyLearningProgress, getDayKey, getDueReviewWords, getHeroProgressColor, getLearningSessionCount, getLongTermRetention, getMasteryLevel, getMasteryLevelProgress, getNextMasteryLevel, getOmegaTestAttempts, getOmegaTestStatus, getProgressColor, getProgressPaleColor, getQuizAttemptKind, getQuizFeedbackByWord, getQuizFeedbackSummary, getQuizRecallPaceByQuestionType, getQuizRecallPaceByWord, getQuizResponseSignalSummary, getQuizRetrievalProfile, getRecentDays, getRecentStreakLengths, getStreakMessage, getStreakMilestone, getStreakWeek, getTotalLearningSeconds, getWordLearningSignalScores, getWordMastery, getWordMasteryCategory, getWordMasteryCategoryForWord, getWordMasteryProgress, isCompletedOmegaTestAttempt, normalizeQuestionTypePreferences, normalizeTimeBasedLearningSettings, shuffle, stripPlainEnglishLeadIn } from '../utils';
-import { CompactPagination, DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelMagicIcon, LevelRow, ProgressFill, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
+import { AdmitOneTicket, CompactPagination, DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelMagicIcon, LevelRow, ProgressFill, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 import { LessonProgressRing } from '../components/dashboard/LessonProgressRing';
 import { CommunityGuidelinesModal, GoldenTicketInfoModal } from '../modals';
 import { useSubscription } from '../subscription/SubscriptionProvider';
@@ -1320,7 +1320,7 @@ export function DashboardScreen({
           <Text style={styles.heroLabel}>ESTIMATED MASTERY</Text>
           <Text style={styles.heroLevelTitle}>{masteryLevel.title}</Text>
           <Text style={styles.heroValue}>{masteryLevelProgress}%</Text>
-          <Text style={styles.heroText}>
+          <Text numberOfLines={2} ellipsizeMode="tail" style={styles.heroText}>
             {masteryLevel.encouragement}
           </Text>
           <View style={styles.heroLevelTrack}>
@@ -2353,7 +2353,7 @@ export function DashboardScreen({
                 },
               ]}
             >
-              <Ionicons name="ticket" size={17} color={COLORS.white} />
+              <AdmitOneTicket size="small" />
               {refreshTokens > 0 ? (
                 <View style={styles.achievementTokenSparkle}>
                   <Ionicons name="sparkles" size={9} color="#FFF2A7" />
@@ -5062,7 +5062,14 @@ function WordMasteryOverviewModal({
                 </Text>
               </View>
               <View style={[styles.wordOverviewScoreCircle, { borderColor: category.color }]}>
-                <Text style={[styles.wordOverviewScore, { color: category.color }]}>{score}%</Text>
+                <Text
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.8}
+                  style={[styles.wordOverviewScore, { color: category.color }]}
+                >
+                  {score}%
+                </Text>
               </View>
             </View>
 

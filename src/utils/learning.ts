@@ -1475,7 +1475,7 @@ export const MASTERY_LEVELS = [
     shortTitle: 'Novice',
     minScore: 0,
     color: NOVICE_MASTERY_COLOR,
-    encouragement: 'Each review helps a new word take root in memory.',
+    encouragement: 'Each review helps words stick.',
   },
   {
     title: 'Apprentice WordWiz',
@@ -1642,6 +1642,17 @@ export type DailyLearningProgress = {
   wordIds: string[];
 };
 
+export const DAILY_ACTIVITY_TICKET_THRESHOLD = 5;
+export const DAILY_ACTIVITY_TICKET_MILESTONE_INCREMENT = 3;
+
+export type DailyActivityTicketReward = {
+  date: string;
+  activityCount: number;
+  earnedMilestones: number;
+  claimedMilestones: number;
+  ticketsToAward: number;
+};
+
 function isLearningWordId(wordId: string) {
   return Boolean(wordId) && !wordId.startsWith('__');
 }
@@ -1733,6 +1744,51 @@ export function getDailyLearningProgress(
     gameAnswers,
     cardReviews,
     wordIds: Array.from(practicedWordIds),
+  };
+}
+
+/**
+ * Calculates the number of cumulative ticket milestones reached in a day.
+ * The first milestone is five activities; each following milestone requires
+ * three more activities than the previous interval (5, then 8, then 11...).
+ */
+function getDailyActivityTicketMilestoneCount(activityCount: number) {
+  let milestones = 0;
+  let nextMilestone = DAILY_ACTIVITY_TICKET_THRESHOLD;
+
+  while (nextMilestone <= activityCount) {
+    milestones += 1;
+    nextMilestone +=
+      DAILY_ACTIVITY_TICKET_THRESHOLD +
+      milestones * DAILY_ACTIVITY_TICKET_MILESTONE_INCREMENT;
+  }
+
+  return milestones;
+}
+
+/**
+ * Calculates only the new activity ticket milestones for a day. The claimed
+ * count is persisted separately from analytics so relaunches and cloud
+ * hydration cannot award the same ticket twice.
+ */
+export function getDailyActivityTicketReward(
+  analytics: AnalyticsData,
+  claimedMilestonesByDay: Record<string, number> = {},
+  dayKey = getDayKey(),
+): DailyActivityTicketReward {
+  const activityCount = getDailyLearningProgress(analytics, dayKey).completed;
+  const earnedMilestones = getDailyActivityTicketMilestoneCount(activityCount);
+  const claimedForDay = Number(claimedMilestonesByDay[dayKey]);
+  const claimedMilestones = Number.isFinite(claimedForDay)
+    ? Math.max(0, Math.floor(claimedForDay))
+    : 0;
+
+  return {
+    date: dayKey,
+    activityCount,
+    earnedMilestones,
+    claimedMilestones,
+    ticketsToAward: Math.max(0, earnedMilestones - claimedMilestones),
   };
 }
 

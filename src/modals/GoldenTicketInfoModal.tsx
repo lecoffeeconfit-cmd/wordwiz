@@ -11,6 +11,7 @@ import {
   View,
 } from 'react-native';
 import { COLORS } from '../constants/theme';
+import { AdmitOneTicket } from '../components';
 
 export function GoldenTicketInfoModal({
   visible,
@@ -143,7 +144,7 @@ export function GoldenTicketInfoModal({
               <Animated.View
                 style={[modalStyles.ticketIcon, { transform: [{ scale: ticketScale }] }]}
               >
-                <Ionicons name="ticket" size={34} color={COLORS.white} />
+                <AdmitOneTicket size="large" />
               </Animated.View>
               <Animated.View
                 pointerEvents="none"
@@ -193,9 +194,9 @@ export function GoldenTicketInfoModal({
               </View>
               <View style={modalStyles.earnCopy}>
                 <Text style={modalStyles.sectionLabel}>HOW TO GET THEM</Text>
-                <Text style={modalStyles.earnTitle}>Keep unlocking achievements</Text>
+                <Text style={modalStyles.earnTitle}>Keep learning to find them</Text>
                 <Text style={modalStyles.earnText}>
-                  Save words, review cards, take quizzes, and build your streak. Every achievement milestone adds a Golden Ticket to your stash.
+                  Save words, review cards, take quizzes, and finish games. Every achievement milestone and sustained learning can add a surprise Golden Ticket to your stash.
                 </Text>
               </View>
             </View>

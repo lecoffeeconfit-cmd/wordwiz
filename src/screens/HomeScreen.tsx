@@ -1,13 +1,15 @@
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AccessibilityInfo, Animated, FlatList, Image, Pressable, ScrollView, Text, useWindowDimensions, View } from 'react-native';
 import { COLORS } from '../constants/theme';
 import type { AnalyticsData, LegalPage, QuizAnswer, QuizProgress, QuizQuestion, ReminderSettings, SortMode, Word } from '../types';
 import { styles } from '../styles';
-import { buildAchievements, buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, getDailyLearningProgress, getDayKey, getDueReviewWords, getProgressColor, getProgressPaleColor, getRecentDays, getStreakMessage, getStreakMilestone, getStreakWeek, getTotalLearningSeconds, getWordMastery, sortWordsForReview, stripPlainEnglishLeadIn, shuffle } from '../utils';
+import { buildAchievements, buildQuiz, calculateStreakStats, formatReminderTime, formatStudyTime, getDailyLearningProgress, getDayKey, getDayKeyForDate, getDueReviewWords, getProgressColor, getProgressPaleColor, getRecentDays, getStreakMessage, getStreakMilestone, getStreakWeek, getTotalLearningSeconds, getWordMastery, sortWordsForReview, stripPlainEnglishLeadIn, shuffle } from '../utils';
 import { CompactPagination, DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, ProgressFill, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 
 const EXPANDED_REVIEW_WORD_PAGE_SIZE = 8;
+const DAILY_GOAL_CHAMPION_COLORS = ['#78D8B7', '#82BCEF', '#A992ED', '#E8B25E'] as const;
 
 export function getGreeting() {
   const hour = new Date().getHours();
@@ -84,14 +86,12 @@ export function HomeScreen({
   const homeProgressSummary =
     words.length === 0
       ? 'Start your first word today.'
-      : masteredWords > 0
-        ? `${words.length} words saved · ${masteredWords} mastered`
-        : strongWords > 0
-          ? `${words.length} words saved · ${strongWords} growing strong`
-          : buildingWords > 0
-            ? `${words.length} words saved · ${buildingWords} building confidence`
-            : `${words.length} words saved · Ready for your first review`;
-  const hasProgressCelebration = masteredWords > 0 || strongWords > 0;
+      : `${words.length} words saved · ${masteredWords} mastered`;
+  const hasProgressCelebration = words.length > 0;
+  const todayKey = getDayKey();
+  const wordsAddedToday = words.filter(
+    (word) => getDayKeyForDate(new Date(word.createdAt)) === todayKey,
+  ).length;
   const totalQuizQuestions = analytics.quizHistory.reduce(
     (total, attempt) => total + attempt.total,
     0,
@@ -119,7 +119,9 @@ export function HomeScreen({
       ),
     [achievementItems],
   );
-  const todayLearningProgress = getDailyLearningProgress(analytics);
+  const todayLearningProgress = getDailyLearningProgress(analytics, todayKey);
+  const dailyLearningGoalCompleted =
+    dailyLearningGoal > 0 && todayLearningProgress.completed >= dailyLearningGoal;
   const completedDailyLearning = Math.min(
     todayLearningProgress.completed,
     dailyLearningGoal,
@@ -304,13 +306,10 @@ export function HomeScreen({
           secondaryAction={secondaryQuickAction}
           onAddWord={onAddWord}
         />
-        <View style={styles.paperPlane}>
-          <Ionicons name="paper-plane" size={28} color={COLORS.white} />
-        </View>
         <View
           style={[
             styles.heroGreeting,
-            { bottom: 47 + heroBottomBreathingRoom },
+            { bottom: 59 + heroBottomBreathingRoom },
           ]}
         >
           <Text
@@ -333,6 +332,41 @@ export function HomeScreen({
               style={[styles.homeSubtitle, { marginTop: 7 + heroBrandGap }]}
             >
               {homeProgressSummary}
+            </Text>
+          </View>
+          <View
+            accessible
+            accessibilityLabel={`${wordsAddedToday} ${wordsAddedToday === 1 ? 'word' : 'words'} added today, ${todayLearningProgress.completed} learning ${todayLearningProgress.completed === 1 ? 'activity' : 'activities'} today`}
+            style={styles.homeTodayMetaRow}
+          >
+            <Text
+              maxFontSizeMultiplier={1.15}
+              numberOfLines={1}
+              style={[
+                styles.homeTodayWordsText,
+                wordsAddedToday === 0
+                  ? styles.homeTodayWordsTextQuiet
+                  : wordsAddedToday === 1
+                    ? styles.homeTodayWordsTextMedium
+                    : null,
+              ]}
+            >
+              +{wordsAddedToday} {wordsAddedToday === 1 ? 'word' : 'words'} today
+            </Text>
+            <Text maxFontSizeMultiplier={1.15} style={styles.homeTodayMetaDivider}>·</Text>
+            <Text
+              maxFontSizeMultiplier={1.15}
+              numberOfLines={1}
+              style={[
+                styles.homeTodayActivityText,
+                todayLearningProgress.completed === 0
+                  ? styles.homeTodayActivityTextQuiet
+                  : todayLearningProgress.completed === 1
+                    ? styles.homeTodayActivityTextMedium
+                    : null,
+              ]}
+            >
+              +{todayLearningProgress.completed} learning {todayLearningProgress.completed === 1 ? 'activity' : 'activities'} today
             </Text>
           </View>
         </View>
@@ -406,10 +440,19 @@ export function HomeScreen({
           showFreePlanNotice && styles.homeOverviewCardAfterTrial,
         ]}
       >
+          {dailyLearningGoalCompleted ? (
+            <LinearGradient
+              pointerEvents="none"
+              colors={DAILY_GOAL_CHAMPION_COLORS}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.homeOverviewCardChampionBackdrop}
+            />
+          ) : null}
           <View style={styles.overviewHeader}>
           <View style={styles.overviewTitleGroup}>
             <View style={[styles.overviewTitleIcon, styles.wordWizHatBadge]}>
-              <WordWizHatIcon />
+              <WordWizHatIcon champion={dailyLearningGoalCompleted} />
             </View>
             <Text
               adjustsFontSizeToFit
@@ -427,15 +470,51 @@ export function HomeScreen({
             style={styles.overviewDailyGoal}
           >
             <View style={styles.overviewDailyGoalCopy}>
-              <Text maxFontSizeMultiplier={1.15} style={styles.overviewDailyGoalLabel}>DAILY LEARNING GOAL</Text>
-              <Text maxFontSizeMultiplier={1.15} style={styles.overviewDailyGoalCaption}>
+              <Text
+                adjustsFontSizeToFit
+                maxFontSizeMultiplier={1.15}
+                minimumFontScale={0.72}
+                numberOfLines={1}
+                style={styles.overviewDailyGoalLabel}
+              >
+                <Text style={dailyLearningGoalCompleted ? styles.overviewDailyGoalLabelMint : undefined}>DAILY </Text>
+                <Text style={dailyLearningGoalCompleted ? styles.overviewDailyGoalLabelBlue : undefined}>LEARNING </Text>
+                <Text style={dailyLearningGoalCompleted ? styles.overviewDailyGoalLabelPurple : undefined}>GOAL</Text>
+              </Text>
+              <Text
+                adjustsFontSizeToFit
+                maxFontSizeMultiplier={1.15}
+                minimumFontScale={0.78}
+                numberOfLines={1}
+                style={styles.overviewDailyGoalCaption}
+              >
                 {dailyLearningGoal === 1 ? 'Activity completed' : 'Activities completed'}
               </Text>
             </View>
-            <View style={styles.overviewProgressRing}>
-              <Text maxFontSizeMultiplier={1.15} style={styles.overviewProgressText}>
-                {completedDailyLearning}/{dailyLearningGoal}
-              </Text>
+            <View
+              style={[
+                styles.overviewProgressRing,
+                dailyLearningGoalCompleted && styles.overviewProgressRingChampion,
+              ]}
+            >
+              {dailyLearningGoalCompleted ? (
+                <LinearGradient
+                  colors={DAILY_GOAL_CHAMPION_COLORS}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={styles.overviewProgressRingGradient}
+                >
+                  <View style={styles.overviewProgressRingInner}>
+                    <Text maxFontSizeMultiplier={1.15} style={styles.overviewProgressTextChampion}>
+                      {completedDailyLearning}/{dailyLearningGoal}
+                    </Text>
+                  </View>
+                </LinearGradient>
+              ) : (
+                <Text maxFontSizeMultiplier={1.15} style={styles.overviewProgressText}>
+                  {completedDailyLearning}/{dailyLearningGoal}
+                </Text>
+              )}
             </View>
           </View>
         </View>
@@ -932,16 +1011,16 @@ function getReviewReason(word: Word, analytics: AnalyticsData) {
   return `${getWordMastery(word, analytics)}%`;
 }
 
-function WordWizHatIcon() {
+function WordWizHatIcon({ champion = false }: { champion?: boolean }) {
   return (
     <View accessible={false} style={styles.wordWizHatIcon}>
       <View style={styles.wordWizHatCone} />
       <View style={styles.wordWizHatBrim} />
       <Ionicons
         name="sparkles"
-        size={10}
-        color="#FFE58A"
-        style={styles.wordWizHatSparkle}
+        size={champion ? 11 : 10}
+        color={champion ? '#F6C44F' : '#FFE58A'}
+        style={[styles.wordWizHatSparkle, champion && styles.wordWizHatSparkleChampion]}
       />
     </View>
   );
