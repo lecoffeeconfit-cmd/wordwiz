@@ -52,6 +52,7 @@ export type WordCollectorEntry = {
   publicId: string;
   displayName: string;
   avatarPath: string | null;
+  joinedAt?: string;
   wordCount: number;
   isMe: boolean;
   metricValue?: number;
@@ -59,6 +60,10 @@ export type WordCollectorEntry = {
   retentionPercent?: number;
   retentionScore?: number;
   streakDays?: number;
+  flashcardReviewCount?: number;
+  quizAnswerCount?: number;
+  testAnswerCount?: number;
+  gameAnswerCount?: number;
 };
 export type WordCollectorContext = {
   eligible: boolean;
@@ -72,6 +77,10 @@ export type WordCollectorContext = {
   retentionPercent?: number;
   retentionScore?: number | null;
   streakDays?: number;
+  flashcardReviewCount?: number;
+  quizAnswerCount?: number;
+  testAnswerCount?: number;
+  gameAnswerCount?: number;
   qualified?: boolean;
   reviewsToQualify?: number;
   locationLabel?: string;
@@ -87,6 +96,7 @@ export type CommunityConnection = {
   displayName: string;
   avatarPath: string | null;
   isMuted: boolean;
+  addedAt?: string;
 };
 export type CommunityNudge = {
   id: string;
@@ -109,35 +119,60 @@ function messageFor(error: unknown) {
   if (message.includes('cannot_add_yourself')) return 'That is your own friend code.';
   if (message.includes('friend_request_already_exists')) return 'A request already exists for this friend.';
   if (message.includes('relationship_unavailable')) return 'This connection is unavailable.';
-  if (message.includes('nudge_rate_limited')) return 'You have sent the maximum number of nudges for now.';
   if (message.includes('friendship_required')) return 'You can nudge accepted friends only.';
+  if (message.includes('nudge_unavailable')) return 'This friend is not accepting nudges right now.';
+  if (message.includes('invalid_nudge_message') || message.includes('invalid_nudge_type')) return 'That nudge is no longer available. Please choose another one.';
   if (message.includes('avatar_rejected')) return "This picture can't be used as a profile photo. Please choose another one.";
   if (message.includes('avatar_rate_limited')) return 'You can update your profile picture up to five times every 15 minutes. Please try again shortly.';
-  if (message.includes('avatar_moderation_unavailable')) return 'Profile picture checks are temporarily unavailable. Please try again shortly.';
+  if (message.includes('avatar_moderation_configuration')) return 'The profile picture safety check is not configured correctly yet. Please try again later.';
+  if (message.includes('avatar_moderation_quota_exceeded')) return 'The profile picture safety check has reached its usage limit. Please try again later.';
+  if (message.includes('avatar_moderation_request_invalid')) return 'This picture could not be checked. Please choose a different photo.';
+  if (message.includes('avatar_moderation_unavailable')) return 'The profile picture safety check usually takes a few seconds, but it is temporarily unavailable. Please try again shortly.';
+  if (message.includes('Relay Error invoking the Edge Function') || message.includes('Edge Function returned a non-2xx status code')) return 'The profile picture safety check is temporarily unavailable. Please try again shortly.';
   if (message.includes('avatar_moderation_consent_required')) return 'Please agree to the profile picture safety check before continuing.';
+  if (message.includes('avatar_image_processing_unavailable')) return 'This simulator build cannot prepare the selected photo. Please install a fresh WordWiz build and try again.';
   if (message.includes('invalid_avatar_image')) return 'Choose a different photo and try again.';
   if (message.includes('avatar_not_uploaded')) return 'Your photo uploaded, but could not be verified. Please try again.';
   if (message.includes('invalid_avatar_path')) return 'Your photo could not be prepared. Please choose it again.';
+  if (message.includes('network_error') || message.includes('Failed to send a request')) return 'Could not connect to the profile picture service. Please try again.';
+  if (message.includes('authentication_required')) return 'Please sign in again before adding a picture.';
   if (message.includes('community_profile_required')) return 'Create your Connect profile before adding a picture.';
   if (message.includes('collector_location_required')) return 'Nearby, State, and Country rankings need approximate location access.';
   return 'Community is temporarily unavailable. Please try again.';
 }
 
-async function messageFromFunctionError(error: unknown): Promise<string> {
+function normalizeBase64Image(value: string | null | undefined) {
+  if (!value) return null;
+  const trimmed = value.trim();
+  const commaIndex = trimmed.indexOf(',');
+  if (commaIndex > 0 && /^data:image\/[\w.+-]+;base64$/i.test(trimmed.slice(0, commaIndex))) {
+    return trimmed.slice(commaIndex + 1).trim();
+  }
+  return trimmed;
+}
+
+async function messageFromFunctionError(error: unknown, response?: unknown): Promise<string> {
   const context = typeof error === 'object' && error && 'context' in error
     ? (error as { context?: unknown }).context
     : null;
-  if (
-    context &&
-    typeof context === 'object' &&
-    'json' in context &&
-    typeof (context as { json?: unknown }).json === 'function'
-  ) {
-    try {
-      const payload = await (context as { json: () => Promise<{ error?: unknown }> }).json();
-      if (typeof payload.error === 'string') return payload.error;
-    } catch {
-      // The generic function error below is still safe to show the user.
+  for (const candidate of [context, response]) {
+    if (
+      candidate &&
+      typeof candidate === 'object' &&
+      'json' in candidate &&
+      typeof (candidate as { json?: unknown }).json === 'function'
+    ) {
+      try {
+        const readable = typeof (candidate as { clone?: unknown }).clone === 'function'
+          ? (candidate as unknown as { clone: () => unknown }).clone()
+          : candidate;
+        const payload = await (readable as { json: () => Promise<{ error?: unknown; code?: unknown; message?: unknown }> }).json();
+        if (typeof payload.error === 'string') return payload.error;
+        if (typeof payload.code === 'string') return payload.code;
+        if (typeof payload.message === 'string') return payload.message;
+      } catch {
+        // Try the next response source, then fall back to the typed error.
+      }
     }
   }
   return error instanceof Error ? error.message : '';
@@ -171,6 +206,10 @@ function normalizeWordCollectorContext(value: unknown): WordCollectorContext {
     retentionPercent: finiteNumber(record?.retentionPercent, 0) ?? 0,
     retentionScore: finiteNumber(record?.retentionScore),
     streakDays: finiteNumber(record?.streakDays, 0) ?? 0,
+    flashcardReviewCount: finiteNumber(record?.flashcardReviewCount) ?? undefined,
+    quizAnswerCount: finiteNumber(record?.quizAnswerCount) ?? undefined,
+    testAnswerCount: finiteNumber(record?.testAnswerCount) ?? undefined,
+    gameAnswerCount: finiteNumber(record?.gameAnswerCount) ?? undefined,
     qualified: record?.qualified !== false,
     reviewsToQualify: finiteNumber(record?.reviewsToQualify, 0) ?? 0,
     locationLabel: typeof record?.locationLabel === 'string' ? record.locationLabel : undefined,
@@ -191,6 +230,7 @@ function normalizeWordCollectorEntries(value: unknown): WordCollectorEntry[] {
       publicId,
       displayName,
       avatarPath: typeof record?.avatarPath === 'string' ? record.avatarPath : null,
+      joinedAt: typeof record?.joinedAt === 'string' ? record.joinedAt : undefined,
       wordCount,
       isMe: record?.isMe === true,
       metricValue: finiteNumber(record?.metricValue) ?? undefined,
@@ -198,8 +238,34 @@ function normalizeWordCollectorEntries(value: unknown): WordCollectorEntry[] {
       retentionPercent: finiteNumber(record?.retentionPercent) ?? undefined,
       retentionScore: finiteNumber(record?.retentionScore) ?? undefined,
       streakDays: finiteNumber(record?.streakDays) ?? undefined,
+      flashcardReviewCount: finiteNumber(record?.flashcardReviewCount) ?? undefined,
+      quizAnswerCount: finiteNumber(record?.quizAnswerCount) ?? undefined,
+      testAnswerCount: finiteNumber(record?.testAnswerCount) ?? undefined,
+      gameAnswerCount: finiteNumber(record?.gameAnswerCount) ?? undefined,
     }];
   });
+}
+
+function normalizeReviewBreakdowns(value: unknown) {
+  type ReviewBreakdown = Pick<WordCollectorEntry, 'reviewCount' | 'flashcardReviewCount' | 'quizAnswerCount' | 'testAnswerCount' | 'gameAnswerCount'>;
+  if (!Array.isArray(value)) return new Map<string, ReviewBreakdown>();
+  return new Map(value.flatMap((item) => {
+    const record = objectValue(item);
+    const publicId = typeof record?.publicId === 'string' ? record.publicId : null;
+    if (!publicId) return [];
+    return [[publicId, {
+      reviewCount: finiteNumber(record?.reviewCount, 0) ?? 0,
+      flashcardReviewCount: finiteNumber(record?.flashcardReviewCount, 0) ?? 0,
+      quizAnswerCount: finiteNumber(record?.quizAnswerCount, 0) ?? 0,
+      testAnswerCount: finiteNumber(record?.testAnswerCount, 0) ?? 0,
+      gameAnswerCount: finiteNumber(record?.gameAnswerCount, 0) ?? 0,
+    } as ReviewBreakdown]] as const;
+  }));
+}
+
+function mergeReviewBreakdowns(entries: WordCollectorEntry[], value: unknown) {
+  const breakdowns = normalizeReviewBreakdowns(value);
+  return entries.map((entry) => ({ ...entry, ...(breakdowns.get(entry.publicId) ?? {}) }));
 }
 
 export async function getCommunityContext(period: CommunityPeriod = 'weekly') {
@@ -263,13 +329,30 @@ export async function getCompetitiveMetricContext(
   period: WordCollectorPeriod,
   audience: WordCollectorAudience,
 ): Promise<CompetitiveMetricContext> {
-  const data = await rpc<unknown>('community_competitive_metric_context', {
-    p_metric: metric,
-    p_period: period,
-    p_scope: audience,
-  });
+  const [data, breakdownData] = await Promise.all([
+    rpc<unknown>('community_competitive_metric_context', {
+      p_metric: metric,
+      p_period: period,
+      p_scope: audience,
+    }),
+    metric === 'retention'
+      ? rpc<unknown>('community_competitive_metric_review_breakdown', {
+        p_metric: metric,
+        p_period: period,
+        p_scope: audience,
+        p_only_me: true,
+      }).catch(() => [])
+      : Promise.resolve([]),
+  ]);
+  const breakdown = Array.from(normalizeReviewBreakdowns(breakdownData).values())[0];
   return {
     ...normalizeWordCollectorContext(data),
+    ...(breakdown
+      ? {
+          ...breakdown,
+          reviewCount: breakdown.reviewCount ?? 0,
+        }
+      : {}),
     metric,
   };
 }
@@ -298,14 +381,25 @@ export async function getCompetitiveMetricLeaderboard(
   limit: number,
   offset: number,
 ) {
-  const data = await rpc<unknown>('community_competitive_metric_leaderboard', {
-    p_metric: metric,
-    p_period: period,
-    p_scope: audience,
-    p_limit: limit,
-    p_offset: offset,
-  });
-  return normalizeWordCollectorEntries(data);
+  const [data, breakdownData] = await Promise.all([
+    rpc<unknown>('community_competitive_metric_leaderboard', {
+      p_metric: metric,
+      p_period: period,
+      p_scope: audience,
+      p_limit: limit,
+      p_offset: offset,
+    }),
+    metric === 'retention'
+      ? rpc<unknown>('community_competitive_metric_review_breakdown', {
+        p_metric: metric,
+        p_period: period,
+        p_scope: audience,
+        p_limit: limit,
+        p_offset: offset,
+      }).catch(() => [])
+      : Promise.resolve([]),
+  ]);
+  return mergeReviewBreakdowns(normalizeWordCollectorEntries(data), breakdownData);
 }
 
 export async function getCompetitiveMetricMyRank(
@@ -313,13 +407,23 @@ export async function getCompetitiveMetricMyRank(
   period: WordCollectorPeriod,
   audience: WordCollectorAudience,
 ) {
-  const data = await rpc<unknown>('community_competitive_metric_my_rank', {
-    p_metric: metric,
-    p_period: period,
-    p_scope: audience,
-    p_radius: 3,
-  });
-  return normalizeWordCollectorEntries(data);
+  const [data, breakdownData] = await Promise.all([
+    rpc<unknown>('community_competitive_metric_my_rank', {
+      p_metric: metric,
+      p_period: period,
+      p_scope: audience,
+      p_radius: 3,
+    }),
+    metric === 'retention'
+      ? rpc<unknown>('community_competitive_metric_review_breakdown', {
+        p_metric: metric,
+        p_period: period,
+        p_scope: audience,
+        p_only_me: true,
+      }).catch(() => [])
+      : Promise.resolve([]),
+  ]);
+  return mergeReviewBreakdowns(normalizeWordCollectorEntries(data), breakdownData);
 }
 
 export async function getWordCollectorLocationPermission(): Promise<WordCollectorLocationPermission> {
@@ -481,7 +585,11 @@ export async function sendCommunityNudge(
       idempotencyKey: requestId(),
     },
   });
-  if (error) throw new Error('Community is temporarily unavailable. Please try again.');
+  if (error) {
+    const detail = await messageFromFunctionError(error);
+    const isGenericFunctionError = !detail || /non-2xx status code/i.test(detail);
+    throw new Error(isGenericFunctionError ? messageFor(error) : messageFor(new Error(detail)));
+  }
 }
 
 export async function registerCommunityPushToken(token: string) {
@@ -540,16 +648,27 @@ async function confirmAvatarModerationNotice(): Promise<boolean> {
 export async function pickAndUploadCommunityAvatar() {
   // Both modules require a matching native binary. Keep them out of the app's
   // import path so an optional avatar capability can never prevent startup.
-  const [imagePickerModule, imageManipulatorModule] = await Promise.all([
-    import('expo-image-picker'),
-    import('expo-image-manipulator'),
-  ]);
+  let imagePickerModule: typeof import('expo-image-picker');
+  let imageManipulatorModule: typeof import('expo-image-manipulator');
+  try {
+    [imagePickerModule, imageManipulatorModule] = await Promise.all([
+      import('expo-image-picker'),
+      import('expo-image-manipulator'),
+    ]);
+  } catch {
+    throw new Error('avatar_image_processing_unavailable');
+  }
   const ImagePicker = imagePickerModule;
   const { manipulateAsync, SaveFormat } = imageManipulatorModule;
+
+  // Request permission before presenting the native picker. This is supported
+  // by SDK 56 and also keeps the flow compatible with simulator binaries that
+  // still require an explicit media-library permission request.
   const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
   if (!permission.granted) {
     throw new Error('Photo permission is needed to choose a profile picture.');
   }
+
   const result = await ImagePicker.launchImageLibraryAsync({
     mediaTypes: ['images'],
     allowsEditing: true,
@@ -557,31 +676,79 @@ export async function pickAndUploadCommunityAvatar() {
     quality: 0.9,
     selectionLimit: 1,
   });
-  if (result.canceled || !result.assets[0]) return null;
+  const asset = result.canceled ? null : result.assets?.[0];
+  if (!asset) return null;
 
   // Ask for consent only after the learner has actually chosen a photo. This
   // keeps the tap-to-pick flow intuitive while still requiring consent before
   // any image is sent for moderation or uploaded.
   if (!await confirmAvatarModerationNotice()) return null;
 
-  const image = await manipulateAsync(
-    result.assets[0].uri,
-    [{ resize: { width: 512 } }],
-    { base64: true, compress: 0.82, format: SaveFormat.JPEG },
-  );
+  let imageBase64: string | null = null;
+  try {
+    const image = await manipulateAsync(
+      asset.uri,
+      [{ resize: { width: 512 } }],
+      { base64: true, compress: 0.82, format: SaveFormat.JPEG },
+    );
+    imageBase64 = normalizeBase64Image(image.base64);
+  } catch (error) {
+    throw new Error('avatar_image_processing_unavailable');
+  }
 
-  if (!image.base64 || image.base64.length > 2_800_000) {
+  if (!imageBase64 || imageBase64.length > 2_800_000) {
     throw new Error('Choose a smaller photo and try again.');
   }
 
   // The protected function converts no additional formats: any image the
   // device can pick has already become a normalized JPEG at this point.
-  const { data, error } = await supabase.functions.invoke('moderate-community-avatar', {
-    body: { imageBase64: image.base64, moderationNoticeAccepted: true },
-  });
-  if (error) {
-    throw new Error(messageFor(new Error(await messageFromFunctionError(error))));
+  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+  let accessToken = sessionData.session?.access_token;
+  if (sessionError || !accessToken) {
+    const { data: refreshedSessionData, error: refreshError } = await supabase.auth.refreshSession();
+    accessToken = refreshedSessionData.session?.access_token;
+    if (refreshError || !accessToken) throw new Error('authentication_required');
   }
-  if (!data || typeof data.avatarPath !== 'string') throw new Error('avatar_not_uploaded');
-  return data.avatarPath;
+
+  const invokeModeration = (token: string) => supabase.functions.invoke('moderate-community-avatar', {
+    headers: { Authorization: `Bearer ${token}` },
+    body: { imageBase64, moderationNoticeAccepted: true },
+  });
+
+  let invocation = await invokeModeration(accessToken);
+  if (invocation.error) {
+    const rawMessage = await messageFromFunctionError(invocation.error, invocation.response);
+    // A long-lived app can hold an expired access token even while the
+    // community screen itself is still visible. Refresh once when the
+    // protected function rejects that token, then retry the same upload.
+    if (rawMessage.includes('authentication_required')) {
+      const { data: refreshedSessionData, error: refreshError } = await supabase.auth.refreshSession();
+      const refreshedAccessToken = refreshedSessionData.session?.access_token;
+      if (!refreshError && refreshedAccessToken && refreshedAccessToken !== accessToken) {
+        accessToken = refreshedAccessToken;
+        invocation = await invokeModeration(accessToken);
+      }
+    }
+    if (
+      invocation.error &&
+      (rawMessage.includes('Failed to send a request') || rawMessage.includes('Relay Error invoking'))
+    ) {
+      // Supabase relay failures can be transient even when the phone and the
+      // function are both healthy. Give the request one short retry before
+      // showing an outage message.
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      invocation = await invokeModeration(accessToken);
+    }
+  }
+  if (invocation.error) {
+    const detail = await messageFromFunctionError(invocation.error, invocation.response);
+    console.error('community avatar moderation invocation failed', {
+      name: invocation.error instanceof Error ? invocation.error.name : undefined,
+      message: detail,
+      status: invocation.response?.status,
+    });
+    throw new Error(messageFor(new Error(detail)));
+  }
+  if (!invocation.data || typeof invocation.data.avatarPath !== 'string') throw new Error('avatar_not_uploaded');
+  return invocation.data.avatarPath;
 }

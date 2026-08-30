@@ -4,6 +4,7 @@ import { getCompleteFlashcardDefinition, stripPlainEnglishLeadIn } from './dicti
 
 const MAX_QUIZ_QUESTIONS = 10;
 export const MAX_QUICK_PRACTICE_QUESTIONS = 20;
+export const QUIZ_QUESTION_COUNT_OPTIONS = [5, 10, 20] as const;
 export const OMEGA_TEST_COOLDOWN_DAYS = 7;
 export const OMEGA_TEST_COOLDOWN_MS = OMEGA_TEST_COOLDOWN_DAYS * 24 * 60 * 60 * 1000;
 const RECENT_ATTEMPTS_TO_AVOID = 3;
@@ -76,6 +77,14 @@ export type QuizBuildOptions = {
   questionLimit?: number;
   questionTypePreferences?: QuizQuestionTypePreferences;
 };
+
+export function normalizeQuizQuestionCount(value: unknown): 5 | 10 | 20 {
+  return value === 10 || value === '10'
+    ? 10
+    : value === 20 || value === '20'
+      ? 20
+      : 5;
+}
 
 /**
  * Keeps the difficulty picker honest across every session. Assessment modes
@@ -1117,6 +1126,12 @@ export function buildCategoryPracticeQuiz(
   priorityWordIds: string[] = [],
   options: QuizBuildOptions = {},
 ): QuizQuestion[] {
+  // A selected question count is an explicit learner request. It must also
+  // apply to small study groups, which may repeat a word with varied prompts
+  // when the requested round is longer than the available words.
+  if (options.questionLimit) {
+    return buildQuiz(words, recentAttempts, masteryByWordId, priorityWordIds, options);
+  }
   if (
     (options.difficulty && options.difficulty !== 'automatic') ||
     (options.sessionMode && options.sessionMode !== 'standard')

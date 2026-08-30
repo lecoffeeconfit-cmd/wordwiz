@@ -36,6 +36,8 @@ export type QuizSessionMode =
   | 'mastery-test'
   | 'omega-test';
 
+export type QuizQuestionCount = 5 | 10 | 20;
+
 export type GameType =
   | 'speed-match'
   | 'fill-gap'
@@ -55,6 +57,8 @@ export type GamePreferences = {
 export type QuizPreferences = {
   enabled: boolean;
   difficulty: QuizDifficultyPreference;
+  /** Preferred length for sessions that support learner-controlled question counts. */
+  questionCount?: QuizQuestionCount;
   /** Shows the post-answer prompt that lets learners rate how the recall felt. */
   showReviewRating?: boolean;
   questionTypes?: QuizQuestionTypePreferences;

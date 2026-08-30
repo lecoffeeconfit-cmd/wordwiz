@@ -64,10 +64,16 @@ import {
 } from '../services';
 
 type CommunitySection = 'leaderboard' | 'friends' | 'nudges';
+type FriendSort = 'recent' | 'alphabetical';
 
 const PAGE_SIZE = 10;
+const NUDGE_FETCH_SIZE = 50;
 const RAPID_ACCORDION_TOGGLE_GUARD_MS = 400;
 const GOLDEN_NUDGE_MAX_LENGTH = 140;
+const FRIEND_SORT_LABELS: Record<FriendSort, string> = {
+  recent: 'Recently added',
+  alphabetical: 'A-Z',
+};
 const PERIODS: CommunityPeriod[] = ['daily', 'weekly', 'all_time'];
 const WORD_COLLECTOR_PERIODS: WordCollectorPeriod[] = ['week', 'month', 'all_time'];
 const WORD_COLLECTOR_AUDIENCES: WordCollectorAudience[] = ['all', 'nearby', 'state', 'global'];
@@ -108,6 +114,11 @@ type NudgeOption = {
   background: string;
 };
 type NudgeGroup = Pick<NudgeOption, 'group' | 'icon' | 'color' | 'background'> & { options: NudgeOption[] };
+type CommunityMemberEntry = CommunityLeaderboardEntry | WordCollectorEntry;
+
+function isCommunityLeaderboardEntry(entry: CommunityMemberEntry): entry is CommunityLeaderboardEntry {
+  return 'level' in entry;
+}
 
 function nudgeGroup(
   group: string,
@@ -193,6 +204,96 @@ function initialFor(name: string) {
 
 function formatPublicStat(value: number | null | undefined) {
   return typeof value === 'number' && Number.isFinite(value) ? value.toLocaleString() : '—';
+}
+
+function formatNudgeTimestamp(createdAt: string) {
+  const sentAt = new Date(createdAt);
+  if (Number.isNaN(sentAt.getTime())) return 'Time unavailable';
+
+  const now = new Date();
+  const sameDay = sentAt.getFullYear() === now.getFullYear()
+    && sentAt.getMonth() === now.getMonth()
+    && sentAt.getDate() === now.getDate();
+  const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+  const isYesterday = sentAt.getFullYear() === yesterday.getFullYear()
+    && sentAt.getMonth() === yesterday.getMonth()
+    && sentAt.getDate() === yesterday.getDate();
+  const time = sentAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+
+  if (sameDay) return `Today, ${time}`;
+  if (isYesterday) return `Yesterday, ${time}`;
+  return `${sentAt.toLocaleDateString([], { month: 'short', day: 'numeric' })}, ${time}`;
+}
+
+function collectorMetricValueLabel(metric: CompetitiveMetric, entry: WordCollectorEntry) {
+  if (metric === 'retention') {
+    return `${Math.max(0, Math.round(entry.retentionPercent ?? entry.metricValue ?? 0))}%`;
+  }
+  if (metric === 'streaks') {
+    return `${Math.max(0, Math.round(entry.streakDays ?? entry.metricValue ?? 0))}d`;
+  }
+  return `${Math.max(0, Math.round(entry.wordCount)).toLocaleString()} ${entry.wordCount === 1 ? 'word' : 'words'}`;
+}
+
+function formatJoinedDate(joinedAt: string | undefined) {
+  if (!joinedAt) return 'Connect member';
+  const date = new Date(joinedAt);
+  if (Number.isNaN(date.getTime())) return 'Connect member';
+  return `Joined ${date.toLocaleDateString([], { month: 'short', year: 'numeric' })}`;
+}
+
+function formatFriendConnectionTime(addedAt: string | undefined) {
+  if (!addedAt) return 'Date unavailable';
+  const date = new Date(addedAt);
+  if (Number.isNaN(date.getTime())) return 'Date unavailable';
+  const dateLabel = date.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+  const timeLabel = date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  return `${dateLabel} at ${timeLabel}`;
+}
+
+function retentionReviewBreakdownParts(source: Pick<WordCollectorEntry, 'flashcardReviewCount' | 'quizAnswerCount' | 'testAnswerCount' | 'gameAnswerCount'>) {
+  const count = (value: number | undefined) => Math.max(0, Math.round(value ?? 0));
+  const activities = [
+    { value: count(source.flashcardReviewCount), label: 'card' },
+    { value: count(source.quizAnswerCount), label: 'quiz' },
+    { value: count(source.testAnswerCount), label: 'test' },
+    { value: count(source.gameAnswerCount), label: 'game' },
+  ]
+    .filter((activity) => activity.value > 0)
+    .sort((left, right) => right.value - left.value)
+    .map((activity) => `${activity.value.toLocaleString()} ${activity.label}${activity.value === 1 ? '' : 's'}`);
+
+  return activities.length ? activities.join(' / ') : null;
+}
+
+function retentionReviewBreakdownText(source: Pick<WordCollectorEntry, 'reviewCount' | 'flashcardReviewCount' | 'quizAnswerCount' | 'testAnswerCount' | 'gameAnswerCount'>) {
+  const total = Math.max(0, Math.round(source.reviewCount ?? 0));
+  const reviewLabel = total === 1 ? 'review' : 'reviews';
+  const parts = retentionReviewBreakdownParts(source);
+  return parts ? `${total.toLocaleString()} ${reviewLabel} · ${parts}` : `${total.toLocaleString()} ${reviewLabel}`;
+}
+
+type RetentionReviewActivitySource = Pick<
+  WordCollectorEntry,
+  'reviewCount' | 'flashcardReviewCount' | 'quizAnswerCount' | 'testAnswerCount' | 'gameAnswerCount'
+>;
+
+function RetentionReviewActivity({ source }: { source: RetentionReviewActivitySource }) {
+  const total = Math.max(0, Math.round(source.reviewCount ?? 0));
+  const reviewLabel = total === 1 ? 'review' : 'reviews';
+  const parts = retentionReviewBreakdownParts(source);
+  const summary = parts ? `${total.toLocaleString()} ${reviewLabel} · ${parts}` : `${total.toLocaleString()} ${reviewLabel}`;
+
+  return (
+    <Text
+      numberOfLines={1}
+      ellipsizeMode="tail"
+      style={community.collectorReviewActivity}
+      accessibilityLabel={`Review activity: ${summary}`}
+    >
+      {summary}
+    </Text>
+  );
 }
 
 function useReducedMotionPreference() {
@@ -630,6 +731,8 @@ export function CommunityScreen({
   const [socialXpSheetOpen, setSocialXpSheetOpen] = useState(false);
   const [connections, setConnections] = useState<CommunityConnection[]>([]);
   const [nudges, setNudges] = useState<CommunityNudge[]>([]);
+  const [nudgeLoadingMore, setNudgeLoadingMore] = useState(false);
+  const [nudgeHasMore, setNudgeHasMore] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
   const [leaderboardLoading, setLeaderboardLoading] = useState(false);
   const [leaderboardLoadingMore, setLeaderboardLoadingMore] = useState(false);
@@ -640,6 +743,7 @@ export function CommunityScreen({
   const [friendCode, setFriendCode] = useState('');
   const [profileName, setProfileName] = useState('');
   const [isEditingProfile, setIsEditingProfile] = useState(false);
+  const [profileSetupPromptVisible, setProfileSetupPromptVisible] = useState(false);
   const [profileVisible, setProfileVisible] = useState(true);
   const [leaderboardOptIn, setLeaderboardOptIn] = useState(true);
   const [requestsEnabled, setRequestsEnabled] = useState(true);
@@ -647,10 +751,15 @@ export function CommunityScreen({
   const [pushEnabled, setPushEnabled] = useState(false);
   const [saving, setSaving] = useState(false);
   const [avatarUpdating, setAvatarUpdating] = useState(false);
-  const [selectedLeaderboardEntry, setSelectedLeaderboardEntry] = useState<CommunityLeaderboardEntry | null>(null);
+  const [selectedLeaderboardEntry, setSelectedLeaderboardEntry] = useState<CommunityMemberEntry | null>(null);
   const [leaderboardActionLoading, setLeaderboardActionLoading] = useState(false);
   const [selectedNudgeRecipientId, setSelectedNudgeRecipientId] = useState<string | null>(null);
+  const [nudgeRecipientSearch, setNudgeRecipientSearch] = useState('');
+  const [selectedFriendForNudge, setSelectedFriendForNudge] = useState<CommunityConnection | null>(null);
+  const [friendNudgeGroup, setFriendNudgeGroup] = useState<string | null>(null);
+  const [friendNudgeSendingKey, setFriendNudgeSendingKey] = useState<string | null>(null);
   const [friendPage, setFriendPage] = useState(0);
+  const [friendSort, setFriendSort] = useState<FriendSort>('recent');
   const [nudgePage, setNudgePage] = useState(0);
   const [expandedNudgeCategory, setExpandedNudgeCategory] = useState<string | null>(null);
   const [nudgeComposerExpanded, setNudgeComposerExpanded] = useState(false);
@@ -666,6 +775,7 @@ export function CommunityScreen({
   const collectorSelectionRef = useRef(0);
   const leaderboardLoadMoreRef = useRef(false);
   const collectorLoadMoreRef = useRef(false);
+  const nudgeLoadMoreRef = useRef(false);
   const initializedRef = useRef(false);
   const initialCompetitiveMetricHandledRef = useRef(false);
   const profileEntrance = useRef(new Animated.Value(0)).current;
@@ -737,7 +847,7 @@ export function CommunityScreen({
     const [nextContext, nextConnections, nextNudges, rows] = await Promise.all([
       getCommunityContext(period),
       getCommunityConnections(),
-      getCommunityNudges(50),
+      getCommunityNudges(NUDGE_FETCH_SIZE),
       getCommunityLeaderboard(period, PAGE_SIZE, 0, selectedLevel),
     ]);
     if (request !== leaderboardRequestRef.current) return;
@@ -746,6 +856,8 @@ export function CommunityScreen({
     applyContext(nextContext);
     setConnections(nextConnections);
     setNudges(nextNudges);
+    setNudgeHasMore(nextNudges.length === NUDGE_FETCH_SIZE);
+    setNudgePage(0);
     setPage(0);
     setLeaderboard(rows);
     setLeaderboardHasMore(rows.length === PAGE_SIZE);
@@ -879,6 +991,10 @@ export function CommunityScreen({
     setCollectorLoadingMore(false);
     collectorLoadMoreRef.current = false;
     setCollectorLoading(true);
+    setCollectorContext(null);
+    setCollectors([]);
+    setCollectorPage(nextPage);
+    setCollectorHasMore(false);
     try {
       const nextContext = await getCompetitiveMetricContext(nextMetric, nextPeriod, nextAudience);
       if (request !== collectorRequestRef.current) return;
@@ -1097,15 +1213,33 @@ export function CommunityScreen({
     }
   }, [friendCode, refreshCommunity]);
 
-  const handleNudge = useCallback(async (friend: CommunityConnection) => {
+  const openFriendNudgePicker = useCallback((friend: CommunityConnection) => {
+    setFriendNudgeGroup(null);
+    setFriendNudgeSendingKey(null);
+    setSelectedFriendForNudge(friend);
+  }, []);
+
+  const closeFriendNudgePicker = useCallback(() => {
+    if (friendNudgeSendingKey) return;
+    setSelectedFriendForNudge(null);
+    setFriendNudgeGroup(null);
+  }, [friendNudgeSendingKey]);
+
+  const sendFriendNudge = useCallback(async (option: NudgeOption) => {
+    if (!selectedFriendForNudge || friendNudgeSendingKey) return;
+    const friendName = selectedFriendForNudge.displayName;
+    setFriendNudgeSendingKey(option.key);
     try {
-      const option = NUDGE_BY_KEY.get('quick_review')!;
-      await sendCommunityNudge(friend.publicId, option.type, option.key);
-      Alert.alert('Nudge sent', `${option.title} was sent to ${friend.displayName}.`);
+      await sendCommunityNudge(selectedFriendForNudge.publicId, option.type, option.key);
+      setSelectedFriendForNudge(null);
+      setFriendNudgeGroup(null);
+      Alert.alert('Nudge sent', `${option.title} was sent to ${friendName}.`);
     } catch (error) {
       Alert.alert('Could not send nudge', error instanceof Error ? error.message : 'Please try again later.');
+    } finally {
+      setFriendNudgeSendingKey(null);
     }
-  }, []);
+  }, [friendNudgeSendingKey, selectedFriendForNudge]);
 
   const sendLeaderboardNudge = useCallback(async (option: NudgeOption) => {
     if (!selectedLeaderboardEntry) return;
@@ -1156,8 +1290,22 @@ export function CommunityScreen({
     setAvatarUpdating(true);
     try {
       const uploaded = await pickAndUploadCommunityAvatar();
-      if (uploaded) await refreshCommunity();
+      if (uploaded) {
+        // Show the confirmed storage path immediately. A background refresh
+        // should not make a successful upload look like it failed if another
+        // Community request is temporarily unavailable.
+        setContext((current) => current?.profile
+          ? { ...current, profile: { ...current.profile, avatarPath: uploaded } }
+          : current);
+        await refreshCommunity().catch(() => undefined);
+      }
     } catch (error) {
+      if (error instanceof Error && error.message === 'Create your Connect profile before adding a picture.') {
+        setContext((current) => (current ? { ...current, profile: null } : current));
+        setIsEditingProfile(false);
+        setProfileSetupPromptVisible(true);
+        return;
+      }
       Alert.alert('Could not update picture', error instanceof Error ? error.message : 'Please try again.');
     } finally {
       setAvatarUpdating(false);
@@ -1202,15 +1350,64 @@ export function CommunityScreen({
   const selectedConnection = selectedLeaderboardEntry
     ? connections.find((connection) => connection.publicId === selectedLeaderboardEntry.publicId)
     : undefined;
-  const selectedTier = selectedLeaderboardEntry ? levelPresentation(selectedLeaderboardEntry.level) : null;
-  const nudgeRecipients = connections.filter((connection) => connection.status === 'accepted');
-  const selectedNudgeRecipient = nudgeRecipients.find((friend) => friend.publicId === selectedNudgeRecipientId) ?? nudgeRecipients[0];
-  const friendPageCount = Math.ceil(connections.length / PAGE_SIZE);
+  const selectedTier = selectedLeaderboardEntry && isCommunityLeaderboardEntry(selectedLeaderboardEntry)
+    ? levelPresentation(selectedLeaderboardEntry.level)
+    : null;
+  const selectedCollectorEntry = selectedLeaderboardEntry && !isCommunityLeaderboardEntry(selectedLeaderboardEntry)
+    ? selectedLeaderboardEntry
+    : null;
+  const selectedCollectorMetric = selectedCollectorEntry
+    ? COMPETITIVE_METRICS.find((item) => item.key === collectorMetric) ?? COMPETITIVE_METRICS[0]
+    : null;
+  const orderedConnections = useMemo(() => {
+    if (friendSort === 'recent') {
+      return [...connections].sort((left, right) => {
+        const leftTime = Date.parse(left.addedAt ?? '');
+        const rightTime = Date.parse(right.addedAt ?? '');
+        return (Number.isFinite(rightTime) ? rightTime : 0) - (Number.isFinite(leftTime) ? leftTime : 0);
+      });
+    }
+    return [...connections].sort((left, right) => left.displayName.localeCompare(right.displayName, undefined, { sensitivity: 'base' }));
+  }, [connections, friendSort]);
+  const nudgeRecipients = orderedConnections.filter((connection) => connection.status === 'accepted');
+  const normalizedNudgeRecipientSearch = nudgeRecipientSearch.trim().toLowerCase();
+  const visibleNudgeRecipients = nudgeRecipients.filter((friend) => (
+    !normalizedNudgeRecipientSearch || friend.displayName.toLowerCase().includes(normalizedNudgeRecipientSearch)
+  ));
+  const selectedNudgeRecipient = visibleNudgeRecipients.find((friend) => friend.publicId === selectedNudgeRecipientId) ?? visibleNudgeRecipients[0];
+  const friendPageCount = Math.ceil(orderedConnections.length / PAGE_SIZE);
   const nudgePageCount = Math.ceil(nudges.length / PAGE_SIZE);
   const activeFriendPage = Math.min(friendPage, Math.max(0, friendPageCount - 1));
   const activeNudgePage = Math.min(nudgePage, Math.max(0, nudgePageCount - 1));
-  const visibleConnections = connections.slice(activeFriendPage * PAGE_SIZE, (activeFriendPage + 1) * PAGE_SIZE);
+  const visibleConnections = orderedConnections.slice(activeFriendPage * PAGE_SIZE, (activeFriendPage + 1) * PAGE_SIZE);
   const visibleNudges = nudges.slice(activeNudgePage * PAGE_SIZE, (activeNudgePage + 1) * PAGE_SIZE);
+
+  const openFriendSortMenu = useCallback(() => {
+    Alert.alert('Sort friends', undefined, [
+      { text: FRIEND_SORT_LABELS.recent, onPress: () => { setFriendSort('recent'); setFriendPage(0); } },
+      { text: FRIEND_SORT_LABELS.alphabetical, onPress: () => { setFriendSort('alphabetical'); setFriendPage(0); } },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  }, []);
+
+  const loadMoreNudges = useCallback(async () => {
+    if (nudgeLoadingMore || !nudgeHasMore || nudgeLoadMoreRef.current) return;
+    nudgeLoadMoreRef.current = true;
+    setNudgeLoadingMore(true);
+    try {
+      const nextNudges = await getCommunityNudges(NUDGE_FETCH_SIZE, nudges.length);
+      setNudges((current) => {
+        const known = new Set(current.map((nudge) => nudge.id));
+        return [...current, ...nextNudges.filter((nudge) => !known.has(nudge.id))];
+      });
+      setNudgeHasMore(nextNudges.length === NUDGE_FETCH_SIZE);
+    } catch (error) {
+      Alert.alert('Could not load older nudges', error instanceof Error ? error.message : 'Please try again later.');
+    } finally {
+      setNudgeLoadingMore(false);
+      nudgeLoadMoreRef.current = false;
+    }
+  }, [nudgeHasMore, nudgeLoadingMore, nudges.length]);
 
   const sendNudgeFromInbox = useCallback(async (option: NudgeOption) => {
     if (!selectedNudgeRecipient) {
@@ -1336,15 +1533,16 @@ export function CommunityScreen({
         : 'Allow WordWiz to use your approximate location to place you in a broad local leaderboard. Your exact location is never shown.';
     const locationGroupIsGrowing = locationRequired && !collectorLoading && collectors.length === 0;
     const noCollectorWords = !collectorLoading && !locationRequired && collectors.length === 0;
-    const showLocationAccess = locationRequired && !collectorContext?.hasLocation;
+    const collectorContextLoading = collectorLoading && !collectorContext;
+    const showLocationAccess = !collectorLoading && locationRequired && !collectorContext?.hasLocation;
     const metricLabel = collectorMetric === 'retention' ? 'RETENTION' : collectorMetric === 'streaks' ? 'LEARNING STREAK' : 'WORDS ADDED';
     const rankTitle = collectorMetric === 'retention' ? 'YOUR RETENTION RANK' : collectorMetric === 'streaks' ? 'YOUR LEARNING STREAK RANK' : 'YOUR WORD COLLECTOR RANK';
     const metricDetail = collectorMetric === 'retention'
       ? collectorContext?.qualified
-        ? `${collectorContext.retentionPercent ?? 0}% retained across ${collectorContext.reviewCount ?? 0} reviews`
+        ? `${retentionReviewBreakdownText(collectorContext)} · ${collectorContext.retentionPercent ?? 0}% retained`
         : `Complete ${collectorContext?.reviewsToQualify ?? 40} more reviews to qualify`
       : collectorMetric === 'streaks'
-        ? `${collectorContext?.streakDays ?? 0} Learning Streak days in a row`
+        ? `${Math.max(0, Math.round(collectorContext?.streakDays ?? 0))} Learning Streak days in a row`
         : collectorContext?.wordCount
           ? `${collectorContext.wordCount.toLocaleString()} ${collectorContext.wordCount === 1 ? 'word' : 'words'} added`
           : 'Add a new word to join this ranking.';
@@ -1419,26 +1617,37 @@ export function CommunityScreen({
           </View>
         </View>
 
-        <View style={community.collectorMyRankCard}>
-          <View style={community.collectorMyRankCopy}>
-            <Text style={community.myLeaderboardEyebrow}>{rankTitle}</Text>
-            <Text style={community.collectorMyRankValue}>
-              {collectorContext?.rank ? `#${collectorContext.rank}` : 'Not ranked yet'}
-            </Text>
-            <Text style={community.collectorMyRankDetail}>{metricDetail}</Text>
+        {collectorContextLoading ? (
+          <View style={community.collectorMyRankLoadingCard} accessibilityLabel={`Loading ${metric.label.toLowerCase()} rank`}>
+            <View style={community.collectorMyRankLoadingCopy}>
+              <Text style={community.myLeaderboardEyebrow}>UPDATING YOUR RANK</Text>
+              <Text style={community.collectorLoadingTitle}>Loading your {metric.label.toLowerCase()} rank…</Text>
+              <Text style={community.collectorLoadingDetail}>Fetching the latest ranking.</Text>
+            </View>
+            <ActivityIndicator size="small" color={metric.color} />
           </View>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={`Show my ${metric.label} rank`}
-            disabled={!collectorContext?.rank}
-            onPress={() => void showMyCollectorRank()}
-            style={[community.collectorMyRankButton, !collectorContext?.rank && community.disabledButton]}
-          >
-            <Text style={community.collectorMyRankButtonText}>My Rank</Text>
-          </Pressable>
-        </View>
+        ) : (
+          <View style={community.collectorMyRankCard}>
+            <View style={community.collectorMyRankCopy}>
+              <Text style={community.myLeaderboardEyebrow}>{rankTitle}</Text>
+              <Text numberOfLines={1} style={community.collectorMyRankValue}>
+                {collectorContext?.rank ? `#${collectorContext.rank}` : 'Not ranked yet'}
+              </Text>
+              <Text numberOfLines={2} ellipsizeMode="tail" style={community.collectorMyRankDetail}>{metricDetail}</Text>
+            </View>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Show my ${metric.label} rank`}
+              disabled={!collectorContext?.rank}
+              onPress={() => void showMyCollectorRank()}
+              style={[community.collectorMyRankButton, !collectorContext?.rank && community.disabledButton]}
+            >
+              <Text style={community.collectorMyRankButtonText}>My Rank</Text>
+            </Pressable>
+          </View>
+        )}
 
-        {!collectorContext?.eligible ? (
+        {!collectorContextLoading && !collectorContext?.eligible ? (
           <View style={community.notice}>
             <Ionicons name="lock-closed-outline" size={18} color={COLORS.purpleDark} />
             <Text style={community.noticeText}>Turn on leaderboard visibility in your Connect profile to join {metric.label}. Your saved words stay private.</Text>
@@ -1524,10 +1733,39 @@ export function CommunityScreen({
               </Text>
               {collectorLoading ? <ActivityIndicator size="small" color={COLORS.purple} /> : null}
             </View>
-            {collectors.map((entry, index) => {
+            {collectorContextLoading ? (
+              <View style={community.collectorLoadingRows} accessibilityLabel={`Loading ${metric.label.toLowerCase()} leaderboard`}>
+                {[0, 1, 2].map((index) => (
+                  <View key={`collector-loading-${index}`} style={[community.rankRow, community.collectorRankRow, community.collectorLoadingRow]}>
+                    <View style={community.collectorLoadingRank} />
+                    <View style={community.collectorLoadingAvatar} />
+                    <View style={community.collectorLoadingCopy}>
+                      <View style={[community.collectorLoadingLine, community.collectorLoadingLineName]} />
+                      <View style={[community.collectorLoadingLine, community.collectorLoadingLineDetail]} />
+                    </View>
+                    <View style={community.collectorLoadingScore} />
+                  </View>
+                ))}
+              </View>
+            ) : collectors.map((entry, index) => {
               const medal = entry.rank === 1 ? '🥇' : entry.rank === 2 ? '🥈' : entry.rank === 3 ? '🥉' : null;
               return (
-                <View key={entry.publicId} style={[community.rankRow, index > 0 && community.rankRowAfter, community.collectorRankRow, entry.isMe && community.rankRowMe, entry.rank <= 3 && community.collectorTopRank, entry.rank === 1 && community.rankRowChampion]}>
+                <Pressable
+                  key={entry.publicId}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${entry.displayName}, ${metric.label}, rank ${entry.rank}`}
+                  accessibilityHint={entry.isMe ? 'This is your collector profile' : 'Open this learner profile to connect'}
+                  onPress={() => setSelectedLeaderboardEntry(entry)}
+                  style={({ pressed }) => [
+                    community.rankRow,
+                    index > 0 && community.rankRowAfter,
+                    community.collectorRankRow,
+                    entry.isMe && community.rankRowMe,
+                    entry.rank <= 3 && community.collectorTopRank,
+                    entry.rank === 1 && community.rankRowChampion,
+                    pressed && community.rankRowPressed,
+                  ]}
+                >
                   {entry.rank === 1 ? <ChampionRankBackdrop reduceMotion={reduceMotion} /> : null}
                   {entry.rank === 1 ? (
                     <MiniLeaderboardCrest
@@ -1546,21 +1784,25 @@ export function CommunityScreen({
                     <CommunityAvatar name={entry.displayName} avatarPath={entry.avatarPath} small />
                   </View>
                   <View style={community.rankName}>
-                    <Text numberOfLines={1} style={community.rankNameText}>{entry.displayName}{entry.isMe ? ' (you)' : ''}</Text>
-                    <Text style={[community.collectorRowDetail, { color: metric.color }]}>
-                      {collectorMetric === 'retention'
-                        ? `${entry.reviewCount ?? 0} reviews · ranking score considers volume`
-                        : collectorMetric === 'streaks' ? 'Current Learning Streak' : 'Words Added'}
+                    <Text numberOfLines={1} ellipsizeMode="tail" style={community.rankNameText}>{entry.displayName}{entry.isMe ? ' (you)' : ''}</Text>
+                    {collectorMetric === 'retention' ? (
+                      <RetentionReviewActivity source={entry} />
+                    ) : (
+                      <Text
+                        numberOfLines={1}
+                        ellipsizeMode="tail"
+                        style={[community.collectorRowDetail, { color: metric.color }]}
+                      >
+                        {collectorMetric === 'streaks' ? 'Current Learning Streak' : formatJoinedDate(entry.joinedAt)}
+                      </Text>
+                    )}
+                  </View>
+                  <View style={community.collectorMetricValue}>
+                    <Text numberOfLines={1} ellipsizeMode="tail" style={[community.collectorWordCount, { color: metric.color }]}>
+                      {collectorMetricValueLabel(collectorMetric, entry)}
                     </Text>
                   </View>
-                  <Text style={[community.collectorWordCount, { color: metric.color }]}>
-                    {collectorMetric === 'retention'
-                      ? `${entry.retentionPercent ?? entry.metricValue ?? 0}%`
-                      : collectorMetric === 'streaks'
-                        ? `${entry.streakDays ?? entry.metricValue ?? 0}d`
-                        : `${entry.wordCount.toLocaleString()} ${entry.wordCount === 1 ? 'word' : 'words'}`}
-                  </Text>
-                </View>
+                </Pressable>
               );
             })}
             {noCollectorWords ? (
@@ -1851,6 +2093,22 @@ export function CommunityScreen({
           <Text style={community.smallPrimaryText}>Add</Text>
         </Pressable>
       </View>
+      {connections.length ? (
+        <View style={community.friendListHeader}>
+          <Text style={community.friendListTitle}>{connections.length} friends</Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Sort friends: ${FRIEND_SORT_LABELS[friendSort]}`}
+            accessibilityHint="Choose how your friends are arranged"
+            onPress={openFriendSortMenu}
+            style={({ pressed }) => [community.friendSortButton, pressed && community.friendSortButtonPressed]}
+          >
+            <Ionicons name="funnel-outline" size={15} color={COLORS.purpleDark} />
+            <Text style={community.friendSortText}>{FRIEND_SORT_LABELS[friendSort]}</Text>
+            <Ionicons name="chevron-down" size={14} color={COLORS.purpleDark} />
+          </Pressable>
+        </View>
+      ) : null}
       {visibleConnections.map((friend) => (
         <View key={friend.requestId} style={community.friendRow}>
           <CommunityAvatar name={friend.displayName} avatarPath={friend.avatarPath} />
@@ -1860,6 +2118,11 @@ export function CommunityScreen({
               {friend.status === 'pending'
                 ? friend.direction === 'incoming' ? 'Wants to connect' : 'Request sent'
                 : friend.isMuted ? 'Nudges muted' : 'Connected'}
+            </Text>
+            <Text style={community.friendAdded}>
+              {friend.status === 'accepted'
+                ? 'Added'
+                : friend.direction === 'outgoing' ? 'Sent' : 'Received'} {formatFriendConnectionTime(friend.addedAt)}
             </Text>
           </View>
           {friend.status === 'pending' && friend.direction === 'incoming' ? (
@@ -1879,7 +2142,12 @@ export function CommunityScreen({
             </View>
           ) : friend.status === 'accepted' ? (
             <View style={community.friendActions}>
-              <Pressable onPress={() => void handleNudge(friend)}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Send a nudge to ${friend.displayName}`}
+                accessibilityHint="Choose a friendly message to send"
+                onPress={() => openFriendNudgePicker(friend)}
+              >
                 <Ionicons name="paper-plane-outline" size={21} color={COLORS.purpleDark} />
               </Pressable>
               <Pressable onPress={() => void runConnectionAction(
@@ -1949,21 +2217,55 @@ export function CommunityScreen({
               {nudgeRecipients.length ? (
                 <>
                   <Text style={community.nudgeComposerLabel}>TO</Text>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={community.nudgeRecipientList}>
-                    {nudgeRecipients.map((friend) => {
-                      const selected = friend.publicId === selectedNudgeRecipient?.publicId;
-                      return (
-                        <Pressable
-                          key={friend.publicId}
-                          onPress={() => setSelectedNudgeRecipientId(friend.publicId)}
-                          style={[community.nudgeRecipient, selected && community.nudgeRecipientSelected]}
-                        >
-                          <CommunityAvatar name={friend.displayName} avatarPath={friend.avatarPath} small />
-                          <Text numberOfLines={1} style={[community.nudgeRecipientText, selected && community.nudgeRecipientTextSelected]}>{friend.displayName}</Text>
-                        </Pressable>
-                      );
-                    })}
-                  </ScrollView>
+                  <View style={community.nudgeRecipientSearch}>
+                    <Ionicons name="search-outline" size={17} color={COLORS.muted} />
+                    <TextInput
+                      accessibilityLabel="Search connected friends"
+                      value={nudgeRecipientSearch}
+                      onChangeText={(value) => setNudgeRecipientSearch(value.slice(0, 32))}
+                      placeholder="Search friends"
+                      placeholderTextColor={COLORS.muted}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      returnKeyType="done"
+                      style={community.nudgeRecipientSearchInput}
+                    />
+                    {nudgeRecipientSearch ? (
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Clear friend search"
+                        hitSlop={8}
+                        onPress={() => setNudgeRecipientSearch('')}
+                      >
+                        <Ionicons name="close-circle" size={17} color={COLORS.muted} />
+                      </Pressable>
+                    ) : null}
+                  </View>
+                  {visibleNudgeRecipients.length ? (
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={community.nudgeRecipientList}>
+                      {visibleNudgeRecipients.map((friend) => {
+                        const selected = friend.publicId === selectedNudgeRecipient?.publicId;
+                        return (
+                          <Pressable
+                            key={friend.publicId}
+                            accessibilityRole="button"
+                            accessibilityLabel={`Nudge ${friend.displayName}`}
+                            accessibilityState={{ selected }}
+                            onPress={() => setSelectedNudgeRecipientId(friend.publicId)}
+                            style={[community.nudgeRecipient, selected && community.nudgeRecipientSelected]}
+                          >
+                            <CommunityAvatar name={friend.displayName} avatarPath={friend.avatarPath} small />
+                            <Text numberOfLines={1} style={[community.nudgeRecipientText, selected && community.nudgeRecipientTextSelected]}>{friend.displayName}</Text>
+                          </Pressable>
+                        );
+                      })}
+                    </ScrollView>
+                  ) : (
+                    <View style={community.nudgeNoRecipient}>
+                      <Ionicons name="search-outline" size={17} color={COLORS.muted} />
+                      <Text style={community.nudgeNoRecipientText}>No connected friends match that search.</Text>
+                    </View>
+                  )}
                 </>
               ) : (
                 <View style={community.nudgeNoRecipient}>
@@ -2011,16 +2313,24 @@ export function CommunityScreen({
                 accessibilityRole="button"
                 accessibilityLabel="Create a Golden Nudge"
                 accessibilityHint="Use one Golden Ticket to write a custom message for a friend"
+                accessibilityState={{ expanded: goldenNudgeComposerOpen }}
                 onPress={openGoldenNudgeComposer}
                 style={({ pressed }) => [
                   community.goldenNudgeCard,
+                  goldenNudgeComposerOpen && community.goldenNudgeCardOpen,
                   pressed && community.goldenNudgeCardPressed,
                   (refreshTokens < 1 || !selectedNudgeRecipient) && community.goldenNudgeUnavailable,
                 ]}
               >
-                <View style={community.goldenNudgeIcon}>
-                  <Ionicons name="ticket-outline" size={19} color="#B98416" />
-                </View>
+                <LinearGradient
+                  colors={WORDWIZ_GRADIENT_COLORS}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  pointerEvents="none"
+                  style={community.goldenNudgeIcon}
+                >
+                  <Ionicons name="ticket-outline" size={19} color="#76560A" />
+                </LinearGradient>
                 <View style={community.goldenNudgeCopy}>
                   <View style={community.goldenNudgeTitleRow}>
                     <Text style={community.goldenNudgeTitle}>Golden Nudge</Text>
@@ -2028,7 +2338,7 @@ export function CommunityScreen({
                   </View>
                   <Text style={community.goldenNudgeHelp}>Write a one-of-a-kind message for a friend.</Text>
                 </View>
-                <Ionicons name={goldenNudgeComposerOpen ? 'chevron-up' : 'chevron-forward'} size={17} color="#B98416" />
+                <Ionicons name={goldenNudgeComposerOpen ? 'chevron-up' : 'chevron-down'} size={17} color="#B98416" />
               </Pressable>
               {goldenNudgeComposerOpen ? (
                 <View style={community.goldenNudgeEditor}>
@@ -2097,8 +2407,11 @@ export function CommunityScreen({
                 >
                   <CommunityAvatar name={nudge.senderName} avatarPath={nudge.senderAvatarPath} small />
                   <View style={community.nudgeText}>
-                    <Text style={community.nudgeTitle}>{nudge.senderName} sent you a nudge</Text>
-                    <Text style={community.nudgeDetail}>{option.title}</Text>
+                    <View style={community.nudgeTitleRow}>
+                      <Text numberOfLines={1} ellipsizeMode="tail" style={community.nudgeTitle}>{nudge.senderName} sent you a nudge</Text>
+                      <Text style={community.nudgeTimestamp}>{formatNudgeTimestamp(nudge.createdAt)}</Text>
+                    </View>
+                    <Text numberOfLines={2} ellipsizeMode="tail" style={community.nudgeDetail}>{option.title}</Text>
                   </View>
                   {!nudge.readAt ? <View style={community.unreadDot} /> : null}
                 </Pressable>
@@ -2116,6 +2429,25 @@ export function CommunityScreen({
           </View>
         ) : null}
         {renderSocialPagination(activeNudgePage, nudgePageCount, setNudgePage)}
+        {nudgeHasMore ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Load older nudges"
+            accessibilityHint="Fetches the next group of older nudges without loading the whole inbox at once"
+            disabled={nudgeLoadingMore}
+            onPress={() => void loadMoreNudges()}
+            style={({ pressed }) => [community.loadMore, (pressed || nudgeLoadingMore) && community.loadMorePressed]}
+          >
+            {nudgeLoadingMore ? <ActivityIndicator size="small" color={COLORS.purpleDark} /> : <Ionicons name="archive-outline" size={18} color={COLORS.purpleDark} />}
+            <View style={community.loadMoreCopy}>
+              <Text style={community.loadMoreTitle}>{nudgeLoadingMore ? 'Loading older nudges…' : 'Show older nudges'}</Text>
+              <Text style={community.loadMoreText}>Recent nudges stay easy to scan; older ones load when you ask.</Text>
+            </View>
+            {!nudgeLoadingMore ? <Ionicons name="chevron-down" size={17} color={COLORS.purpleDark} /> : null}
+          </Pressable>
+        ) : nudges.length >= NUDGE_FETCH_SIZE ? (
+          <Text style={community.nudgeHistoryEnd}>You’re all caught up with your nudge history.</Text>
+        ) : null}
       </>
     );
   };
@@ -2143,37 +2475,78 @@ export function CommunityScreen({
 
   if (!context?.profile) {
     return (
-      <ScrollView contentContainerStyle={community.container}>
-        <View style={community.hero}>
-          <Ionicons name="people" size={28} color={COLORS.purpleDark} />
-          <Text style={community.heroTitle}>{isEditingProfile ? 'Connect profile settings' : 'Connect with learners'}</Text>
-          <Text style={community.heroText}>
-            {isEditingProfile
-              ? 'Choose what other learners can see. Your words, definitions, and learning data always stay private.'
-              : 'Create a public display name to join optional rankings and connect with friends. Your words, definitions, and learning data stay private.'}
-          </Text>
-        </View>
-        <Text style={community.fieldLabel}>Display name</Text>
-        <TextInput value={profileName} onChangeText={setProfileName} placeholder="3–24 characters" placeholderTextColor={COLORS.muted} style={community.input} maxLength={24} />
-        <Preference
-          label="Show my Connect profile"
-          detail={profileVisible
-            ? 'Visible to people browsing Connect. Turn this off to use private mode.'
-            : 'Hidden from public browsing. Friends can still connect using your code.'}
-          value={profileVisible}
-          onChange={setProfileVisible}
-          status={profileVisible ? 'PUBLIC' : 'PRIVATE'}
-        />
-        <Preference label="Appear on leaderboards" detail="Optional. You can still use friends privately." value={leaderboardOptIn} onChange={setLeaderboardOptIn} />
-        <Preference label="Allow friend requests" detail="People need your code to find you." value={requestsEnabled} onChange={setRequestsEnabled} />
-        <Preference label="Allow study nudges" detail="Friends can send a gentle reminder." value={nudgesEnabled} onChange={setNudgesEnabled} />
-        <Preference label="Push nudges" detail="We will ask for notification permission only after setup." value={pushEnabled} onChange={setPushEnabled} />
-        <Pressable disabled={saving || profileName.trim().length < 3} style={[community.primaryButton, (saving || profileName.trim().length < 3) && community.disabledButton]} onPress={() => void saveProfile()}>
-          <Text style={community.primaryButtonText}>
-            {saving ? (isEditingProfile ? 'Saving settings…' : 'Creating profile…') : isEditingProfile ? 'Save Connect settings' : 'Create Connect profile'}
-          </Text>
-        </Pressable>
-      </ScrollView>
+      <>
+        <ScrollView contentContainerStyle={community.container}>
+          <View style={community.hero}>
+            <Ionicons name="people" size={28} color={COLORS.purpleDark} />
+            <Text style={community.heroTitle}>{isEditingProfile ? 'Connect profile settings' : 'Connect with learners'}</Text>
+            <Text style={community.heroText}>
+              {isEditingProfile
+                ? 'Choose what other learners can see. Your words, definitions, and learning data always stay private.'
+                : 'Create a public display name to join optional rankings and connect with friends. Your words, definitions, and learning data stay private.'}
+            </Text>
+          </View>
+          <Text style={community.fieldLabel}>Display name</Text>
+          <TextInput value={profileName} onChangeText={setProfileName} placeholder="3–24 characters" placeholderTextColor={COLORS.muted} style={community.input} maxLength={24} />
+          <Preference
+            label="Show my Connect profile"
+            detail={profileVisible
+              ? 'Visible to people browsing Connect. Turn this off to use private mode.'
+              : 'Hidden from public browsing. Friends can still connect using your code.'}
+            value={profileVisible}
+            onChange={setProfileVisible}
+            status={profileVisible ? 'PUBLIC' : 'PRIVATE'}
+          />
+          <Preference label="Appear on leaderboards" detail="Optional. You can still use friends privately." value={leaderboardOptIn} onChange={setLeaderboardOptIn} />
+          <Preference label="Allow friend requests" detail="People need your code to find you." value={requestsEnabled} onChange={setRequestsEnabled} />
+          <Preference label="Allow study nudges" detail="Friends can send a gentle reminder." value={nudgesEnabled} onChange={setNudgesEnabled} />
+          <Preference label="Push nudges" detail="We will ask for notification permission only after setup." value={pushEnabled} onChange={setPushEnabled} />
+          <Pressable disabled={saving || profileName.trim().length < 3} style={[community.primaryButton, (saving || profileName.trim().length < 3) && community.disabledButton]} onPress={() => void saveProfile()}>
+            <Text style={community.primaryButtonText}>
+              {saving ? (isEditingProfile ? 'Saving settings…' : 'Creating profile…') : isEditingProfile ? 'Save Connect settings' : 'Create Connect profile'}
+            </Text>
+          </Pressable>
+        </ScrollView>
+        <Modal
+          visible={profileSetupPromptVisible}
+          transparent
+          animationType={reduceMotion ? 'none' : 'fade'}
+          onRequestClose={() => setProfileSetupPromptVisible(false)}
+        >
+          <View style={community.profileSetupPromptBackdrop}>
+            <View style={community.profileSetupPromptCard}>
+              <View style={community.profileSetupPromptIcon}>
+                <LinearGradient colors={WORDWIZ_GRADIENT_COLORS} style={StyleSheet.absoluteFill} />
+                <Ionicons name="people-outline" size={30} color={COLORS.purpleDark} />
+              </View>
+              <Text style={community.profileSetupPromptEyebrow}>ONE QUICK STEP</Text>
+              <Text style={community.profileSetupPromptTitle}>Finish your Connect profile</Text>
+              <Text style={community.profileSetupPromptText}>
+                Add a display name first, then you can add your profile picture right away.
+              </Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Create Connect profile"
+                onPress={() => setProfileSetupPromptVisible(false)}
+                style={({ pressed }) => [community.profileSetupPromptPrimary, pressed && community.profileSetupPromptPressed]}
+              >
+                <LinearGradient colors={WORDWIZ_GRADIENT_COLORS} style={community.profileSetupPromptPrimaryGradient}>
+                  <Ionicons name="arrow-forward-circle-outline" size={20} color={COLORS.purpleDark} />
+                  <Text style={community.profileSetupPromptPrimaryText}>Create profile</Text>
+                </LinearGradient>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Dismiss profile setup prompt"
+                onPress={() => setProfileSetupPromptVisible(false)}
+                style={({ pressed }) => [community.profileSetupPromptSecondary, pressed && community.profileSetupPromptPressed]}
+              >
+                <Text style={community.profileSetupPromptSecondaryText}>Not now</Text>
+              </Pressable>
+            </View>
+          </View>
+        </Modal>
+      </>
     );
   }
 
@@ -2225,7 +2598,7 @@ export function CommunityScreen({
           <View style={community.profileCopy}>
             <Text style={community.profileEyebrow}>YOUR LEARNING PROFILE</Text>
             <Text style={community.profileName}>{context.profile.displayName}</Text>
-            <Text style={community.photoAction}>{avatarUpdating ? 'Updating picture…' : context.profile.avatarPath ? 'Tap your photo to change it' : 'Tap your photo to add one'}</Text>
+            <Text style={community.photoAction}>{avatarUpdating ? 'Checking picture…' : context.profile.avatarPath ? 'Tap your photo to change it' : 'Tap your photo to add one'}</Text>
           </View>
         </View>
         <View style={community.profileStats}>
@@ -2297,6 +2670,102 @@ export function CommunityScreen({
         onClose={() => setSocialXpSheetOpen(false)}
       />
       <Modal
+        visible={Boolean(selectedFriendForNudge)}
+        transparent
+        animationType={reduceMotion ? 'none' : 'slide'}
+        onRequestClose={closeFriendNudgePicker}
+      >
+        <Pressable
+          accessible={false}
+          onPress={closeFriendNudgePicker}
+          style={community.friendNudgeBackdrop}
+        >
+          <Pressable
+            accessible={false}
+            onPress={(event) => event.stopPropagation()}
+            style={community.friendNudgeSheet}
+          >
+            <View pointerEvents="none" accessible={false} style={community.friendNudgeHandle} />
+            <View style={community.friendNudgeHeader}>
+              <View style={community.friendNudgeHeading}>
+                <CommunityAvatar
+                  name={selectedFriendForNudge?.displayName ?? ''}
+                  avatarPath={selectedFriendForNudge?.avatarPath ?? null}
+                  small
+                />
+                <View style={community.friendNudgeHeadingCopy}>
+                  <Text style={community.friendNudgeTitle}>Send a nudge</Text>
+                  <Text numberOfLines={2} style={community.friendNudgeHelp}>
+                    Choose a friendly message for {selectedFriendForNudge?.displayName ?? 'your friend'}.
+                  </Text>
+                </View>
+              </View>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Close nudge picker"
+                accessibilityHint="Closes the nudge menu"
+                disabled={Boolean(friendNudgeSendingKey)}
+                onPress={closeFriendNudgePicker}
+                hitSlop={8}
+                style={community.friendNudgeClose}
+              >
+                <Ionicons name="close" size={19} color={COLORS.muted} />
+              </Pressable>
+            </View>
+            <ScrollView
+              style={community.friendNudgeScroll}
+              contentContainerStyle={community.nudgePickerScrollContent}
+              showsVerticalScrollIndicator={false}
+            >
+              {NUDGE_GROUPS.map((group) => {
+                const expanded = friendNudgeGroup === group.group;
+                return (
+                  <View key={group.group} style={community.nudgePickerGroup}>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityState={{ expanded }}
+                      onPress={() => setFriendNudgeGroup((current) => current === group.group ? null : group.group)}
+                      style={[community.nudgeCategoryTrigger, expanded && community.nudgeCategoryTriggerExpanded]}
+                    >
+                      <View style={[community.nudgePickerGroupIcon, { backgroundColor: group.background }]}>
+                        <Ionicons name={group.icon} size={15} color={group.color} />
+                      </View>
+                      <View style={community.nudgeCategoryCopy}>
+                        <Text style={community.nudgePickerGroupText}>{group.group}</Text>
+                        <Text style={community.nudgeCategoryCount}>{group.options.length} messages</Text>
+                      </View>
+                      <Ionicons name={expanded ? 'chevron-up' : 'chevron-down'} size={17} color={COLORS.muted} />
+                    </Pressable>
+                    {expanded ? group.options.map((option) => (
+                      <Pressable
+                        key={option.key}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Send ${option.title}`}
+                        disabled={Boolean(friendNudgeSendingKey)}
+                        onPress={() => void sendFriendNudge(option)}
+                        style={({ pressed }) => [
+                          community.nudgeOption,
+                          pressed && community.nudgeOptionPressed,
+                          friendNudgeSendingKey && community.disabledButton,
+                        ]}
+                      >
+                        <View style={[community.nudgeOptionIcon, { backgroundColor: option.background }]}>
+                          <Ionicons name={option.icon} size={18} color={option.color} />
+                        </View>
+                        <Text style={community.nudgeOptionTitle}>{option.title}</Text>
+                        {friendNudgeSendingKey === option.key
+                          ? <ActivityIndicator size="small" color={COLORS.purpleDark} />
+                          : <Ionicons name="paper-plane-outline" size={17} color={COLORS.purpleDark} />}
+                      </Pressable>
+                    )) : null}
+                  </View>
+                );
+              })}
+            </ScrollView>
+          </Pressable>
+        </Pressable>
+      </Modal>
+      <Modal
         visible={Boolean(selectedLeaderboardEntry)}
         transparent
         animationType={reduceMotion ? 'none' : 'slide'}
@@ -2308,52 +2777,112 @@ export function CommunityScreen({
             <Pressable onPress={() => setSelectedLeaderboardEntry(null)} accessibilityLabel="Close profile" style={community.memberSheetClose}>
               <Ionicons name="close" size={20} color={COLORS.muted} />
             </Pressable>
-            {selectedLeaderboardEntry && selectedTier ? (
+            {selectedLeaderboardEntry ? (
               <>
                 <View style={community.memberSheetIdentity}>
                   <View
                     style={[
                       community.memberSheetAvatarRing,
-                      { borderColor: selectedTier.color },
-                      selectedLeaderboardEntry.level === 'Grandmaster' && community.memberSheetAvatarRingGrandmaster,
+                      { borderColor: selectedTier?.color ?? selectedCollectorMetric?.color ?? COLORS.blue },
+                      isCommunityLeaderboardEntry(selectedLeaderboardEntry) && selectedLeaderboardEntry.level === 'Grandmaster' && community.memberSheetAvatarRingGrandmaster,
                     ]}
                   >
                     <CommunityAvatar name={selectedLeaderboardEntry.displayName} avatarPath={selectedLeaderboardEntry.avatarPath} large />
                   </View>
                   <Text style={community.memberSheetName}>{selectedLeaderboardEntry.displayName}{selectedLeaderboardEntry.isMe ? ' (you)' : ''}</Text>
-                  <TierBadge level={selectedLeaderboardEntry.level} rank={selectedLeaderboardEntry.rank} modal />
+                  {selectedTier && isCommunityLeaderboardEntry(selectedLeaderboardEntry) ? (
+                    <TierBadge level={selectedLeaderboardEntry.level} rank={selectedLeaderboardEntry.rank} modal />
+                  ) : selectedCollectorMetric ? (
+                    <View style={[community.memberSheetCollectorBadge, { borderColor: `${selectedCollectorMetric.color}55`, backgroundColor: `${selectedCollectorMetric.color}16` }]}>
+                      <Ionicons name={selectedCollectorMetric.icon} size={13} color={selectedCollectorMetric.color} />
+                      <Text style={[community.memberSheetCollectorBadgeText, { color: selectedCollectorMetric.color }]}>{selectedCollectorMetric.label}</Text>
+                    </View>
+                  ) : null}
                   <Text style={community.memberSheetScore}>
                     <Text style={community.memberSheetRank}>#{selectedLeaderboardEntry.rank}</Text>
                     <Text style={community.memberSheetScoreSeparator}> · </Text>
-                    <Text>{selectedLeaderboardEntry.xp.toLocaleString()} Social XP</Text>
+                    {isCommunityLeaderboardEntry(selectedLeaderboardEntry) ? (
+                      <Text>{selectedLeaderboardEntry.xp.toLocaleString()} Social XP</Text>
+                    ) : (
+                      <Text>{collectorMetricValueLabel(collectorMetric, selectedLeaderboardEntry)}</Text>
+                    )}
                   </Text>
                 </View>
-                <View style={community.memberSheetStats}>
-                  <Text style={community.memberSheetStatsTitle}>LEARNING SNAPSHOT</Text>
-                  <View style={community.memberSheetStatsGrid}>
-                    <View style={community.memberSheetStat}>
-                      <Text style={community.memberSheetStatValue}>{formatPublicStat(selectedLeaderboardEntry.wordCount)}</Text>
-                      <Text style={community.memberSheetStatLabel}>WORDS</Text>
-                    </View>
-                    <View style={community.memberSheetStat}>
-                      <Text style={community.memberSheetStatValue}>{formatPublicStat(selectedLeaderboardEntry.achievementsUnlocked)}</Text>
-                      <Text style={community.memberSheetStatLabel}>UNLOCKED</Text>
-                    </View>
-                    <View style={community.memberSheetStat}>
-                      <Text style={community.memberSheetStatValue}>{formatPublicStat(selectedLeaderboardEntry.quizCount)}</Text>
-                      <Text style={community.memberSheetStatLabel}>QUIZZES</Text>
-                    </View>
-                    <View style={community.memberSheetStat}>
-                      <Text style={community.memberSheetStatValue}>{formatPublicStat(selectedLeaderboardEntry.flashcardReviewCount)}</Text>
-                      <Text style={community.memberSheetStatLabel}>CARD REVIEWS</Text>
-                    </View>
-                    <View style={community.memberSheetStat}>
-                      <Text style={community.memberSheetStatValue}>{formatPublicStat(selectedLeaderboardEntry.activeStudyDays30d)}</Text>
-                      <Text style={community.memberSheetStatLabel}>ACTIVE DAYS</Text>
-                      <Text style={community.memberSheetStatCaption}>Last 30 days</Text>
+                {isCommunityLeaderboardEntry(selectedLeaderboardEntry) ? (
+                  <View style={community.memberSheetStats}>
+                    <Text style={community.memberSheetStatsTitle}>LEARNING SNAPSHOT</Text>
+                    <View style={community.memberSheetStatsGrid}>
+                      <View style={community.memberSheetStat}>
+                        <Text style={community.memberSheetStatValue}>{formatPublicStat(selectedLeaderboardEntry.wordCount)}</Text>
+                        <Text style={community.memberSheetStatLabel}>WORDS</Text>
+                      </View>
+                      <View style={community.memberSheetStat}>
+                        <Text style={community.memberSheetStatValue}>{formatPublicStat(selectedLeaderboardEntry.achievementsUnlocked)}</Text>
+                        <Text style={community.memberSheetStatLabel}>UNLOCKED</Text>
+                      </View>
+                      <View style={community.memberSheetStat}>
+                        <Text style={community.memberSheetStatValue}>{formatPublicStat(selectedLeaderboardEntry.quizCount)}</Text>
+                        <Text style={community.memberSheetStatLabel}>QUIZZES</Text>
+                      </View>
+                      <View style={community.memberSheetStat}>
+                        <Text style={community.memberSheetStatValue}>{formatPublicStat(selectedLeaderboardEntry.flashcardReviewCount)}</Text>
+                        <Text style={community.memberSheetStatLabel}>CARD REVIEWS</Text>
+                      </View>
+                      <View style={community.memberSheetStat}>
+                        <Text style={community.memberSheetStatValue}>{formatPublicStat(selectedLeaderboardEntry.activeStudyDays30d)}</Text>
+                        <Text style={community.memberSheetStatLabel}>ACTIVE DAYS</Text>
+                        <Text style={community.memberSheetStatCaption}>Last 30 days</Text>
+                      </View>
                     </View>
                   </View>
-                </View>
+                ) : selectedCollectorEntry ? (
+                  <View style={community.memberSheetStats}>
+                    <Text style={community.memberSheetStatsTitle}>COLLECTOR SNAPSHOT</Text>
+                    <View style={community.memberSheetStatsGrid}>
+                      <View style={community.memberSheetStat}>
+                        <Text style={community.memberSheetStatValue}>{formatPublicStat(selectedCollectorEntry.wordCount)}</Text>
+                        <Text style={community.memberSheetStatLabel}>WORDS ADDED</Text>
+                      </View>
+                      {collectorMetric === 'retention' ? (
+                        <>
+                          <View style={community.memberSheetStat}>
+                            <Text style={community.memberSheetStatValue}>{formatPublicStat(selectedCollectorEntry.retentionPercent ?? selectedCollectorEntry.metricValue)}</Text>
+                            <Text style={community.memberSheetStatLabel}>RETENTION</Text>
+                          </View>
+                          <View style={community.memberSheetStat}>
+                            <Text style={community.memberSheetStatValue}>{formatPublicStat(selectedCollectorEntry.reviewCount)}</Text>
+                            <Text style={community.memberSheetStatLabel}>TOTAL REVIEWS</Text>
+                          </View>
+                          <View style={community.memberSheetStat}>
+                            <Text style={community.memberSheetStatValue}>{formatPublicStat(selectedCollectorEntry.flashcardReviewCount)}</Text>
+                            <Text style={community.memberSheetStatLabel}>CARDS</Text>
+                          </View>
+                          <View style={community.memberSheetStat}>
+                            <Text style={community.memberSheetStatValue}>{formatPublicStat(selectedCollectorEntry.quizAnswerCount)}</Text>
+                            <Text style={community.memberSheetStatLabel}>QUIZZES</Text>
+                          </View>
+                          <View style={community.memberSheetStat}>
+                            <Text style={community.memberSheetStatValue}>{formatPublicStat(selectedCollectorEntry.testAnswerCount)}</Text>
+                            <Text style={community.memberSheetStatLabel}>TESTS</Text>
+                          </View>
+                          <View style={community.memberSheetStat}>
+                            <Text style={community.memberSheetStatValue}>{formatPublicStat(selectedCollectorEntry.gameAnswerCount)}</Text>
+                            <Text style={community.memberSheetStatLabel}>GAMES</Text>
+                          </View>
+                        </>
+                      ) : collectorMetric === 'streaks' ? (
+                        <View style={community.memberSheetStat}>
+                          <Text style={community.memberSheetStatValue}>{formatPublicStat(selectedCollectorEntry.streakDays ?? selectedCollectorEntry.metricValue)}</Text>
+                          <Text style={community.memberSheetStatLabel}>STREAK DAYS</Text>
+                        </View>
+                      ) : null}
+                      <View style={community.memberSheetStat}>
+                        <Text style={community.memberSheetStatValue}>#{selectedCollectorEntry.rank}</Text>
+                        <Text style={community.memberSheetStatLabel}>RANK</Text>
+                      </View>
+                    </View>
+                  </View>
+                ) : null}
                 {selectedLeaderboardEntry.isMe ? (
                   <View style={[community.memberSheetInfo, community.memberSheetInfoOwn]}>
                     <Ionicons name="sparkles-outline" size={15} color={COLORS.purpleDark} />
@@ -2491,6 +3020,18 @@ const community = StyleSheet.create({
   primaryButton: { minHeight: 54, marginTop: 8, alignItems: 'center', justifyContent: 'center', borderRadius: 18, backgroundColor: COLORS.blue, ...SOFT_SHADOW },
   primaryButtonText: { color: COLORS.white, fontSize: 16, fontWeight: '900', letterSpacing: 0.3 },
   disabledButton: { opacity: 0.48 },
+  profileSetupPromptBackdrop: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24, backgroundColor: 'rgba(31, 33, 70, 0.38)' },
+  profileSetupPromptCard: { width: '100%', maxWidth: 390, alignItems: 'center', padding: 24, borderRadius: 28, backgroundColor: COLORS.surface, ...SOFT_SHADOW },
+  profileSetupPromptIcon: { width: 68, height: 68, alignItems: 'center', justifyContent: 'center', marginBottom: 14, borderRadius: 24, overflow: 'hidden', backgroundColor: COLORS.purplePale },
+  profileSetupPromptEyebrow: { color: COLORS.purple, fontSize: 10, fontWeight: '900', letterSpacing: 1.3 },
+  profileSetupPromptTitle: { marginTop: 6, color: COLORS.ink, fontSize: 24, lineHeight: 29, fontWeight: '900', textAlign: 'center' },
+  profileSetupPromptText: { marginTop: 9, color: COLORS.muted, fontSize: 15, lineHeight: 21, fontWeight: '600', textAlign: 'center' },
+  profileSetupPromptPrimary: { width: '100%', minHeight: 52, marginTop: 20, overflow: 'hidden', borderRadius: 17, ...SOFT_SHADOW },
+  profileSetupPromptPrimaryGradient: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingHorizontal: 16 },
+  profileSetupPromptPrimaryText: { color: COLORS.purpleDark, fontSize: 16, fontWeight: '900' },
+  profileSetupPromptSecondary: { minHeight: 42, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 18 },
+  profileSetupPromptSecondaryText: { color: COLORS.muted, fontSize: 14, fontWeight: '800' },
+  profileSetupPromptPressed: { opacity: 0.78 },
   profileHeader: { position: 'relative', alignItems: 'center', padding: 20, borderRadius: 28, backgroundColor: '#F8F6FF', borderWidth: 1, borderColor: '#DDD4FF', gap: 17, ...SOFT_SHADOW },
   profileHeaderTop: { alignItems: 'center', gap: 7 },
   profileSettings: { position: 'absolute', top: 15, right: 15, width: 32, height: 32, alignItems: 'center', justifyContent: 'center' },
@@ -2569,12 +3110,16 @@ const community = StyleSheet.create({
   collectorAudienceActive: { borderColor: COLORS.blue, backgroundColor: '#EAF6FF' },
   collectorAudienceText: { color: COLORS.muted, fontSize: 11, fontWeight: '900' },
   collectorAudienceTextActive: { color: COLORS.blue },
-  collectorMyRankCard: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14, borderRadius: 19, borderWidth: 1, borderColor: '#C9E2F8', backgroundColor: '#F3F9FF' },
-  collectorMyRankCopy: { flex: 1 },
+  collectorMyRankCard: { minHeight: 92, flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14, borderRadius: 19, borderWidth: 1, borderColor: '#C9E2F8', backgroundColor: '#F3F9FF' },
+  collectorMyRankCopy: { flex: 1, minWidth: 0 },
   collectorMyRankValue: { marginTop: 2, color: COLORS.ink, fontSize: 21, lineHeight: 25, fontWeight: '900' },
   collectorMyRankDetail: { marginTop: 1, color: COLORS.muted, fontSize: 11, lineHeight: 16, fontWeight: '700' },
-  collectorMyRankButton: { minHeight: 35, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12, borderRadius: 12, backgroundColor: COLORS.blue },
+  collectorMyRankButton: { flexShrink: 0, minHeight: 35, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12, borderRadius: 12, backgroundColor: COLORS.blue },
   collectorMyRankButtonText: { color: COLORS.white, fontSize: 11, fontWeight: '900' },
+  collectorMyRankLoadingCard: { minHeight: 92, flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14, borderRadius: 19, borderWidth: 1, borderColor: '#C9E2F8', backgroundColor: '#F3F9FF' },
+  collectorMyRankLoadingCopy: { flex: 1, minWidth: 0, gap: 3 },
+  collectorLoadingTitle: { color: COLORS.ink, fontSize: 16, lineHeight: 20, fontWeight: '900' },
+  collectorLoadingDetail: { color: COLORS.muted, fontSize: 11, lineHeight: 16, fontWeight: '700' },
   collectorLocationCard: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, padding: 14, borderRadius: 19, borderWidth: 1, borderColor: '#C9E2F8', backgroundColor: '#F7FBFF' },
   collectorLocationIcon: { width: 37, height: 37, alignItems: 'center', justifyContent: 'center', borderRadius: 13, backgroundColor: '#E5F4FF' },
   collectorLocationCopy: { flex: 1, minWidth: 210 },
@@ -2590,13 +3135,25 @@ const community = StyleSheet.create({
   retentionQualificationCopy: { flex: 1 },
   retentionQualificationTitle: { color: COLORS.ink, fontSize: 12, fontWeight: '900' },
   retentionQualificationText: { marginTop: 2, color: COLORS.muted, fontSize: 11, lineHeight: 16, fontWeight: '700' },
-  collectorRankRow: { minHeight: 70 },
+  collectorRankRow: { minHeight: 74, paddingVertical: 11 },
   collectorTopRank: { borderColor: '#E8D39D', backgroundColor: '#FFFCF3' },
-  collectorRankNumber: { width: 31, alignItems: 'center' },
+  collectorRankNumber: { width: 31, flexShrink: 0, alignItems: 'center' },
   collectorMedal: { fontSize: 20 },
   collectorRankText: { color: COLORS.muted, fontSize: 12, fontWeight: '900' },
-  collectorRowDetail: { marginTop: 2, color: COLORS.blue, fontSize: 11, fontWeight: '900' },
-  collectorWordCount: { color: COLORS.blue, fontSize: 14, fontWeight: '900' },
+  collectorRowDetail: { marginTop: 2, color: COLORS.blue, fontSize: 11, lineHeight: 14, fontWeight: '900' },
+  collectorBreakdownText: { marginTop: 1, color: '#7B7598', fontSize: 10, lineHeight: 13, fontWeight: '800' },
+  collectorReviewActivity: { marginTop: 3, color: '#7B7598', fontSize: 10, lineHeight: 13, fontWeight: '800' },
+  collectorMetricValue: { width: 82, flexShrink: 0, alignItems: 'flex-end' },
+  collectorWordCount: { maxWidth: '100%', color: COLORS.blue, fontSize: 14, fontWeight: '900', textAlign: 'right' },
+  collectorLoadingRows: { gap: 5 },
+  collectorLoadingRow: { borderColor: '#E3E8F0', backgroundColor: '#FBFCFE' },
+  collectorLoadingRank: { width: 22, height: 12, flexShrink: 0, borderRadius: 6, backgroundColor: '#E6EAF1' },
+  collectorLoadingAvatar: { width: 38, height: 38, flexShrink: 0, borderRadius: 14, backgroundColor: '#E8EDF4' },
+  collectorLoadingCopy: { flex: 1, minWidth: 0, gap: 7 },
+  collectorLoadingLine: { height: 10, borderRadius: 5, backgroundColor: '#E6EAF1' },
+  collectorLoadingLineName: { width: '72%' },
+  collectorLoadingLineDetail: { width: '48%', height: 8 },
+  collectorLoadingScore: { width: 30, height: 14, flexShrink: 0, borderRadius: 7, backgroundColor: '#E6EAF1' },
   collectorEmptyActions: { flexDirection: 'row', gap: 8, marginTop: 4 },
   collectorEmptyButton: { minHeight: 34, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 11, borderRadius: 11, backgroundColor: '#EAE4FF' },
   collectorEmptyButtonText: { color: COLORS.purpleDark, fontSize: 11, fontWeight: '900' },
@@ -2631,7 +3188,7 @@ const community = StyleSheet.create({
   notice: { flexDirection: 'row', gap: 10, padding: 14, borderRadius: 17, backgroundColor: COLORS.yellowPale },
   noticeText: { flex: 1, color: '#936C0D', fontSize: 13, lineHeight: 18, fontWeight: '700' },
   leaderboardStatus: { minHeight: 20, flexDirection: 'row', alignItems: 'center', gap: 7, paddingHorizontal: 3 },
-  leaderboardStatusText: { color: COLORS.muted, fontSize: 12, fontWeight: '800' },
+  leaderboardStatusText: { flex: 1, minWidth: 0, color: COLORS.muted, fontSize: 12, lineHeight: 17, fontWeight: '800' },
   rankRow: { minHeight: 68, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, borderWidth: 1, borderColor: COLORS.border, borderRadius: 18, backgroundColor: COLORS.surface },
   rankRowAfter: { marginTop: 5 },
   rankRowMe: { borderColor: '#B6DBFF', backgroundColor: '#F3F9FF' },
@@ -2643,8 +3200,8 @@ const community = StyleSheet.create({
   rankRowPressed: { opacity: 0.78, transform: [{ scale: 0.992 }] },
   rankOneAvatarFrame: { padding: 2, borderRadius: 16, backgroundColor: '#EEE9FF', boxShadow: '0 4px 12px rgba(116, 98, 232, 0.20)' },
   rankWordWizardIcon: { width: 13, height: 13, borderRadius: 4 },
-  rankName: { flex: 1 },
-  rankNameText: { color: COLORS.ink, fontSize: 16, fontWeight: '800' },
+  rankName: { flex: 1, minWidth: 0 },
+  rankNameText: { minWidth: 0, color: COLORS.ink, fontSize: 16, fontWeight: '800' },
   rankDetailRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   rankDetail: { fontSize: 11, fontWeight: '800' },
   rankDetailDivider: { color: COLORS.muted, fontSize: 11, fontWeight: '800' },
@@ -2681,6 +3238,8 @@ const community = StyleSheet.create({
   memberSheetAvatarRing: { padding: 2, borderWidth: 2, borderRadius: 29, backgroundColor: COLORS.white, boxShadow: '0 4px 12px rgba(72, 61, 135, 0.10)' },
   memberSheetAvatarRingGrandmaster: { borderColor: '#D9A72B', boxShadow: '0 5px 15px rgba(185, 132, 22, 0.20)' },
   memberSheetName: { color: COLORS.ink, fontSize: 22, lineHeight: 27, fontWeight: '900', textAlign: 'center' },
+  memberSheetCollectorBadge: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 5, borderWidth: 1, borderRadius: 13 },
+  memberSheetCollectorBadgeText: { fontSize: 11, fontWeight: '900' },
   memberSheetScore: { color: COLORS.muted, fontSize: 13, lineHeight: 17, fontWeight: '800' },
   memberSheetRank: { color: COLORS.ink, fontWeight: '900' },
   memberSheetScoreSeparator: { color: '#B3ABC9', fontWeight: '700' },
@@ -2705,6 +3264,16 @@ const community = StyleSheet.create({
   memberSheetReport: { width: '100%', minHeight: 40, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, marginTop: 8, borderRadius: 14 },
   memberSheetReportPressed: { opacity: 0.62 },
   memberSheetReportText: { color: COLORS.muted, fontSize: 13, fontWeight: '800' },
+  friendNudgeBackdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(31, 33, 70, 0.33)' },
+  friendNudgeSheet: { maxHeight: '84%', padding: 18, paddingTop: 28, paddingBottom: 30, borderTopLeftRadius: 28, borderTopRightRadius: 28, backgroundColor: COLORS.surface, gap: 12, ...SOFT_SHADOW },
+  friendNudgeHandle: { position: 'absolute', top: 10, alignSelf: 'center', width: 38, height: 4, borderRadius: 2, backgroundColor: '#D8D2E8' },
+  friendNudgeHeader: { position: 'relative', minHeight: 58, flexDirection: 'row', alignItems: 'center', paddingRight: 52, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: '#E9E2F7' },
+  friendNudgeHeading: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 10 },
+  friendNudgeHeadingCopy: { flex: 1, minWidth: 0 },
+  friendNudgeTitle: { color: COLORS.ink, fontSize: 18, fontWeight: '900' },
+  friendNudgeHelp: { marginTop: 2, color: COLORS.muted, fontSize: 12, lineHeight: 17, fontWeight: '700' },
+  friendNudgeClose: { position: 'absolute', top: 0, right: 0, width: 40, height: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 14, borderWidth: 1, borderColor: '#E3DDF5', backgroundColor: '#F4F1FA' },
+  friendNudgeScroll: { width: '100%' },
   nudgePicker: { width: '100%', marginTop: 8, gap: 8 },
   nudgePickerTitle: { color: COLORS.ink, fontSize: 16, fontWeight: '900', textAlign: 'center' },
   nudgePickerHelp: { color: COLORS.muted, fontSize: 12, fontWeight: '600', textAlign: 'center' },
@@ -2726,10 +3295,16 @@ const community = StyleSheet.create({
   friendInput: { flex: 1, minHeight: 48, paddingHorizontal: 14, borderRadius: 15, borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.white, color: COLORS.ink, fontSize: 15, fontWeight: '700' },
   smallPrimary: { paddingHorizontal: 18, alignItems: 'center', justifyContent: 'center', borderRadius: 15, backgroundColor: COLORS.blue },
   smallPrimaryText: { color: COLORS.white, fontSize: 14, fontWeight: '900' },
+  friendListHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, paddingHorizontal: 3 },
+  friendListTitle: { color: COLORS.muted, fontSize: 12, fontWeight: '900' },
+  friendSortButton: { minHeight: 34, flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, borderRadius: 11, borderWidth: 1, borderColor: '#D9D0FF', backgroundColor: '#F8F5FF' },
+  friendSortButtonPressed: { opacity: 0.72 },
+  friendSortText: { color: COLORS.purpleDark, fontSize: 11, fontWeight: '900' },
   friendRow: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 13, borderRadius: 18, borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.surface },
   friendInfo: { flex: 1 },
   friendName: { color: COLORS.ink, fontSize: 16, fontWeight: '900' },
   friendDetail: { marginTop: 2, color: COLORS.muted, fontSize: 12, fontWeight: '700' },
+  friendAdded: { marginTop: 3, color: COLORS.muted, fontSize: 10, lineHeight: 14, fontWeight: '600' },
   friendActions: { flexDirection: 'row', alignItems: 'center', gap: 13 },
   accept: { color: COLORS.greenDark, fontSize: 13, fontWeight: '900' },
   subtleAction: { color: COLORS.muted, fontSize: 13, fontWeight: '800' },
@@ -2743,6 +3318,8 @@ const community = StyleSheet.create({
   nudgeComposerTitle: { color: COLORS.ink, fontSize: 16, fontWeight: '900' },
   nudgeComposerHelp: { marginTop: 1, color: COLORS.muted, fontSize: 12, lineHeight: 17, fontWeight: '600' },
   nudgeComposerLabel: { marginTop: 3, color: COLORS.purpleDark, fontSize: 10, letterSpacing: 1, fontWeight: '900' },
+  nudgeRecipientSearch: { minHeight: 42, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 11, borderRadius: 13, borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.white },
+  nudgeRecipientSearchInput: { flex: 1, minWidth: 0, paddingVertical: 8, color: COLORS.ink, fontSize: 13, fontWeight: '700' },
   nudgeRecipientList: { gap: 7, paddingRight: 2 },
   nudgeRecipient: { maxWidth: 112, flexDirection: 'row', alignItems: 'center', gap: 7, paddingVertical: 7, paddingHorizontal: 9, borderRadius: 14, borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.white },
   nudgeRecipientSelected: { borderColor: COLORS.purple, backgroundColor: '#EEE9FF' },
@@ -2757,21 +3334,22 @@ const community = StyleSheet.create({
   nudgeCategoryCount: { marginTop: 1, color: COLORS.muted, fontSize: 10, fontWeight: '700' },
   nudgeOptionUnavailable: { opacity: 0.68 },
   goldenNudgeCard: { minHeight: 64, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 10, paddingVertical: 9, borderRadius: 16, borderWidth: 1, borderColor: '#E9C96A', backgroundColor: '#FFF9E8' },
+  goldenNudgeCardOpen: { borderColor: '#D9AA3B', backgroundColor: '#FFF6D8', boxShadow: '0 3px 10px rgba(185, 132, 22, 0.10)' },
   goldenNudgeCardPressed: { opacity: 0.78 },
   goldenNudgeUnavailable: { opacity: 0.62 },
-  goldenNudgeIcon: { width: 38, height: 38, alignItems: 'center', justifyContent: 'center', borderRadius: 12, backgroundColor: '#FFEFC1' },
+  goldenNudgeIcon: { width: 38, height: 38, alignItems: 'center', justifyContent: 'center', borderRadius: 12, overflow: 'hidden' },
   goldenNudgeCopy: { flex: 1 },
   goldenNudgeTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },
   goldenNudgeTitle: { color: '#8F6510', fontSize: 14, fontWeight: '900' },
   goldenNudgeCount: { color: '#B98416', fontSize: 10, fontWeight: '900' },
   goldenNudgeHelp: { marginTop: 2, color: '#9A8251', fontSize: 11, lineHeight: 15, fontWeight: '600' },
-  goldenNudgeEditor: { gap: 9, padding: 11, borderRadius: 16, borderWidth: 1, borderColor: '#EFDCA1', backgroundColor: '#FFFDF5' },
+  goldenNudgeEditor: { gap: 9, padding: 11, borderRadius: 16, borderWidth: 1, borderColor: '#E3BB50', backgroundColor: '#FFF8DF', boxShadow: '0 4px 12px rgba(185, 132, 22, 0.12)' },
   goldenNudgeEditorHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   goldenNudgeEditorTitleRow: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 7 },
   goldenNudgeEditorTitle: { color: '#8F6510', fontSize: 13, fontWeight: '900' },
-  goldenNudgeInput: { minHeight: 92, paddingHorizontal: 12, paddingVertical: 11, borderRadius: 13, borderWidth: 1, borderColor: '#E9D9A9', backgroundColor: COLORS.white, color: COLORS.ink, fontSize: 14, lineHeight: 20, fontWeight: '600' },
+  goldenNudgeInput: { minHeight: 92, paddingHorizontal: 12, paddingVertical: 11, borderRadius: 13, borderWidth: 1, borderColor: '#E7CB78', backgroundColor: '#FFFEF8', color: COLORS.ink, fontSize: 14, lineHeight: 20, fontWeight: '600' },
   goldenNudgeEditorFooter: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
-  goldenNudgeCharacterCount: { color: COLORS.muted, fontSize: 11, fontWeight: '700' },
+  goldenNudgeCharacterCount: { color: '#9A8251', fontSize: 11, fontWeight: '700' },
   goldenNudgeSend: { minHeight: 36, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingHorizontal: 12, borderRadius: 12, backgroundColor: '#C88714' },
   goldenNudgeSendPressed: { opacity: 0.78 },
   goldenNudgeSendDisabled: { opacity: 0.45 },
@@ -2780,12 +3358,15 @@ const community = StyleSheet.create({
   nudgeInboxGroupTitle: { flexDirection: 'row', alignItems: 'center', gap: 7, marginTop: 3 },
   nudgeInboxGroupIcon: { width: 27, height: 27, alignItems: 'center', justifyContent: 'center', borderRadius: 9 },
   nudgeInboxGroupText: { color: COLORS.ink, fontSize: 13, fontWeight: '900' },
-  nudgeText: { flex: 1 },
-  nudgeTitle: { color: COLORS.ink, fontSize: 15, fontWeight: '900' },
+  nudgeText: { flex: 1, minWidth: 0 },
+  nudgeTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  nudgeTitle: { flex: 1, minWidth: 0, color: COLORS.ink, fontSize: 15, fontWeight: '900' },
+  nudgeTimestamp: { flexShrink: 0, color: '#958DAF', fontSize: 10, lineHeight: 14, fontWeight: '800' },
   nudgeDetail: { marginTop: 3, color: COLORS.muted, fontSize: 12, lineHeight: 17, fontWeight: '600' },
   nudgeInboxEmpty: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 15, borderRadius: 18, borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.surface },
   nudgeInboxEmptyCopy: { flex: 1 },
   nudgeInboxEmptyTitle: { color: COLORS.ink, fontSize: 14, fontWeight: '900' },
   nudgeInboxEmptyText: { marginTop: 2, color: COLORS.muted, fontSize: 12, lineHeight: 17, fontWeight: '600' },
+  nudgeHistoryEnd: { marginTop: 13, color: COLORS.muted, fontSize: 11, fontWeight: '700', textAlign: 'center' },
   unreadDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: COLORS.purple },
 });

@@ -11,7 +11,7 @@ import type { AuthUser } from '../types';
 import type { PausedQuizSession } from './QuizScreen';
 import { styles } from '../styles';
 import { DEFAULT_TIME_BASED_LEARNING_SETTINGS, MASTERY_LEVELS, buildAchievements, buildQuiz, calculateStreakStats, FLUENT_RECALL_SECONDS, formatReminderTime, formatStudyTime, getCompetitiveRetention, getDailyLearningProgress, getDayKey, getDueReviewWords, getHeroProgressColor, getLearningSessionCount, getLongTermRetention, getMasteryLevel, getMasteryLevelProgress, getNextMasteryLevel, getOmegaTestAttempts, getOmegaTestStatus, getProgressColor, getProgressPaleColor, getQuizAttemptKind, getQuizFeedbackByWord, getQuizFeedbackSummary, getQuizRecallPaceByQuestionType, getQuizRecallPaceByWord, getQuizResponseSignalSummary, getQuizRetrievalProfile, getRecentDays, getRecentStreakLengths, getStreakMessage, getStreakMilestone, getStreakWeek, getTotalLearningSeconds, getWordLearningSignalScores, getWordMastery, getWordMasteryCategory, getWordMasteryCategoryForWord, getWordMasteryProgress, isCompletedOmegaTestAttempt, normalizeQuestionTypePreferences, normalizeTimeBasedLearningSettings, shuffle, stripPlainEnglishLeadIn } from '../utils';
-import { CompactPagination, DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, ProgressFill, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
+import { CompactPagination, DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelMagicIcon, LevelRow, ProgressFill, QuizComplete, QuizFact, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 import { LessonProgressRing } from '../components/dashboard/LessonProgressRing';
 import { CommunityGuidelinesModal, GoldenTicketInfoModal } from '../modals';
 import { useSubscription } from '../subscription/SubscriptionProvider';
@@ -28,15 +28,90 @@ const RETRIEVAL_PROGRESSION_STEPS = [
   'Type the word from its definition',
   'Recall it again after a longer delay',
 ];
-const QUIZ_TREND_PAGE_SIZE = 6;
+const ACTIVITY_TREND_PAGE_SIZE = 6;
 const DUE_REVIEW_PREVIEW_SIZE = 6;
 const ACHIEVEMENT_PAGE_SIZE = 4;
 const DAILY_ACTIVITY_TARGET_STUDY_SECONDS = 10 * 60;
 const QUIZ_ACCURACY_RING_SIZE = 116;
 const QUIZ_ACCURACY_RING_STROKE = 14;
 const QUIZ_ACCURACY_RING_RADIUS = (QUIZ_ACCURACY_RING_SIZE - QUIZ_ACCURACY_RING_STROKE) / 2;
-type DashboardDetailKind = 'study-time' | 'quizzes' | 'missed' | 'streak';
+type DashboardDetailKind = 'study-time' | 'quizzes' | 'missed' | 'streak' | 'quiz-accuracy';
+type ActivityTrendItem = {
+  id: string;
+  date: string;
+  timestamp: number;
+  title: string;
+  detail: string;
+  value: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  color: string;
+  background: string;
+  border: string;
+};
 type DashboardInitialSection = 'achievements' | 'reminder';
+type MasteryLevel = (typeof MASTERY_LEVELS)[number];
+
+const MASTERY_LEVEL_DETAILS: Record<MasteryLevel['shortTitle'], { summary: string; practice: string }> = {
+  Novice: {
+    summary: 'You are getting acquainted with your words. Early reviews create the first memory signals.',
+    practice: 'Keep sessions short and answer before checking the definition.',
+  },
+  Apprentice: {
+    summary: 'Some words are beginning to stick. Recognition is growing, but consistency still matters.',
+    practice: 'Return for another review before a word fades and use the quiz prompts to test yourself.',
+  },
+  Journeyman: {
+    summary: 'Steady practice is building reliable recall across more of your collection.',
+    practice: 'Mix flashcards with quizzes so you practice both recognition and remembering the word.',
+  },
+  Adept: {
+    summary: 'You are moving beyond recognition and turning familiar words into usable knowledge.',
+    practice: 'Lean into context questions and harder prompts when they appear.',
+  },
+  Mage: {
+    summary: 'Your vocabulary is becoming dependable through repeated, spaced practice.',
+    practice: 'Keep returning after longer gaps so your recall holds outside the study session.',
+  },
+  Master: {
+    summary: 'Most of your saved words are becoming familiar and your practice is showing real staying power.',
+    practice: 'Protect your gains with scheduled reviews, especially for words that still feel slow.',
+  },
+  Grandmaster: {
+    summary: 'Your collection is deeply practiced. Strong recall is showing up across the words you have saved.',
+    practice: 'Keep a steady review rhythm so the level reflects lasting knowledge, not just one great session.',
+  },
+};
+
+const WORD_LEVEL_GUIDE = [
+  {
+    id: 'learning',
+    score: 0,
+    range: '0–39%',
+    title: 'Learning words',
+    summary: 'New or still taking shape in memory.',
+  },
+  {
+    id: 'building',
+    score: 40,
+    range: '40–79%',
+    title: 'Building words',
+    summary: 'Recognition is growing and recall is getting steadier.',
+  },
+  {
+    id: 'strong',
+    score: 80,
+    range: '80–99%',
+    title: 'Strong words',
+    summary: 'Usually familiar and coming back with reliable recall.',
+  },
+  {
+    id: 'master',
+    score: 100,
+    range: '100%',
+    title: 'Proficient words',
+    summary: 'The visible mastery score is complete for this word.',
+  },
+] as const;
 
 function competitiveRankLabel(context: CompetitiveMetricContext | undefined) {
   if (!context?.eligible) return 'Set up Connect to compare';
@@ -309,8 +384,10 @@ export function DashboardScreen({
   const [goldenTicketInfoOpen, setGoldenTicketInfoOpen] = useState(false);
   const [achievementPage, setAchievementPage] = useState(0);
   const [masteryExpanded, setMasteryExpanded] = useState(false);
+  const [masteryLevelInfo, setMasteryLevelInfo] = useState<MasteryLevel | null>(null);
+  const [wordLevelInfoOpen, setWordLevelInfoOpen] = useState(false);
   const [masteryOverviewWordId, setMasteryOverviewWordId] = useState<string | null>(null);
-  const [quizTrendExpanded, setQuizTrendExpanded] = useState(false);
+  const [activityTrendExpanded, setActivityTrendExpanded] = useState(false);
   const [omegaStatsExpanded, setOmegaStatsExpanded] = useState(false);
   const [omegaStatsNow, setOmegaStatsNow] = useState(() => Date.now());
   const [practiceEstimateExpanded, setPracticeEstimateExpanded] = useState(false);
@@ -321,12 +398,8 @@ export function DashboardScreen({
     wordId: string;
     timeout: ReturnType<typeof setTimeout>;
   } | null>(null);
-  const pendingMasteryOverviewTap = useRef<{
-    wordId: string;
-    timeout: ReturnType<typeof setTimeout>;
-  } | null>(null);
   const [masteryPage, setMasteryPage] = useState(0);
-  const [quizTrendPage, setQuizTrendPage] = useState(0);
+  const [activityTrendPage, setActivityTrendPage] = useState(0);
   const [feedbackView, setFeedbackView] = useState<'overall' | 'words'>('overall');
   const [feedbackWordPage, setFeedbackWordPage] = useState(0);
   const [recallPaceView, setRecallPaceView] = useState<'types' | 'words'>('types');
@@ -412,7 +485,6 @@ export function DashboardScreen({
   const refreshTokenGlow = useRef(new Animated.Value(0.45)).current;
   const [recentlyUnflaggedWordIds, setRecentlyUnflaggedWordIds] = useState<string[]>([]);
   const lastAchievementTapAt = useRef(0);
-  const lastQuizTrendTapAt = useRef(0);
   const todayKey = getDayKey();
   const recentDays = getRecentDays(activityWindow);
   const totalQuizQuestions = analytics.quizHistory.reduce(
@@ -720,35 +792,13 @@ export function DashboardScreen({
   }
 
   function handleMasteryWordPress(wordId: string) {
-    const pendingTap = pendingMasteryOverviewTap.current;
-    if (pendingTap?.wordId === wordId) {
-      clearTimeout(pendingTap.timeout);
-      pendingMasteryOverviewTap.current = null;
-      setMasteryOverviewWordId(wordId);
-      return;
-    }
-
-    if (pendingTap) {
-      clearTimeout(pendingTap.timeout);
-    }
-
-    pendingMasteryOverviewTap.current = {
-      wordId,
-      timeout: setTimeout(() => {
-        if (pendingMasteryOverviewTap.current?.wordId === wordId) {
-          pendingMasteryOverviewTap.current = null;
-        }
-      }, 250),
-    };
+    setMasteryOverviewWordId(wordId);
   }
 
   useEffect(
     () => () => {
       if (pendingStudyPriorityTap.current) {
         clearTimeout(pendingStudyPriorityTap.current.timeout);
-      }
-      if (pendingMasteryOverviewTap.current) {
-        clearTimeout(pendingMasteryOverviewTap.current.timeout);
       }
     },
     [],
@@ -867,21 +917,88 @@ export function DashboardScreen({
     (total, day) => total + day.activityCount,
     0,
   );
-  const recentQuizzes = analytics.quizHistory.slice(0, 5);
-  const quizTrendPageCount = Math.max(
+  const activityTrendItems = useMemo<ActivityTrendItem[]>(() => {
+    const quizItems = analytics.quizHistory.map((attempt) => {
+      const quizKind = getQuizAttemptKind(attempt, analytics.quizHistory);
+      const isPracticeQuiz = quizKind === 'practice';
+      const isOmegaTest = quizKind === 'omega-test';
+      const percent = attempt.total
+        ? Math.round((attempt.score / attempt.total) * 100)
+        : 0;
+
+      return {
+        id: `quiz:${attempt.id}`,
+        date: attempt.date,
+        timestamp: getActivityTimestamp(attempt.completedAt, attempt.date),
+        title: isOmegaTest
+          ? 'Omega Test'
+          : isPracticeQuiz
+            ? 'Practice quiz'
+            : 'Daily quiz',
+        detail: `${attempt.score}/${attempt.total} correct · ${formatStudyTime(attempt.durationSeconds)}`,
+        value: `${percent}%`,
+        icon: isOmegaTest
+          ? 'shield-checkmark'
+          : isPracticeQuiz
+            ? 'sparkles'
+            : 'checkmark-circle',
+        color: isOmegaTest || isPracticeQuiz ? COLORS.purple : COLORS.greenDark,
+        background: isOmegaTest || isPracticeQuiz ? '#F5F0FF' : '#EEF9F3',
+        border: isOmegaTest || isPracticeQuiz ? '#E5D8FF' : '#D9F0E4',
+      } satisfies ActivityTrendItem;
+    });
+    const cardItems = analytics.cardHistory.map((event) => ({
+      id: `card:${event.id}`,
+      date: event.date,
+      timestamp: getActivityTimestamp(event.studiedAt, event.date),
+      title: 'Flashcard review',
+      detail: `${event.remembered ? 'Remembered' : 'Still learning'} · ${formatStudyTime(event.durationSeconds)}`,
+      value: event.remembered ? 'Got it' : 'Review',
+      icon: 'albums-outline' as keyof typeof Ionicons.glyphMap,
+      color: event.remembered ? COLORS.teal : COLORS.purpleDark,
+      background: event.remembered ? '#EAFBF5' : '#F5F0FF',
+      border: event.remembered ? '#D6F2E8' : '#E5D8FF',
+    } satisfies ActivityTrendItem));
+    const gameItems = (analytics.gameHistory ?? []).map((attempt) => {
+      const percent = attempt.total
+        ? Math.round((attempt.score / attempt.total) * 100)
+        : 0;
+
+      return {
+        id: `game:${attempt.id}`,
+        date: attempt.date,
+        timestamp: getActivityTimestamp(attempt.completedAt, attempt.date),
+        title: `${formatGameActivityLabel(attempt.gameType)} game`,
+        detail: `${attempt.score}/${attempt.total} correct · ${formatStudyTime(attempt.durationSeconds)}`,
+        value: `${percent}%`,
+        icon: 'game-controller-outline' as keyof typeof Ionicons.glyphMap,
+        color: COLORS.blue,
+        background: '#EEF5FF',
+        border: '#D9E9FF',
+      } satisfies ActivityTrendItem;
+    });
+
+    return [...quizItems, ...cardItems, ...gameItems].sort(
+      (first, second) =>
+        second.timestamp - first.timestamp ||
+        second.date.localeCompare(first.date) ||
+        second.id.localeCompare(first.id),
+    );
+  }, [analytics]);
+  const activityTrendPageCount = Math.max(
     1,
-    Math.ceil(analytics.quizHistory.length / QUIZ_TREND_PAGE_SIZE),
+    Math.ceil(activityTrendItems.length / ACTIVITY_TREND_PAGE_SIZE),
   );
-  const currentQuizTrendPage = Math.min(
-    quizTrendPage,
-    quizTrendPageCount - 1,
+  const currentActivityTrendPage = Math.min(
+    activityTrendPage,
+    activityTrendPageCount - 1,
   );
-  const quizTrendAttempts = quizTrendExpanded
-    ? analytics.quizHistory.slice(
-        currentQuizTrendPage * QUIZ_TREND_PAGE_SIZE,
-        (currentQuizTrendPage + 1) * QUIZ_TREND_PAGE_SIZE,
+  const activityTrendEntries = activityTrendExpanded
+    ? activityTrendItems.slice(
+        currentActivityTrendPage * ACTIVITY_TREND_PAGE_SIZE,
+        (currentActivityTrendPage + 1) * ACTIVITY_TREND_PAGE_SIZE,
       )
-    : recentQuizzes;
+    : activityTrendItems.slice(0, ACTIVITY_TREND_PAGE_SIZE);
   const streakStats = calculateStreakStats(analytics, dailyLearningGoal);
   const streak = streakStats.current;
   const todayLearningProgress = getDailyLearningProgress(analytics);
@@ -964,19 +1081,6 @@ export function DashboardScreen({
     }
 
     lastAchievementTapAt.current = tappedAt;
-  };
-
-  const collapseQuizTrendOnDoubleTap = () => {
-    if (!quizTrendExpanded) return;
-
-    const tappedAt = Date.now();
-    if (tappedAt - lastQuizTrendTapAt.current < 340) {
-      lastQuizTrendTapAt.current = 0;
-      setQuizTrendExpanded(false);
-      return;
-    }
-
-    lastQuizTrendTapAt.current = tappedAt;
   };
 
   useEffect(() => {
@@ -1072,7 +1176,7 @@ export function DashboardScreen({
       ) : (
         <>
           <Text style={styles.studyPriorityHint}>
-            Double-tap a word to see its learning overview
+            Tap a word once to see its learning overview
           </Text>
           {masteryPreview.map((item) => {
             const wordCategory = item.category;
@@ -1082,7 +1186,7 @@ export function DashboardScreen({
               <Pressable
                 key={item.word.id}
                 accessibilityRole="button"
-                accessibilityLabel={`Double-tap ${item.word.term} to open its learning overview.`}
+                accessibilityLabel={`Tap ${item.word.term} once to open its learning overview.`}
                 onPress={() => handleMasteryWordPress(item.word.id)}
                 style={({ pressed }) => [
                   styles.masteryRow,
@@ -1243,11 +1347,20 @@ export function DashboardScreen({
       </View>
       <View style={styles.masteryLevelLegend}>
         {masteryRingSegments.map((segment) => (
-          <View
+          <Pressable
             key={segment.shortTitle}
-            style={[
+            accessibilityRole="button"
+            accessibilityLabel={`Learn about the ${segment.shortTitle} WordWiz level`}
+            accessibilityHint="Opens a description of this level and how mastery progresses"
+            accessibilityState={{ selected: segment.isCurrent }}
+            onPress={() => {
+              const level = MASTERY_LEVELS.find((item) => item.shortTitle === segment.shortTitle);
+              if (level) setMasteryLevelInfo(level);
+            }}
+            style={({ pressed }) => [
               styles.masteryLevelLegendItem,
               segment.isCurrent && styles.masteryLevelLegendItemActive,
+              pressed && styles.pressed,
             ]}
           >
             <View
@@ -1264,9 +1377,10 @@ export function DashboardScreen({
             >
               {segment.shortTitle}
             </Text>
-          </View>
+          </Pressable>
         ))}
       </View>
+      <Text style={styles.masteryLevelLegendHint}>Tap a level to see how mastery grows.</Text>
 
     <View style={styles.statGrid}>
       <DashboardStat
@@ -1524,8 +1638,19 @@ export function DashboardScreen({
       </DashboardSection>
 
       <View style={styles.dashboardSplit}>
-        <View style={styles.accuracyCard}>
-          <Text style={styles.dashboardCardLabel}>QUIZ ACCURACY</Text>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Quiz accuracy details"
+          accessibilityHint="Shows your quiz totals and how accuracy is calculated"
+          onPress={() => setDashboardDetail('quiz-accuracy')}
+          style={({ pressed }) => [styles.accuracyCard, pressed && styles.accuracyCardPressed]}
+        >
+          <View style={styles.accuracyCardHeader}>
+            <Text style={styles.dashboardCardLabel}>QUIZ ACCURACY</Text>
+            <View style={styles.accuracyCardInfo}>
+              <Ionicons name="information-circle-outline" size={16} color={COLORS.purpleDark} />
+            </View>
+          </View>
           <View style={styles.accuracyGauge}>
             <QuizAccuracyRing
               accuracy={accuracy}
@@ -1568,10 +1693,25 @@ export function DashboardScreen({
               <Text style={styles.accuracyDetailReady}>Take a quiz to begin</Text>
             )}
           </Text>
-        </View>
+          <View style={styles.accuracyCardHint}>
+            <Text style={styles.accuracyCardHintText}>How this is calculated</Text>
+            <Ionicons name="chevron-forward" size={13} color={COLORS.purpleDark} />
+          </View>
+        </Pressable>
 
-        <View style={styles.distributionCard}>
-          <Text style={styles.dashboardCardLabel}>WORD LEVELS</Text>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Learn how your word levels are calculated"
+          accessibilityHint="Opens an explanation of each word level and its mastery range"
+          onPress={() => setWordLevelInfoOpen(true)}
+          style={({ pressed }) => [styles.distributionCard, pressed && styles.distributionCardPressed]}
+        >
+          <View style={styles.distributionCardHeader}>
+            <Text style={styles.dashboardCardLabel}>WORD LEVELS</Text>
+            <View style={styles.distributionCardInfo}>
+              <Ionicons name="information-circle-outline" size={16} color={COLORS.teal} />
+            </View>
+          </View>
           <View style={styles.levelStack}>
             <LevelRow
               color={getWordMasteryCategory(100).color}
@@ -1601,7 +1741,11 @@ export function DashboardScreen({
             proficientWords={masteredWords}
             strongWords={strongWords}
           />
-        </View>
+          <View style={styles.distributionCardHint}>
+            <Text style={styles.distributionCardHintText}>Learn about word levels</Text>
+            <Ionicons name="chevron-forward" size={13} color={COLORS.teal} />
+          </View>
+        </Pressable>
       </View>
 
       {wordMasterySection}
@@ -2984,6 +3128,93 @@ export function DashboardScreen({
         </Pressable>
       </View>
 
+      <DashboardSection
+        title="ACTIVITY TREND"
+        badge={activityTrendItems.length ? `${activityTrendItems.length} activities` : 'New'}
+      >
+        {activityTrendItems.length === 0 ? (
+          <Text style={styles.dashboardEmptyText}>
+            Complete a quiz, review a flashcard, or play a game and your activity history will appear here.
+          </Text>
+        ) : (
+          <>
+            {activityTrendExpanded ? (
+              <Text style={styles.expandedListHint}>
+                Showing your complete activity history
+              </Text>
+            ) : null}
+            <View style={styles.activityTrendList}>
+              {activityTrendEntries.map((item) => (
+                <View
+                  key={item.id}
+                  style={[
+                    styles.activityTrendRow,
+                    { backgroundColor: item.background, borderColor: item.border },
+                  ]}
+                >
+                  <View style={[styles.activityTrendIcon, { backgroundColor: `${item.color}18` }]}>
+                    <Ionicons name={item.icon} size={17} color={item.color} />
+                  </View>
+                  <View style={styles.activityTrendCopy}>
+                    <Text style={styles.activityTrendTitle} numberOfLines={1}>{item.title}</Text>
+                    <Text style={styles.activityTrendDate}>{formatDashboardDetailDate(item.date)}</Text>
+                  </View>
+                  <View style={styles.activityTrendValueCopy}>
+                    <Text style={[styles.activityTrendValue, { color: item.color }]}>{item.value}</Text>
+                    <Text style={styles.activityTrendDetail} numberOfLines={1}>{item.detail}</Text>
+                  </View>
+                </View>
+              ))}
+            </View>
+            {activityTrendExpanded && activityTrendPageCount > 1 ? (
+              <CompactPagination
+                page={currentActivityTrendPage}
+                pageCount={activityTrendPageCount}
+                pageSize={ACTIVITY_TREND_PAGE_SIZE}
+                total={activityTrendItems.length}
+                itemLabel="activity history"
+                onPrevious={() =>
+                  setActivityTrendPage(Math.max(0, currentActivityTrendPage - 1))
+                }
+                onNext={() =>
+                  setActivityTrendPage(
+                    Math.min(activityTrendPageCount - 1, currentActivityTrendPage + 1),
+                  )
+                }
+              />
+            ) : null}
+            {activityTrendItems.length > ACTIVITY_TREND_PAGE_SIZE ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={
+                  activityTrendExpanded
+                    ? 'Show recent activity'
+                    : 'View all activity history'
+                }
+                accessibilityState={{ expanded: activityTrendExpanded }}
+                onPress={() => {
+                  if (activityTrendExpanded) {
+                    setActivityTrendExpanded(false);
+                    return;
+                  }
+
+                  setActivityTrendPage(0);
+                  setActivityTrendExpanded(true);
+                }}
+                style={({ pressed }) => [styles.trendHistoryToggle, pressed && styles.pressed]}
+              >
+                <Text style={styles.trendHistoryToggleText}>{activityTrendExpanded ? 'Show recent activity' : `View all ${activityTrendItems.length} activities`}</Text>
+                <Ionicons
+                  name={activityTrendExpanded ? 'chevron-up' : 'chevron-down'}
+                  size={16}
+                  color={COLORS.purpleDark}
+                />
+              </Pressable>
+            ) : null}
+          </>
+        )}
+      </DashboardSection>
+
       <View style={styles.gamePreferencesCard}>
         <Pressable
           accessibilityRole="button"
@@ -3260,177 +3491,6 @@ export function DashboardScreen({
           </>
         )}
       </DashboardSection>
-
-      <DashboardSection title="QUIZ TREND" badge="Recent">
-        {recentQuizzes.length === 0 ? (
-          <Text style={styles.dashboardEmptyText}>
-            Complete a daily quiz and your progress will appear here.
-          </Text>
-        ) : (
-          <>
-            {quizTrendExpanded ? (
-              <Text style={styles.expandedListHint}>
-                Double-tap any quiz to show recent quizzes
-              </Text>
-            ) : null}
-            {quizTrendAttempts.map((attempt) => {
-            const percent = attempt.total
-              ? Math.round((attempt.score / attempt.total) * 100)
-              : 0;
-            const dateLabel = new Date(`${attempt.date}T12:00:00`).toLocaleDateString(
-              'en-US',
-              { month: 'short', day: 'numeric' },
-            );
-            const quizKind = getQuizAttemptKind(attempt, analytics.quizHistory);
-            const isPracticeQuiz = quizKind === 'practice';
-            const isOmegaTest = quizKind === 'omega-test';
-            const trendLabel = isOmegaTest
-              ? 'Omega Test'
-              : isPracticeQuiz
-                ? 'Practice quiz'
-                : 'Daily quiz';
-            const status =
-              percent >= 80 ? 'Strong' : percent >= 50 ? 'Building' : 'Needs review';
-            const tone = getQuizTrendTone(percent);
-            return (
-              <Pressable
-                key={attempt.id}
-                accessibilityRole={quizTrendExpanded ? 'button' : undefined}
-                accessibilityHint={
-                  quizTrendExpanded
-                    ? 'Double-tap twice quickly to show recent quizzes'
-                    : undefined
-                }
-                disabled={!quizTrendExpanded}
-                onPress={collapseQuizTrendOnDoubleTap}
-                style={[
-                  styles.trendRow,
-                  {
-                    backgroundColor: tone.surface,
-                    borderColor: tone.border,
-                  },
-                ]}
-              >
-                <View style={styles.trendRowHeader}>
-                  <View style={styles.trendLabelCopy}>
-                    <View style={styles.trendTitleRow}>
-                      <Ionicons
-                        name={
-                          isOmegaTest
-                            ? 'shield-checkmark'
-                            : isPracticeQuiz
-                              ? 'sparkles'
-                              : 'checkmark-circle'
-                        }
-                        size={14}
-                        color={
-                          isOmegaTest || isPracticeQuiz
-                            ? COLORS.purple
-                            : COLORS.greenDark
-                        }
-                      />
-                      <Text style={styles.trendTitle}>{trendLabel}</Text>
-                    </View>
-                    <Text style={styles.trendDate}>{dateLabel}</Text>
-                  </View>
-                  <Text
-                    style={[
-                      styles.trendScore,
-                      {
-                        color: tone.scoreText,
-                        backgroundColor: tone.scoreBackground,
-                      },
-                    ]}
-                  >
-                    {attempt.score}/{attempt.total} correct
-                  </Text>
-                </View>
-                <View
-                  style={[
-                    styles.trendTrack,
-                    { backgroundColor: tone.track },
-                  ]}
-                >
-                  <ProgressFill
-                    color={tone.fill}
-                    progress={percent}
-                    radius={5}
-                    style={{ width: `${percent}%` }}
-                  />
-                </View>
-                <View style={styles.trendFooter}>
-                  <Text
-                    style={[
-                      styles.trendStatus,
-                      { color: tone.status },
-                    ]}
-                  >
-                    {status}
-                  </Text>
-                  <Text style={[styles.trendPercent, { color: tone.percent }]}>
-                    {percent}%
-                  </Text>
-                </View>
-              </Pressable>
-            );
-            })}
-            {quizTrendExpanded && quizTrendPageCount > 1 ? (
-              <CompactPagination
-                page={currentQuizTrendPage}
-                pageCount={quizTrendPageCount}
-                pageSize={QUIZ_TREND_PAGE_SIZE}
-                total={analytics.quizHistory.length}
-                itemLabel="quiz history"
-                onPrevious={() =>
-                  setQuizTrendPage(Math.max(0, currentQuizTrendPage - 1))
-                }
-                onNext={() =>
-                  setQuizTrendPage(
-                    Math.min(quizTrendPageCount - 1, currentQuizTrendPage + 1),
-                  )
-                }
-              />
-            ) : null}
-            {analytics.quizHistory.length > recentQuizzes.length ? (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={
-                  quizTrendExpanded
-                    ? 'Show recent quiz history'
-                    : 'View all quiz history'
-                }
-                onPress={() => {
-                  if (quizTrendExpanded) {
-                    setQuizTrendExpanded(false);
-                    return;
-                  }
-
-                  onTrackStatsSectionInteraction('quiz_history');
-                  setQuizTrendPage(0);
-                  setQuizTrendExpanded(true);
-                }}
-                style={({ pressed }) => [
-                  styles.trendHistoryToggle,
-                  pressed && styles.pressed,
-                ]}
-              >
-                <Text style={styles.trendHistoryToggleText}>
-                  {quizTrendExpanded
-                    ? 'Show recent quizzes'
-                    : `View all ${analytics.quizHistory.length} quizzes`}
-                </Text>
-                <Ionicons
-                  name={quizTrendExpanded ? 'chevron-up' : 'chevron-down'}
-                  size={16}
-                  color={COLORS.purpleDark}
-                />
-              </Pressable>
-            ) : null}
-          </>
-        )}
-      </DashboardSection>
-
-
 
       <Pressable
         accessibilityRole="button"
@@ -3783,6 +3843,14 @@ export function DashboardScreen({
       analytics={analytics}
       onDismiss={() => setMasteryOverviewWordId(null)}
     />
+    <MasteryLevelInfoModal
+      level={masteryLevelInfo}
+      onDismiss={() => setMasteryLevelInfo(null)}
+    />
+    <WordLevelGuideModal
+      visible={wordLevelInfoOpen}
+      onDismiss={() => setWordLevelInfoOpen(false)}
+    />
     <DashboardDetailModal
       detail={dashboardDetail}
       analytics={analytics}
@@ -3853,6 +3921,234 @@ function StreakHistoryStat({
       )}
       <Ionicons name="chevron-forward" size={14} color={COLORS.teal} style={styles.streakHistoryStatChevron} />
     </Pressable>
+  );
+}
+
+function MasteryLevelInfoModal({
+  level,
+  onDismiss,
+}: {
+  level: MasteryLevel | null;
+  onDismiss: () => void;
+}) {
+  if (!level) return null;
+
+  const levelIndex = MASTERY_LEVELS.findIndex((item) => item.shortTitle === level.shortTitle);
+  const nextLevel = MASTERY_LEVELS[levelIndex + 1] ?? null;
+  const range = `${level.minScore}–${nextLevel ? nextLevel.minScore - 1 : 100}%`;
+  const details = MASTERY_LEVEL_DETAILS[level.shortTitle];
+
+  return (
+    <Modal
+      visible
+      transparent
+      animationType="slide"
+      onRequestClose={onDismiss}
+      statusBarTranslucent
+    >
+      <View style={styles.masteryLevelInfoBackdrop}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Close word level explanation"
+          onPress={onDismiss}
+          style={styles.masteryLevelInfoDismiss}
+        />
+        <View style={styles.masteryLevelInfoSheet}>
+          <View style={styles.masteryLevelInfoHandle} />
+          <View style={styles.masteryLevelInfoHeader}>
+            <View style={[styles.masteryLevelInfoIcon, { borderColor: `${level.color}55` }]}>
+              <LevelMagicIcon level={level.shortTitle} size={42} variant="filled" />
+            </View>
+            <View style={styles.masteryLevelInfoHeaderCopy}>
+              <Text style={styles.masteryLevelInfoEyebrow}>WORDWIZ LEVEL</Text>
+              <Text style={styles.masteryLevelInfoTitle}>{level.shortTitle}</Text>
+              <Text style={styles.masteryLevelInfoRange}>{range} average mastery</Text>
+            </View>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Close word level explanation"
+              onPress={onDismiss}
+              style={({ pressed }) => [styles.masteryLevelInfoClose, pressed && styles.pressed]}
+            >
+              <Ionicons name="close" size={20} color={COLORS.ink} />
+            </Pressable>
+          </View>
+
+          <ScrollView
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.masteryLevelInfoContent}
+          >
+            <View style={[styles.masteryLevelInfoHero, { backgroundColor: `${level.color}18`, borderColor: `${level.color}55` }]}>
+              <Text style={[styles.masteryLevelInfoSectionLabel, { color: level.color }]}>WHAT THIS LEVEL MEANS</Text>
+              <Text style={styles.masteryLevelInfoHeroTitle}>{details.summary}</Text>
+              <Text style={styles.masteryLevelInfoHeroText}>{level.encouragement}</Text>
+              <View style={styles.masteryLevelInfoRangeRow}>
+                <Text style={styles.masteryLevelInfoRangeLabel}>LEVEL RANGE</Text>
+                <Text style={[styles.masteryLevelInfoRangeValue, { color: level.color }]}>{range}</Text>
+              </View>
+            </View>
+
+            <View style={styles.masteryLevelInfoCard}>
+              <Text style={styles.masteryLevelInfoSectionLabel}>HOW IT WORKS</Text>
+              <Text style={styles.masteryLevelInfoSectionTitle}>Levels grow with evidence</Text>
+              <MasteryLevelInfoRow
+                icon="analytics-outline"
+                title="Your collection average"
+                detail="Your Stats level is based on the average mastery score across your saved words."
+              />
+              <MasteryLevelInfoRow
+                icon="sparkles-outline"
+                title="Practice builds the score"
+                detail="Correct answers, harder recall, and spaced reviews build stronger evidence. Missed answers bring useful words back for practice."
+              />
+              <MasteryLevelInfoRow
+                icon="trending-up-outline"
+                title="Cross the next threshold"
+                detail="When your average reaches the next range, your WordWiz level updates automatically."
+              />
+            </View>
+
+            <View style={[styles.masteryLevelInfoNext, { backgroundColor: `${(nextLevel ?? level).color}18`, borderColor: `${(nextLevel ?? level).color}45` }]}>
+              <View style={[styles.masteryLevelInfoNextIcon, { backgroundColor: `${(nextLevel ?? level).color}2B` }]}>
+                <Ionicons name={nextLevel ? 'arrow-up-outline' : 'trophy-outline'} size={20} color={(nextLevel ?? level).color} />
+              </View>
+              <View style={styles.masteryLevelInfoNextCopy}>
+                <Text style={[styles.masteryLevelInfoSectionLabel, { color: (nextLevel ?? level).color }]}>{nextLevel ? 'NEXT LEVEL' : 'TOP LEVEL'}</Text>
+                <Text style={styles.masteryLevelInfoNextTitle}>{nextLevel ? nextLevel.title : 'Grandmaster WordWiz'}</Text>
+                <Text style={styles.masteryLevelInfoNextText}>
+                  {nextLevel ? `Reach ${nextLevel.minScore}% average mastery to enter ${nextLevel.shortTitle}. ${details.practice}` : details.practice}
+                </Text>
+              </View>
+            </View>
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function MasteryLevelInfoRow({
+  icon,
+  title,
+  detail,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  title: string;
+  detail: string;
+}) {
+  return (
+    <View style={styles.masteryLevelInfoRow}>
+      <View style={styles.masteryLevelInfoRowIcon}>
+        <Ionicons name={icon} size={17} color={COLORS.purpleDark} />
+      </View>
+      <View style={styles.masteryLevelInfoRowCopy}>
+        <Text style={styles.masteryLevelInfoRowTitle}>{title}</Text>
+        <Text style={styles.masteryLevelInfoRowText}>{detail}</Text>
+      </View>
+    </View>
+  );
+}
+
+function WordLevelGuideModal({
+  visible,
+  onDismiss,
+}: {
+  visible: boolean;
+  onDismiss: () => void;
+}) {
+  if (!visible) return null;
+
+  return (
+    <Modal
+      visible
+      transparent
+      animationType="slide"
+      onRequestClose={onDismiss}
+      statusBarTranslucent
+    >
+      <View style={styles.wordLevelGuideBackdrop}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Close word levels explanation"
+          onPress={onDismiss}
+          style={styles.wordLevelGuideDismiss}
+        />
+        <View style={styles.wordLevelGuideSheet}>
+          <View style={styles.wordLevelGuideHandle} />
+          <View style={styles.wordLevelGuideHeader}>
+            <View style={styles.wordLevelGuideHeaderIcon}>
+              <Ionicons name="bar-chart-outline" size={23} color={COLORS.teal} />
+            </View>
+            <View style={styles.wordLevelGuideHeaderCopy}>
+              <Text style={styles.wordLevelGuideEyebrow}>WORD LEVELS</Text>
+              <Text style={styles.wordLevelGuideTitle}>How your words grow</Text>
+              <Text style={styles.wordLevelGuideSubtitle}>A simple view of each word’s current mastery.</Text>
+            </View>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Close word levels explanation"
+              onPress={onDismiss}
+              style={({ pressed }) => [styles.wordLevelGuideClose, pressed && styles.pressed]}
+            >
+              <Ionicons name="close" size={20} color={COLORS.ink} />
+            </Pressable>
+          </View>
+
+          <ScrollView
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.wordLevelGuideContent}
+          >
+            <View style={styles.wordLevelGuideIntro}>
+              <Text style={[styles.wordLevelGuideSectionLabel, { color: COLORS.teal }]}>THE SHORT VERSION</Text>
+              <Text style={styles.wordLevelGuideIntroTitle}>One score, four clear stages</Text>
+              <Text style={styles.wordLevelGuideIntroText}>
+                Every saved word has a mastery score from 0–100. The Word Levels card counts each word once, using its current score.
+              </Text>
+              <View style={styles.wordLevelGuideFormula}>
+                <View style={styles.wordLevelGuideFormulaIcon}>
+                  <Ionicons name="pulse-outline" size={19} color={COLORS.purpleDark} />
+                </View>
+                <View style={styles.wordLevelGuideFormulaCopy}>
+                  <Text style={styles.wordLevelGuideFormulaTitle}>What shapes the score?</Text>
+                  <Text style={styles.wordLevelGuideFormulaText}>
+                    Correct answers build it, missed answers lower it, and harder or spaced recall gives stronger evidence that a word is sticking.
+                  </Text>
+                </View>
+              </View>
+            </View>
+
+            <View style={styles.wordLevelGuideCard}>
+              <Text style={[styles.wordLevelGuideSectionLabel, { color: COLORS.purpleDark }]}>LEVEL GUIDE</Text>
+              <Text style={styles.wordLevelGuideSectionTitle}>Where each word belongs</Text>
+              {WORD_LEVEL_GUIDE.map((item) => {
+                const category = getWordMasteryCategory(item.score);
+                return (
+                  <View key={item.id} style={styles.wordLevelGuideRow}>
+                    <View style={[styles.wordLevelGuideRowIcon, { backgroundColor: `${category.color}22` }]}>
+                      <Ionicons name={category.icon} size={18} color={category.color} />
+                    </View>
+                    <View style={styles.wordLevelGuideRowCopy}>
+                      <View style={styles.wordLevelGuideRowTitleLine}>
+                        <Text style={styles.wordLevelGuideRowTitle}>{item.title}</Text>
+                        <Text style={[styles.wordLevelGuideRange, { color: category.color }]}>{item.range}</Text>
+                      </View>
+                      <Text style={styles.wordLevelGuideRowText}>{item.summary}</Text>
+                    </View>
+                  </View>
+                );
+              })}
+            </View>
+
+            <View style={styles.wordLevelGuideNote}>
+              <Ionicons name="information-circle-outline" size={18} color={COLORS.blue} />
+              <Text style={styles.wordLevelGuideNoteText}>
+                There is no fixed number of reviews for a level. Your word’s score changes with the quality and spacing of your practice, then the category updates automatically.
+              </Text>
+            </View>
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
   );
 }
 
@@ -3980,6 +4276,17 @@ function DashboardDetailModal({
       color: COLORS.orange,
       background: '#FFF5E3',
     },
+    'quiz-accuracy': {
+      eyebrow: 'QUIZ ACCURACY',
+      title: 'How accuracy works',
+      value: totalQuizQuestions ? `${accuracy}%` : 'READY',
+      subtitle: totalQuizQuestions
+        ? `${totalCorrect} correct out of ${totalQuizQuestions} questions across ${analytics.quizHistory.length} quizzes`
+        : 'Complete a quiz to start building your accuracy history.',
+      icon: 'analytics-outline',
+      color: COLORS.blue,
+      background: '#EEF5FF',
+    },
     missed: {
       eyebrow: 'REVIEW SIGNALS',
       title: 'Missed answers',
@@ -4081,6 +4388,69 @@ function DashboardDetailModal({
                       </View>
                     ))}
                   </View>
+                </View>
+              </>
+            ) : null}
+
+            {detail === 'quiz-accuracy' ? (
+              <>
+                <View style={styles.dashboardDetailMetricGrid}>
+                  <DashboardDetailMetric icon="trophy-outline" value={String(analytics.quizHistory.length)} label="QUIZZES" color={COLORS.orange} />
+                  <DashboardDetailMetric icon="help-circle-outline" value={String(totalQuizQuestions)} label="QUESTIONS" color={COLORS.blue} />
+                  <DashboardDetailMetric icon="checkmark-circle-outline" value={String(totalCorrect)} label="CORRECT" color={COLORS.greenDark} />
+                </View>
+                <View style={styles.dashboardDetailCard}>
+                  <Text style={[styles.dashboardDetailSectionLabel, { color: COLORS.blue }]}>THE FORMULA</Text>
+                  <Text style={styles.dashboardDetailSectionTitle}>Every question counts once</Text>
+                  <View style={styles.quizAccuracyFormula}>
+                    <View style={styles.quizAccuracyFormulaIcon}>
+                      <Ionicons name="calculator-outline" size={18} color={COLORS.blue} />
+                    </View>
+                    <View style={styles.quizAccuracyFormulaCopy}>
+                      <Text style={styles.quizAccuracyFormulaText}>Correct answers ÷ questions answered × 100</Text>
+                      <Text style={styles.quizAccuracyFormulaResult}>
+                        {totalQuizQuestions
+                          ? `${totalCorrect} ÷ ${totalQuizQuestions} × 100 = ${accuracy}%`
+                          : 'Take your first quiz to see the calculation'}
+                      </Text>
+                    </View>
+                  </View>
+                  <Text style={styles.quizAccuracyExplanation}>
+                    Accuracy is your total correct answers divided by all quiz questions answered, rounded to the nearest whole percent. Each question has equal weight, so this is not an average of separate quiz percentages.
+                  </Text>
+                </View>
+                <View style={styles.dashboardDetailCard}>
+                  <Text style={styles.dashboardDetailSectionLabel}>RECENT QUIZZES</Text>
+                  <Text style={styles.dashboardDetailSectionTitle}>See what shaped your score</Text>
+                  {analytics.quizHistory.length ? (
+                    <View style={styles.dashboardDetailList}>
+                      {analytics.quizHistory.slice(0, 6).map((attempt) => {
+                        const attemptAccuracy = attempt.total
+                          ? Math.round((attempt.score / attempt.total) * 100)
+                          : 0;
+                        const quizKind = getQuizAttemptKind(attempt, analytics.quizHistory);
+                        const quizLabel = quizKind === 'omega-test'
+                          ? 'Omega Test'
+                          : quizKind === 'practice'
+                            ? 'Practice quiz'
+                            : 'Daily quiz';
+                        return (
+                          <View key={attempt.id} style={styles.dashboardDetailListRow}>
+                            <View style={[styles.dashboardDetailListIcon, styles.quizAccuracyRecentIcon]}>
+                              <Ionicons name="analytics-outline" size={16} color={COLORS.blue} />
+                            </View>
+                            <View style={styles.dashboardDetailListCopy}>
+                              <Text style={styles.dashboardDetailListTitle}>{quizLabel} · {formatDashboardDetailDate(attempt.date)}</Text>
+                              <Text style={styles.dashboardDetailListText}>{attempt.score} of {attempt.total} correct · {formatStudyTime(attempt.durationSeconds)}</Text>
+                            </View>
+                            <Text style={[styles.dashboardDetailListValue, { color: attemptAccuracy >= 70 ? COLORS.greenDark : COLORS.orange }]}>{attemptAccuracy}%</Text>
+                          </View>
+                        );
+                      })}
+                    </View>
+                  ) : (
+                    <DashboardDetailEmpty icon="analytics-outline" text="Your completed quizzes will show up here." />
+                  )}
                 </View>
               </>
             ) : null}
@@ -4705,7 +5075,7 @@ function WordMasteryOverviewModal({
 
             <View style={styles.wordOverviewLearningCard}>
               <View style={styles.wordOverviewEvidenceTop}>
-                <View>
+                <View style={styles.wordOverviewEvidenceTopCopy}>
                   <Text style={styles.wordOverviewSectionLabel}>LEARNING SIGNALS</Text>
                   <Text style={styles.wordOverviewSectionTitle}>{'Recall, retention & long-term retention'}</Text>
                 </View>
@@ -5337,56 +5707,19 @@ function buildMasteryRingSegments(score: number) {
   });
 }
 
-function getQuizTrendTone(percent: number) {
-  if (percent >= 100) {
-    return {
-      fill: '#F4B400',
-      status: '#D89F00',
-      percent: COLORS.muted,
-      scoreText: COLORS.blue,
-      scoreBackground: COLORS.bluePale,
-      surface: '#FFFCFF',
-      border: '#E8DEFA',
-      track: '#F8E29A',
-    };
-  }
+function getActivityTimestamp(value: string | undefined, date: string) {
+  const timestamp = value ? Date.parse(value) : Number.NaN;
+  if (Number.isFinite(timestamp)) return timestamp;
 
-  if (percent >= 80) {
-    return {
-      fill: COLORS.teal,
-      status: COLORS.teal,
-      percent: COLORS.muted,
-      scoreText: COLORS.blue,
-      scoreBackground: COLORS.bluePale,
-      surface: '#FFFCFF',
-      border: '#E8DEFA',
-      track: '#EFEAF8',
-    };
-  }
+  const fallback = Date.parse(`${date}T12:00:00`);
+  return Number.isFinite(fallback) ? fallback : 0;
+}
 
-  if (percent >= 40) {
-    return {
-      fill: COLORS.purple,
-      status: COLORS.purple,
-      percent: COLORS.muted,
-      scoreText: COLORS.blue,
-      scoreBackground: COLORS.bluePale,
-      surface: '#FFFCFF',
-      border: '#E8DEFA',
-      track: '#EFEAF8',
-    };
-  }
-
-  return {
-    fill: COLORS.blue,
-    status: COLORS.blue,
-    percent: COLORS.muted,
-    scoreText: COLORS.blue,
-    scoreBackground: COLORS.bluePale,
-    surface: '#FFFCFF',
-    border: '#E8DEFA',
-    track: '#EFEAF8',
-  };
+function formatGameActivityLabel(gameType: string) {
+  return gameType
+    .split('-')
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
 }
 
 function formatReminderHour(hour: number) {

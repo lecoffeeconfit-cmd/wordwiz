@@ -2,9 +2,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Animated, FlatList, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { COLORS } from '../constants/theme';
-import type { AnalyticsData, GameAttempt, GamePreferences, LegalPage, QuizAnswer, QuizDifficultyPreference, QuizPreferences, QuizProgress, QuizQuestion, QuizSessionMode, ReminderSettings, ReviewRating, SortMode, TimeBasedLearningSettings, Word } from '../types';
+import type { AnalyticsData, GameAttempt, GamePreferences, LegalPage, QuizAnswer, QuizDifficultyPreference, QuizPreferences, QuizProgress, QuizQuestion, QuizQuestionCount, QuizSessionMode, ReminderSettings, ReviewRating, SortMode, TimeBasedLearningSettings, Word } from '../types';
 import { styles } from '../styles';
-import { buildCategoryPracticeQuiz, buildOmegaTestAsync, buildQuiz, calculateStreakStats, evaluateQuizAnswer, formatReminderTime, formatStudyTime, formatWordFlaggedDate, getAlternateLearningExplanation, getDayKey, getEffectiveQuizDifficulty, getGameCoverage, getGameWords, getMistakeReviewWordIds, getNewStudyWords, getOmegaTestStatus, getQuizQuestionPace, getQuizRecallPaceSignal, getRecentDays, getStreakMessage, getStreakWeek, getStudySets, getTimedLearningBonusXp, getTypedRecallHint, getWordMastery, getWordMasteryCategoryForWord, isPersonalLibraryWord, NEW_STUDY_GROUP, normalizeTimeBasedLearningSettings, shuffle, TIMED_LEARNING_SECONDS, WORD_MASTERY_CATEGORIES, type WordMasteryCategoryId } from '../utils';
+import { buildCategoryPracticeQuiz, buildOmegaTestAsync, buildQuiz, calculateStreakStats, evaluateQuizAnswer, formatReminderTime, formatStudyTime, formatWordFlaggedDate, getAlternateLearningExplanation, getDayKey, getEffectiveQuizDifficulty, getGameCoverage, getGameWords, getMistakeReviewWordIds, getNewStudyWords, getOmegaTestStatus, getQuizQuestionPace, getQuizRecallPaceSignal, getRecentDays, getStreakMessage, getStreakWeek, getStudySets, getTimedLearningBonusXp, getTypedRecallHint, getWordMastery, getWordMasteryCategoryForWord, isPersonalLibraryWord, NEW_STUDY_GROUP, normalizeQuizQuestionCount, normalizeTimeBasedLearningSettings, QUIZ_QUESTION_COUNT_OPTIONS, shuffle, TIMED_LEARNING_SECONDS, WORD_MASTERY_CATEGORIES, type WordMasteryCategoryId } from '../utils';
 import { DashboardSection, DashboardStat, EmptyPractice, HomeAction, HomeMiniCard, LegalLink, LevelRow, ProgressFill, QuizComplete, QuizFact, QuizGames, ReminderTimeButton, ScreenHeader, StreakDay, WordInfoPanel, WordRow, SortButton } from '../components';
 import { reportError, trackEvent } from '../services';
 
@@ -165,6 +165,7 @@ export function QuizScreen({
   timeBasedLearningSettings,
   gamePreferences,
   quizPreferences,
+  onQuizPreferencesChange,
   refreshTokens,
   onUseRefreshToken,
   onComplete,
@@ -186,6 +187,7 @@ export function QuizScreen({
   timeBasedLearningSettings: TimeBasedLearningSettings;
   gamePreferences: GamePreferences;
   quizPreferences: QuizPreferences;
+  onQuizPreferencesChange: (preferences: QuizPreferences) => void;
   refreshTokens: number;
   onUseRefreshToken: () => boolean;
   onComplete: (
@@ -232,7 +234,9 @@ export function QuizScreen({
   const [isPreparingOmegaTest, setIsPreparingOmegaTest] = useState(false);
   const [omegaPreparationElapsedSeconds, setOmegaPreparationElapsedSeconds] = useState(0);
   const [sessionMode, setSessionMode] = useState<QuizSessionMode>('standard');
-  const [questionCount, setQuestionCount] = useState<5 | 10 | 20>(5);
+  const [questionCount, setQuestionCount] = useState<QuizQuestionCount>(
+    () => normalizeQuizQuestionCount(quizPreferences.questionCount),
+  );
   const [challengeMistakes, setChallengeMistakes] = useState(0);
   const [challengeCorrectStreak, setChallengeCorrectStreak] = useState(0);
   const ultraBadgePulse = useRef(new Animated.Value(0)).current;
@@ -247,6 +251,15 @@ export function QuizScreen({
   const [finishedWasDailyRetry, setFinishedWasDailyRetry] = useState(false);
   const [selectedCategory, setSelectedCategory] =
     useState<QuizStudyGroupId>(initialStudyGroup ?? 'all');
+
+  useEffect(() => {
+    setQuestionCount(normalizeQuizQuestionCount(quizPreferences.questionCount));
+  }, [quizPreferences.questionCount]);
+
+  function changeQuestionCount(count: QuizQuestionCount) {
+    setQuestionCount(count);
+    onQuizPreferencesChange({ ...quizPreferences, questionCount: count });
+  }
 
   useEffect(() => {
     const magic = Animated.loop(
@@ -650,7 +663,7 @@ export function QuizScreen({
     setDailyRefreshActive(pausedSession.dailyRefreshActive);
     setOmegaRefreshActive(pausedSession.omegaRefreshActive);
     setSessionMode(pausedSession.sessionMode);
-    setQuestionCount(pausedSession.quickQuestionCount);
+    setQuestionCount(normalizeQuizQuestionCount(pausedSession.quickQuestionCount));
     setChallengeMistakes(pausedSession.challengeMistakes);
     setChallengeCorrectStreak(pausedSession.challengeCorrectStreak);
     setSelectedCategory(pausedSession.selectedCategory);
@@ -1350,13 +1363,13 @@ export function QuizScreen({
             <View style={styles.quickLengthRow}>
               <Text style={styles.quizSetupLabel}>QUESTIONS IN THIS QUIZ</Text>
               <View style={styles.quickLengthOptions}>
-                {([5, 10, 20] as const).map((count) => (
+                {QUIZ_QUESTION_COUNT_OPTIONS.map((count) => (
                   <Pressable
                     key={count}
                     accessibilityRole="button"
                     accessibilityState={{ selected: questionCount === count }}
                     onPress={() => {
-                      setQuestionCount(count);
+                      changeQuestionCount(count);
                     }}
                     style={({ pressed }) => [styles.quickLengthButton, questionCount === count && styles.quickLengthButtonActive, pressed && styles.pressed]}
                   >

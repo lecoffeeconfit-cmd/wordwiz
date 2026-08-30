@@ -144,6 +144,7 @@ import {
   getGameXp,
   getWordMastery,
   normalizeGamePreferences,
+  normalizeQuizQuestionCount,
   mergeWordLists,
   normalizeQuestionTypePreferences,
   upsertSavedWord,
@@ -161,6 +162,7 @@ const CLOUD_SYNC_LOGS_ENABLED =
 const DEFAULT_QUIZ_PREFERENCES: QuizPreferences = {
   enabled: true,
   difficulty: 'automatic',
+  questionCount: 5,
   showReviewRating: true,
   questionTypes: normalizeQuestionTypePreferences(undefined),
 };
@@ -819,6 +821,7 @@ export default function AppContent() {
         ? {
             ...DEFAULT_QUIZ_PREFERENCES,
             ...savedPreferences,
+            questionCount: normalizeQuizQuestionCount(savedPreferences.questionCount),
             questionTypes: normalizeQuestionTypePreferences(
               savedPreferences.questionTypes,
             ),
@@ -2996,6 +2999,7 @@ export default function AppContent() {
           timeBasedLearningSettings={timeBasedLearningSettings}
           gamePreferences={gamePreferences}
           quizPreferences={quizPreferences}
+          onQuizPreferencesChange={setQuizPreferences}
           refreshTokens={achievementWallet.refreshTokens}
           onUseRefreshToken={useAchievementRefreshToken}
           onComplete={completeQuiz}

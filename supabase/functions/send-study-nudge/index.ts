@@ -110,6 +110,23 @@ function response(body: Record<string, unknown>, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 }
 
+function nudgeErrorCode(error: unknown) {
+  const code = error && typeof error === 'object' && 'code' in error
+    ? String((error as { code?: unknown }).code ?? '')
+    : '';
+  const message = error && typeof error === 'object' && 'message' in error
+    ? String((error as { message?: unknown }).message ?? '')
+    : '';
+  const reason = [code, message].find((value) => [
+    'authentication_required',
+    'friendship_required',
+    'nudge_unavailable',
+    'invalid_nudge_message',
+    'invalid_nudge_type',
+  ].includes(value));
+  return reason ?? 'nudge_unavailable';
+}
+
 function projectKey(variableName: string) {
   const raw = Deno.env.get(variableName);
   if (!raw) return undefined;
@@ -154,7 +171,7 @@ Deno.serve(async (request) => {
     p_idempotency_key: idempotencyKey,
     p_custom_message: isGoldenNudge ? customMessage : null,
   });
-  if (nudgeError) return response({ error: 'That nudge cannot be sent right now' }, 400);
+  if (nudgeError) return response({ error: nudgeErrorCode(nudgeError) }, 400);
 
   const adminClient = createClient(url, serviceKey);
   const { data: recipient, error: recipientError } = await adminClient

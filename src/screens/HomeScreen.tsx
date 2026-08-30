@@ -277,7 +277,7 @@ export function HomeScreen({
         scrollEventThrottle={16}
         showsVerticalScrollIndicator={false}
       >
-      <View style={[styles.homeHero, { minHeight: 365 + heroAddedHeight }]}>
+      <View style={[styles.homeHero, { minHeight: 400 + heroAddedHeight }]}>
         <View style={styles.heroCloudOne} />
         <View style={styles.heroCloudTwo} />
         <View style={styles.heroCloudThree} />

@@ -15,6 +15,8 @@ OPENAI_API_KEY = your OpenAI service-account key
 
 Do not put this value in the Expo app, a committed `.env` file, or any
 client-side Supabase setting. Keep JWT verification enabled for this function.
+The function retries only transient moderation failures once and never publishes
+the image when verification is unavailable.
 
 ## Deploy
 

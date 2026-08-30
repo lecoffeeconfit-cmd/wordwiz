@@ -278,7 +278,14 @@ export function LessonProgressRing({
 
       <Animated.View style={[localStyles.centerCard, centerStyle]}>
         <LevelMagicIcon level={currentLevel} size={35} variant="progressCircle" />
-        <Text style={localStyles.percentText}>{displayProgress}%</Text>
+        <Text
+          numberOfLines={1}
+          adjustsFontSizeToFit
+          minimumFontScale={0.78}
+          style={[localStyles.percentText, displayProgress >= 100 && localStyles.percentTextComplete]}
+        >
+          {displayProgress}%
+        </Text>
         <Animated.Text
           numberOfLines={2}
           adjustsFontSizeToFit
@@ -548,11 +555,17 @@ const localStyles = StyleSheet.create({
     elevation: 8,
   },
   percentText: {
+    width: 64,
     marginTop: 2,
     color: COLORS.ink,
     fontSize: 17,
     lineHeight: 20,
     fontWeight: '900',
+    textAlign: 'center',
+  },
+  percentTextComplete: {
+    fontSize: 15,
+    lineHeight: 18,
   },
   lessonTitle: {
     maxWidth: 86,

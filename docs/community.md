@@ -52,7 +52,11 @@ The Community schema migration and `send-study-nudge` Edge Function are deployed
 ```sh
 npx supabase db push
 npx supabase functions deploy send-study-nudge
+npx supabase functions deploy moderate-community-avatar
 ```
+
+The avatar function also requires the server-only `OPENAI_API_KEY` secret in
+Supabase Edge Functions → Secrets. Never include this key in the Expo app.
 
 After any notification configuration change, create a fresh native build. No subscription, billing, bundle identifier, version, or signing configuration changes are required by the Community code.
 

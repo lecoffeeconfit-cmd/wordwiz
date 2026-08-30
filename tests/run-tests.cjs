@@ -1152,6 +1152,51 @@ test('quick, hard, and ultra quiz profiles build the requested retrieval challen
   );
 });
 
+test('learner-selected longer quizzes stay safe with small study groups', () => {
+  const words = [
+    makeWord('small-a', 'Avid', 'Very eager or enthusiastic.'),
+    makeWord('small-b', 'Calm', 'Peaceful and free from excitement.'),
+  ];
+  const questions = quiz.buildCategoryPracticeQuiz(words, [], {}, [], {
+    sessionMode: 'quick',
+    difficulty: 'standard',
+    questionLimit: 20,
+  });
+
+  assert.equal(questions.length, 20);
+  assert.ok(new Set(questions.map((question) => question.word.id)).size < questions.length);
+
+  const answers = questions.map((question) => ({
+    wordId: question.word.id,
+    correct: false,
+    questionMode: question.mode,
+    difficulty: question.difficulty,
+  }));
+  const { attempt } = learning.buildQuizCompletion({
+    score: 0,
+    total: questions.length,
+    durationSeconds: 120,
+    answers,
+    id: 'long-small-quiz',
+    completedAt: '2026-01-01T00:00:00.000Z',
+  });
+  assert.equal(attempt.total, 20);
+  assert.equal(attempt.answers.length, 20);
+});
+
+test('server validation allows deliberate repeats but keeps quiz attempts bounded', () => {
+  const validationMigration = fs.readFileSync(
+    path.join(projectRoot, 'supabase/migrations/20260829000005_quiz_repeated_answers.sql'),
+    'utf8',
+  );
+
+  assert.match(validationMigration, /new\.total > 20/);
+  assert.match(validationMigration, /v_is_omega/);
+  assert.match(validationMigration, /not v_is_omega and new\.total > 20/);
+  assert.match(validationMigration, /isAttemptMarker/);
+  assert.doesNotMatch(validationMigration, /duplicate_quiz_word/);
+});
+
 test('hard practice uses varied recall and contextual prompts before repeating a format for a word', () => {
   const words = [
     {
@@ -3198,23 +3243,36 @@ test('Community avatars are moderated server-side before reaching public storage
     path.join(projectRoot, 'supabase/migrations/20260816000000_community_avatar_moderation.sql'),
     'utf8',
   );
+  const accessMigration = fs.readFileSync(
+    path.join(projectRoot, 'supabase/migrations/20260829000006_community_avatar_service_role_access.sql'),
+    'utf8',
+  );
   const moderationFunction = fs.readFileSync(
     path.join(projectRoot, 'supabase/functions/moderate-community-avatar/index.ts'),
     'utf8',
   );
 
   assert.match(communityService, /base64:\s*true/);
+  assert.match(communityService, /auth\.getSession\(\)/);
+  assert.match(communityService, /headers:\s*\{\s*Authorization:/);
   assert.match(communityService, /functions\.invoke\('moderate-community-avatar'/);
   assert.doesNotMatch(communityService, /storage\.from\('community-avatars'\)\.upload/);
   assert.match(migration, /drop policy if exists "community avatar owner upload"/i);
   assert.match(migration, /revoke all on function public\.community_set_avatar\(text\) from authenticated/i);
   assert.match(migration, /community_avatar_moderation_attempts/i);
   assert.match(migration, /grant execute on function public\.community_reserve_avatar_moderation\(uuid\) to service_role/i);
+  assert.match(accessMigration, /grant select, update on table public\.community_profiles to service_role/i);
   assert.match(moderationFunction, /OPENAI_API_KEY/);
   assert.match(moderationFunction, /https:\/\/api\.openai\.com\/v1\/moderations/);
   assert.match(moderationFunction, /omni-moderation-latest/);
+  assert.match(moderationFunction, /avatar_moderation_configuration/);
+  assert.match(moderationFunction, /avatar_moderation_quota_exceeded/);
+  assert.match(moderationFunction, /providerCode/);
   assert.match(moderationFunction, /if \(flagged\) return json\(\{ error: 'avatar_rejected' \}, 422\)/);
   assert.match(moderationFunction, /auth\.getUser\(\)/);
+  assert.match(moderationFunction, /if \(userError \|\| !user\) return json\(\{ error: 'authentication_required' \}/);
+  assert.match(moderationFunction, /const adminClients = serviceRoleKeys\.map/);
+  assert.match(moderationFunction, /\.from\('community_profiles'\)/);
   assert.match(moderationFunction, /admin\.storage\.from\(AVATAR_BUCKET\)\.upload/);
   assert.doesNotMatch(moderationFunction, /console\.(log|error).*OPENAI_API_KEY/i);
 });
@@ -3232,7 +3290,15 @@ test('Stats progress ring uses the current purple magical level icon', () => {
 
   assert.match(ring, /currentLevel: \(typeof MASTERY_LEVELS\)\[number\]\['shortTitle'\]/);
   assert.match(ring, /<LevelMagicIcon level=\{currentLevel\} size=\{35\} variant="progressCircle" \/>/);
+  assert.match(ring, /numberOfLines=\{1\}/);
+  assert.match(ring, /adjustsFontSizeToFit/);
+  assert.match(ring, /percentTextComplete/);
   assert.doesNotMatch(ring, /Ionicons name="school" size=\{31\}/);
+  assert.match(dashboard, /masteryLevelInfo/);
+  assert.match(dashboard, /Learn about the \$\{segment\.shortTitle\} WordWiz level/);
+  assert.match(dashboard, /<LevelMagicIcon level=\{level\.shortTitle\} size=\{42\} variant="filled" \/>/);
+  assert.match(dashboard, /HOW IT WORKS/);
+  assert.match(dashboard, /Your collection average/);
   assert.match(dashboard, /currentLevel=\{masteryLevel\.shortTitle\}/);
   assert.match(crest, /variant\?: 'filled' \| 'outline' \| 'bare' \| 'progressCircle'/);
   assert.match(crest, /const accent = isProgressCircle \? COLORS\.purple/);
@@ -3240,6 +3306,25 @@ test('Stats progress ring uses the current purple magical level icon', () => {
   assert.match(crest, /progressAura/);
   assert.match(crest, /isProgressCircle && level === 'Novice'/);
   assert.match(crest, /<FontAwesome6 name="star" solid/);
+});
+
+test('Stats explains quiz accuracy and shows a mixed activity trend', () => {
+  const dashboard = fs.readFileSync(
+    path.join(projectRoot, 'src/screens/DashboardScreen.tsx'),
+    'utf8',
+  );
+  const styles = fs.readFileSync(path.join(projectRoot, 'src/styles/index.ts'), 'utf8');
+
+  assert.match(dashboard, /DashboardDetailKind = 'study-time'.*'quiz-accuracy'/);
+  assert.match(dashboard, /accessibilityLabel="Quiz accuracy details"/);
+  assert.match(dashboard, /Correct answers ÷ questions answered × 100/);
+  assert.match(dashboard, /Each question has equal weight/);
+  assert.match(dashboard, /title="ACTIVITY TREND"/);
+  assert.match(dashboard, /analytics\.cardHistory\.map/);
+  assert.match(dashboard, /\(analytics\.gameHistory \?\? \[\]\)\.map/);
+  assert.match(dashboard, /activityTrendPageCount/);
+  assert.match(styles, /activityTrendRow/);
+  assert.match(styles, /quizAccuracyFormula/);
 });
 
 test('Streaks card omits only the top-right gold sparkle', () => {
@@ -3438,9 +3523,26 @@ test('Community safety flow uses consent, content reporting, and server-only mod
   assert.match(communityScreen, /More learners appear as you scroll/);
   assert.doesNotMatch(communityScreen, /Page \{page \+ 1\}/);
   assert.match(communityScreen, /Inappropriate photo/);
+  assert.match(communityScreen, /profileSetupPromptVisible/);
+  assert.match(communityScreen, /profileSetupPromptTitle/);
+  assert.match(communityScreen, /Create profile/);
+  assert.match(communityScreen, /setProfileSetupPromptVisible\(true\)/);
+  assert.match(communityScreen, /avatarPath: uploaded/);
+  assert.match(communityScreen, /refreshCommunity\(\)\.catch\(\(\) => undefined\)/);
+  assert.match(communityScreen, /collectorContextLoading/);
+  assert.match(communityScreen, /collectorLoadingRows/);
+  assert.match(communityScreen, /numberOfLines=\{2\} ellipsizeMode="tail" style=\{community\.collectorMyRankDetail\}/);
+  assert.match(communityScreen, /collectorMyRankCopy: \{ flex: 1, minWidth: 0 \}/);
+  assert.match(communityScreen, /function formatNudgeTimestamp\(createdAt: string\)/);
+  assert.match(communityScreen, /formatNudgeTimestamp\(nudge\.createdAt\)/);
+  assert.match(communityScreen, /const NUDGE_FETCH_SIZE = 50/);
+  assert.match(communityScreen, /loadMoreNudges/);
+  assert.match(communityScreen, /getCommunityNudges\(NUDGE_FETCH_SIZE, nudges\.length\)/);
+  assert.match(communityScreen, /Show older nudges/);
   assert.match(communityService, /confirmAvatarModerationNotice/);
   assert.match(communityService, /moderationNoticeAccepted: true/);
   assert.match(moderatorFunction, /avatar_moderation_consent_required/);
+  assert.match(moderatorFunction, /profileError[\s\S]*avatar_moderation_unavailable/);
   assert.match(migration, /inappropriate_avatar/);
   assert.match(migration, /report_count/);
   assert.match(adminFunction, /community_remove_avatar/);
@@ -3587,6 +3689,18 @@ test('competitive collector hub has separate retention and streak metrics', () =
     path.join(projectRoot, 'supabase/migrations/20260826000000_community_competitive_metrics.sql'),
     'utf8',
   );
+  const retentionBreakdownMigration = fs.readFileSync(
+    path.join(projectRoot, 'supabase/migrations/20260829000000_community_retention_breakdown.sql'),
+    'utf8',
+  );
+  const retentionBreakdownFixMigration = fs.readFileSync(
+    path.join(projectRoot, 'supabase/migrations/20260829000004_community_retention_breakdown_fix.sql'),
+    'utf8',
+  );
+  const joinDateMigration = fs.readFileSync(
+    path.join(projectRoot, 'supabase/migrations/20260829000001_community_competitive_join_date.sql'),
+    'utf8',
+  );
 
   assert.match(screen, /const COMPETITIVE_METRICS/);
   assert.match(screen, /key: 'collectors'/);
@@ -3594,15 +3708,32 @@ test('competitive collector hub has separate retention and streak metrics', () =
   assert.match(screen, /key: 'streaks'/);
   assert.match(screen, /RETENTION WINDOW/);
   assert.match(screen, /LEARNING STREAK/);
-  assert.match(screen, /ranking score considers volume/);
+  assert.match(screen, /activities\.join\(' \/ '\)/);
+  assert.match(screen, /filter\(\(activity\) => activity\.value > 0\)/);
+  assert.match(screen, /sort\(\(left, right\) => right\.value - left\.value\)/);
+  assert.match(screen, /formatJoinedDate\(entry\.joinedAt\)/);
+  assert.match(screen, /testAnswerCount/);
   assert.match(dashboard, /View Retention ranking/);
   assert.match(dashboard, /View Learning Streaks ranking/);
   assert.match(service, /community_competitive_metric_context/);
   assert.match(service, /community_competitive_metric_leaderboard/);
+  assert.match(service, /community_competitive_metric_review_breakdown/);
+  assert.match(screen, /retentionReviewBreakdownParts/);
+  assert.match(screen, /collectorBreakdownText/);
   assert.match(migration, /review_count >= 40/);
   assert.match(migration, /sqrt\(r\.review_count::numeric \/ 250\)/);
   assert.match(migration, /current_streaks/);
   assert.match(migration, /country_key/);
+  assert.match(service, /joinedAt: typeof record\?\.joinedAt === 'string'/);
+  assert.match(retentionBreakdownMigration, /flashcard_review_count/);
+  assert.match(retentionBreakdownMigration, /quiz_answer_count/);
+  assert.match(retentionBreakdownMigration, /test_answer_count/);
+  assert.match(retentionBreakdownMigration, /game_answer_count/);
+  assert.match(retentionBreakdownMigration, /'testAnswerCount'/);
+  assert.match(retentionBreakdownMigration, /p_only_me boolean/);
+  assert.match(retentionBreakdownFixMigration, /p\.public_id::text as public_id/);
+  assert.match(retentionBreakdownFixMigration, /'reviewCount'/);
+  assert.match(joinDateMigration, /'joinedAt', p\.created_at/);
 });
 
 test('Learning Streaks use each learner daily goal and current completed-day runs', () => {
@@ -3630,6 +3761,10 @@ test('Learning Streaks use each learner daily goal and current completed-day run
   assert.match(migration, /current_streaks/);
   assert.match(migration, /total_goal_days/);
   assert.match(migration, /latest_completion/);
+  assert.match(screen, /function collectorMetricValueLabel\(metric: CompetitiveMetric, entry: WordCollectorEntry\)/);
+  assert.match(screen, /Math\.round\(entry\.streakDays \?\? entry\.metricValue \?\? 0\)/);
+  assert.match(screen, /collectorMetricValue: \{ width: 82, flexShrink: 0/);
+  assert.match(screen, /leaderboardStatusText: \{ flex: 1, minWidth: 0/);
 });
 
 test('onboarding waits for the signed-in user cache and does not replay on login', () => {
