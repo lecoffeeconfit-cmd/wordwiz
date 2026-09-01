@@ -777,7 +777,8 @@ export const styles = StyleSheet.create({
   },
   overviewTitleGroup: {
     flex: 1,
-    minWidth: 0,
+    // Keep enough room for “Today’s” so the apostrophe and final letter do not wrap apart.
+    minWidth: 113,
     flexShrink: 1,
     flexDirection: 'row',
     alignItems: 'center',
@@ -833,8 +834,13 @@ export const styles = StyleSheet.create({
   },
   homeSectionTitle: {
     flexShrink: 1,
+    minWidth: 0,
+    justifyContent: 'center',
+  },
+  homeSectionTitleLine: {
     color: COLORS.ink,
-    fontSize: 15,
+    fontSize: 14,
+    lineHeight: 17,
     fontWeight: '900',
   },
   overviewTitleCompact: {
@@ -3452,8 +3458,6 @@ export const styles = StyleSheet.create({
     paddingTop: 2,
     borderRadius: 18,
     backgroundColor: 'rgba(255,255,255,0.7)',
-    borderWidth: 1,
-    borderColor: '#F4DFA7',
   },
   gamesCoverageBanner: {
     marginTop: 12,
@@ -6786,23 +6790,6 @@ export const styles = StyleSheet.create({
     borderRadius: 9,
     backgroundColor: 'rgba(91, 77, 228, 0.1)',
   },
-  accuracyCardHint: {
-    width: '100%',
-    marginTop: 8,
-    paddingHorizontal: 2,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 4,
-  },
-  accuracyCardHintText: {
-    flexShrink: 1,
-    color: COLORS.purpleDark,
-    fontSize: 10,
-    lineHeight: 14,
-    fontWeight: '900',
-    textAlign: 'center',
-  },
   distributionCard: {
     flex: 1,
     minHeight: 218,
@@ -6829,23 +6816,6 @@ export const styles = StyleSheet.create({
     justifyContent: 'center',
     borderRadius: 9,
     backgroundColor: 'rgba(42, 169, 135, 0.12)',
-  },
-  distributionCardHint: {
-    width: '100%',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 4,
-    marginTop: 8,
-    paddingHorizontal: 2,
-  },
-  distributionCardHintText: {
-    flexShrink: 1,
-    color: COLORS.teal,
-    fontSize: 10,
-    fontWeight: '900',
-    lineHeight: 14,
-    textAlign: 'center',
   },
   dashboardCardLabel: {
     alignSelf: 'flex-start',

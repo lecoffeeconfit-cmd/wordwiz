@@ -454,15 +454,26 @@ export function HomeScreen({
             <View style={[styles.overviewTitleIcon, styles.wordWizHatBadge]}>
               <WordWizHatIcon champion={dailyLearningGoalCompleted} />
             </View>
-            <Text
-              adjustsFontSizeToFit
-              maxFontSizeMultiplier={1.1}
-              minimumFontScale={0.82}
-              numberOfLines={2}
-              style={styles.homeSectionTitle}
-            >
-              Today’s{ '\n' }Learning
-            </Text>
+            <View style={styles.homeSectionTitle}>
+              <Text
+                adjustsFontSizeToFit
+                maxFontSizeMultiplier={1.1}
+                minimumFontScale={0.82}
+                numberOfLines={1}
+                style={styles.homeSectionTitleLine}
+              >
+                Today’s
+              </Text>
+              <Text
+                adjustsFontSizeToFit
+                maxFontSizeMultiplier={1.1}
+                minimumFontScale={0.82}
+                numberOfLines={1}
+                style={styles.homeSectionTitleLine}
+              >
+                Learning
+              </Text>
+            </View>
           </View>
           <View
             accessible

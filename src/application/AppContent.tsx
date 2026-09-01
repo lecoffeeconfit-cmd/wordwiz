@@ -7,7 +7,11 @@ import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, AppState, PanResponder, Platform, Pressable, Text, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { BottomTabs, GoldenTicketSurprise } from '../components';
+import {
+  AchievementUnlockedBanner,
+  BottomTabs,
+  GoldenTicketSurprise,
+} from '../components';
 import {
   DEFAULT_REMINDER,
   EMPTY_ANALYTICS,
@@ -202,6 +206,15 @@ export default function AppContent() {
     id: string;
     ticketsAwarded: number;
   } | null>(null);
+  const [achievementCelebrations, setAchievementCelebrations] = useState<Array<{
+    id: string;
+    title: string;
+    icon: keyof typeof Ionicons.glyphMap;
+    color: string;
+    background: string;
+    points: number;
+    refreshTokens: number;
+  }>>([]);
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [feedbackContext, setFeedbackContext] = useState<FeedbackContext | null>(null);
@@ -243,6 +256,7 @@ export default function AppContent() {
   const cloudHydratedUserId = useRef<string | null>(null);
   const cloudHydratingUserId = useRef<string | null>(null);
   const achievementWalletLoadedUserId = useRef<string | null>(null);
+  const achievementCelebrationUserId = useRef<string | null>(null);
   const dailyLearningGoalLoadedUserId = useRef<string | null>(null);
   const latestWords = useRef<Word[]>([]);
   const latestAnalytics = useRef<AnalyticsData>(EMPTY_ANALYTICS);
@@ -765,6 +779,8 @@ export default function AppContent() {
       latestAchievementWallet.current = EMPTY_ACHIEVEMENT_WALLET;
       setAchievementWallet(EMPTY_ACHIEVEMENT_WALLET);
       setGoldenTicketSurprise(null);
+      setAchievementCelebrations([]);
+      achievementCelebrationUserId.current = null;
       setReminderSettings(DEFAULT_REMINDER);
       setDailyLearningGoal(1);
       setTimedLearningEnabled(false);
@@ -786,9 +802,11 @@ export default function AppContent() {
     setOnboardingCacheState('loading');
     try {
       achievementWalletLoadedUserId.current = null;
+      achievementCelebrationUserId.current = null;
       latestAchievementWallet.current = EMPTY_ACHIEVEMENT_WALLET;
       setAchievementWallet(EMPTY_ACHIEVEMENT_WALLET);
       setGoldenTicketSurprise(null);
+      setAchievementCelebrations([]);
       const [savedWords, savedQuiz, savedAnalytics, savedPausedQuizSession, savedReminder, savedDailyLearningGoal, savedDailyQuizGoal, savedTimedLearning, savedTimeBasedLearningSettings, savedGamePreferences, savedQuizPreferences, savedAchievementWallet, savedOnboarding, legacyOnboarding] =
         await Promise.all([
           AsyncStorage.getItem(getUserCacheKey(userId, 'words')),
@@ -1649,8 +1667,32 @@ export default function AppContent() {
         !achievementWallet.claimedAchievementIds.includes(achievement.id),
     );
     if (newlyUnlocked.length === 0) {
+      achievementCelebrationUserId.current = currentUser.id;
       return;
     }
+
+    const isInitialAchievementPass =
+      achievementCelebrationUserId.current !== currentUser.id;
+    if (!isInitialAchievementPass) {
+      setAchievementCelebrations((currentCelebrations) => {
+        const existingIds = new Set(currentCelebrations.map(({ id }) => id));
+        const additions = newlyUnlocked
+          .filter(({ id }) => !existingIds.has(id))
+          .map((achievement) => ({
+            id: achievement.id,
+            title: achievement.title,
+            icon: achievement.icon,
+            color: achievement.color,
+            background: achievement.background,
+            points: achievement.points,
+            refreshTokens: achievement.refreshTokens,
+          }));
+        return additions.length > 0
+          ? [...currentCelebrations, ...additions]
+          : currentCelebrations;
+      });
+    }
+    achievementCelebrationUserId.current = currentUser.id;
 
     setAchievementWallet((currentWallet) => {
       const claimable = newlyUnlocked.filter(
@@ -3230,6 +3272,7 @@ export default function AppContent() {
   const isOnboardingCacheReadyForUser =
     onboardingCacheUserId === currentUser?.id &&
     onboardingCacheState !== 'loading';
+  const activeAchievementCelebration = achievementCelebrations[0] ?? null;
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -3367,6 +3410,25 @@ export default function AppContent() {
           celebrationId={goldenTicketSurprise.id}
           ticketsAwarded={goldenTicketSurprise.ticketsAwarded}
           onFinished={() => setGoldenTicketSurprise(null)}
+        />
+      ) : null}
+      {currentUser && !goldenTicketSurprise && activeAchievementCelebration ? (
+        <AchievementUnlockedBanner
+          celebrationId={activeAchievementCelebration.id}
+          achievement={activeAchievementCelebration}
+          onOpenAchievements={() => {
+            setDashboardFocusSection('achievements');
+            setActiveTab('dashboard');
+          }}
+          onFinished={() => {
+            setAchievementCelebrations((currentCelebrations) =>
+              currentCelebrations[0]?.id === activeAchievementCelebration.id
+                ? currentCelebrations.slice(1)
+                : currentCelebrations.filter(
+                    ({ id }) => id !== activeAchievementCelebration.id,
+                  ),
+            );
+          }}
         />
       ) : null}
     </SafeAreaView>

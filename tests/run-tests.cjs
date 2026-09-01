@@ -3317,6 +3317,11 @@ test('Stats explains quiz accuracy and shows a mixed activity trend', () => {
 
   assert.match(dashboard, /DashboardDetailKind = 'study-time'.*'quiz-accuracy'/);
   assert.match(dashboard, /accessibilityLabel="Quiz accuracy details"/);
+  assert.match(dashboard, /accessibilityHint="Tap to see your quiz totals and how accuracy is calculated"/);
+  assert.match(dashboard, /totalWrong} to review/);
+  assert.match(dashboard, /numberOfLines=\{1\}[\s\S]*styles\.accuracyDetail/);
+  assert.doesNotMatch(dashboard, /How this is calculated/);
+  assert.match(dashboard, /accuracyCardInfo[\s\S]*information-circle-outline/);
   assert.match(dashboard, /Correct answers ÷ questions answered × 100/);
   assert.match(dashboard, /Each question has equal weight/);
   assert.match(dashboard, /title="ACTIVITY TREND"/);
@@ -3325,6 +3330,10 @@ test('Stats explains quiz accuracy and shows a mixed activity trend', () => {
   assert.match(dashboard, /activityTrendPageCount/);
   assert.match(styles, /activityTrendRow/);
   assert.match(styles, /quizAccuracyFormula/);
+  assert.match(dashboard, /accessibilityLabel="Learn how your word levels are calculated"/);
+  assert.match(dashboard, /distributionCardInfo[\s\S]*information-circle-outline/);
+  assert.doesNotMatch(dashboard, /Learn about word levels/);
+  assert.doesNotMatch(styles, /distributionCardHint/);
 });
 
 test('Streaks card omits only the top-right gold sparkle', () => {
@@ -3844,6 +3853,25 @@ test('Admit One ticket matches the reference ticket shape', () => {
   assert.match(ticket, /width: 26/);
   assert.match(ticket, /height: 15/);
   assert.ok(fs.statSync(path.join(projectRoot, 'assets/admit-one-ticket.png')).size > 0);
+});
+
+test('homepage learning summary keeps its title intact beside the daily goal', () => {
+  const home = fs.readFileSync(path.join(projectRoot, 'src/screens/HomeScreen.tsx'), 'utf8');
+  const styles = fs.readFileSync(path.join(projectRoot, 'src/styles/index.ts'), 'utf8');
+
+  assert.match(home, /Today’s[\s\S]*numberOfLines=\{1\}[\s\S]*>\s*Learning/);
+  assert.match(styles, /homeSectionTitleLine:\s*\{[\s\S]*?fontSize: 14/);
+  assert.match(styles, /overviewHeader:\s*\{[\s\S]*?flexWrap: 'nowrap'/);
+  assert.match(styles, /overviewTitleGroup:\s*\{[\s\S]*?minWidth: 113/);
+});
+
+test('games word chooser blends into its surrounding card without an extra outline', () => {
+  const styles = fs.readFileSync(path.join(projectRoot, 'src/styles/index.ts'), 'utf8');
+  const controlsStyle = styles.match(/gamesWordChoiceControls:\s*\{([\s\S]*?)\n  \},/);
+
+  assert.ok(controlsStyle, 'games word chooser controls style should exist');
+  assert.match(controlsStyle[1], /backgroundColor: 'rgba\(255,255,255,0\.7\)'/);
+  assert.doesNotMatch(controlsStyle[1], /borderWidth|borderColor/);
 });
 
 test('competitive collector hub has separate retention and streak metrics', () => {

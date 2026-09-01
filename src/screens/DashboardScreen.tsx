@@ -1641,7 +1641,7 @@ export function DashboardScreen({
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Quiz accuracy details"
-          accessibilityHint="Shows your quiz totals and how accuracy is calculated"
+          accessibilityHint="Tap to see your quiz totals and how accuracy is calculated"
           onPress={() => setDashboardDetail('quiz-accuracy')}
           style={({ pressed }) => [styles.accuracyCard, pressed && styles.accuracyCardPressed]}
         >
@@ -1682,21 +1682,23 @@ export function DashboardScreen({
               </Text>
             </View>
           </View>
-          <Text style={styles.accuracyDetail}>
+          <Text
+            adjustsFontSizeToFit
+            maxFontSizeMultiplier={1.15}
+            minimumFontScale={0.8}
+            numberOfLines={1}
+            style={styles.accuracyDetail}
+          >
             {hasQuizAnswers ? (
               <>
                 <Text style={styles.accuracyDetailCorrect}>{totalCorrect} correct</Text>
                 <Text> · </Text>
-                <Text style={styles.accuracyDetailMissed}>{totalWrong} to revisit</Text>
+                <Text style={styles.accuracyDetailMissed}>{totalWrong} to review</Text>
               </>
             ) : (
               <Text style={styles.accuracyDetailReady}>Take a quiz to begin</Text>
             )}
           </Text>
-          <View style={styles.accuracyCardHint}>
-            <Text style={styles.accuracyCardHintText}>How this is calculated</Text>
-            <Ionicons name="chevron-forward" size={13} color={COLORS.purpleDark} />
-          </View>
         </Pressable>
 
         <Pressable
@@ -1741,10 +1743,6 @@ export function DashboardScreen({
             proficientWords={masteredWords}
             strongWords={strongWords}
           />
-          <View style={styles.distributionCardHint}>
-            <Text style={styles.distributionCardHintText}>Learn about word levels</Text>
-            <Ionicons name="chevron-forward" size={13} color={COLORS.teal} />
-          </View>
         </Pressable>
       </View>
 
