@@ -293,6 +293,7 @@ export function DashboardScreen({
   onLogout,
   onChangePassword,
   onDeleteAccount,
+  isDeletingAccount = false,
   isAdmin = false,
   onOpenAdmin,
   onOpenOnboardingGuide,
@@ -331,6 +332,7 @@ export function DashboardScreen({
   onLogout: () => void;
   onChangePassword: (password: string) => Promise<boolean>;
   onDeleteAccount: () => void;
+  isDeletingAccount?: boolean;
   isAdmin?: boolean;
   onOpenAdmin?: () => void;
   onOpenOnboardingGuide: () => void;
@@ -3790,25 +3792,37 @@ export function DashboardScreen({
       </View>
 
       <View style={styles.deleteAccountCard}>
-        <View style={styles.deleteAccountIcon}>
-          <Ionicons name="trash-outline" size={22} color={COLORS.red} />
-        </View>
-        <View style={styles.deleteAccountCopy}>
-          <Text style={styles.deleteAccountLabel}>ACCOUNT CONTROL</Text>
-          <Text style={styles.deleteAccountTitle}>Delete account</Text>
-          <Text style={styles.deleteAccountText}>
-            Permanently remove your WordWiz account and cloud learning data.
-            This action cannot be undone.
-          </Text>
+        <View style={styles.deleteAccountHeader}>
+          <View style={styles.deleteAccountIcon}>
+            <Ionicons name="trash-outline" size={22} color={COLORS.red} />
+          </View>
+          <View style={styles.deleteAccountCopy}>
+            <Text style={styles.deleteAccountLabel}>ACCOUNT CONTROL</Text>
+            <Text style={styles.deleteAccountTitle}>Delete account</Text>
+            <Text style={styles.deleteAccountText}>
+              Permanently remove your account, cloud learning data, Community
+              profile and content, and uploaded photos. App Store subscriptions
+              are managed separately in Apple Account settings.
+            </Text>
+          </View>
         </View>
         <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Delete my WordWiz account"
+          accessibilityHint="Permanently deletes your account, cloud learning data, Community content, and uploaded photos"
+          accessibilityState={{ busy: isDeletingAccount, disabled: isDeletingAccount }}
+          disabled={isDeletingAccount}
           onPress={onDeleteAccount}
           style={({ pressed }) => [
             styles.deleteAccountButton,
-            pressed && styles.pressed,
+            styles.deleteAccountButtonFull,
+            isDeletingAccount && styles.deleteAccountButtonDisabled,
+            pressed && !isDeletingAccount && styles.pressed,
           ]}
         >
-          <Text style={styles.deleteAccountButtonText}>Delete</Text>
+          <Text style={styles.deleteAccountButtonText}>
+            {isDeletingAccount ? 'Deleting...' : 'Delete account'}
+          </Text>
         </Pressable>
       </View>
 

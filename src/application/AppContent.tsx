@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
+import * as AppleAuthentication from 'expo-apple-authentication';
 import * as Linking from 'expo-linking';
 import * as SplashScreen from 'expo-splash-screen';
 import * as WebBrowser from 'expo-web-browser';
@@ -43,9 +44,13 @@ import {
 import {
   normalizeEmail,
   completeSupabaseAuthRedirect,
+  clearOAuthProviderTokens,
+  getStoredAppleProviderTokens,
+  persistOAuthProviderTokens,
   resendSupabaseEmailVerification,
   requestSupabaseAccountDeletion,
   sendSupabasePasswordReset,
+  signInWithApple,
   signInWithOAuthProvider,
   signInWithSupabase,
   signOutWithSupabase,
@@ -217,6 +222,7 @@ export default function AppContent() {
   }>>([]);
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
   const [feedbackContext, setFeedbackContext] = useState<FeedbackContext | null>(null);
   const [feedbackReturnTab, setFeedbackReturnTab] = useState<Tab>('dashboard');
   const [communityUnreadNudges, setCommunityUnreadNudges] = useState(0);
@@ -598,6 +604,14 @@ export default function AppContent() {
         if (event === 'PASSWORD_RECOVERY') {
           setIsPasswordRecovery(true);
         }
+        if (event === 'SIGNED_OUT') {
+          void clearOAuthProviderTokens();
+        } else if (session) {
+          void persistOAuthProviderTokens(
+            session.user.app_metadata?.provider,
+            session,
+          );
+        }
         setCurrentUser(session?.user ? toAuthUser(session.user) : null);
       },
     );
@@ -607,6 +621,38 @@ export default function AppContent() {
       authListener.subscription.unsubscribe();
     };
   }, [hideNativeSplash, showStartupStage, startupAttempt]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'ios') {
+      return;
+    }
+
+    let revokeSubscription: { remove: () => void } | null = null;
+    try {
+      revokeSubscription = AppleAuthentication.addRevokeListener(() => {
+        void signOutWithSupabase({
+          screen: 'Login',
+          reason: 'apple_credential_revoked',
+        })
+          .catch((error) => {
+            reportError(error, { area: 'apple_credential_revoked_sign_out' });
+          })
+          .finally(() => {
+            setCurrentUser(null);
+            Alert.alert(
+              'Apple sign-in access changed',
+              'WordWiz signed you out because Apple sign-in access was revoked. You can sign in again at any time.',
+            );
+          });
+      });
+    } catch (error) {
+      reportError(error, { area: 'apple_credential_revoked_listener' });
+    }
+
+    return () => {
+      revokeSubscription?.remove();
+    };
+  }, []);
 
   useEffect(() => {
     if (!env.isSupabaseConfigured) {
@@ -2004,6 +2050,30 @@ export default function AppContent() {
     }
   }
 
+  async function loginWithApple() {
+    if (!ensureSupabaseReady()) {
+      return false;
+    }
+
+    try {
+      const user = await signInWithApple({
+        screen: 'Login',
+        reason: 'apple_native_login',
+      });
+      if (user) {
+        setCurrentUser(user);
+      }
+      return Boolean(user);
+    } catch (error) {
+      reportError(error, { area: 'apple_sign_in_ui' });
+      Alert.alert(
+        'Could not sign in with Apple',
+        'Apple sign-in could not be completed. Check your connection and try again.',
+      );
+      return false;
+    }
+  }
+
   async function logout() {
     if (!env.isSupabaseConfigured) {
       setCurrentUser(null);
@@ -2027,62 +2097,119 @@ export default function AppContent() {
   }
 
   function deleteAccount() {
-    if (!ensureSupabaseReady()) {
+    if (!ensureSupabaseReady() || !currentUser || isDeletingAccount) {
       return;
     }
 
-    Alert.alert(
-      'Delete your account?',
-      'This permanently removes your WordWiz account and cloud learning data. This cannot be undone.',
-      [
-        { text: 'Keep account', style: 'cancel' },
-        {
-          text: 'Delete account',
-          style: 'destructive',
-          onPress: confirmDeleteAccount,
-        },
-      ],
-    );
+    const confirmationMessage = [
+      'This permanently deletes your WordWiz account, cloud learning data, Community profile and content, and uploaded photos. This cannot be undone.',
+      'An active App Store subscription is managed separately by Apple and is not canceled automatically. You can manage or cancel it in Apple Account subscription settings.',
+    ].join('\n\n');
+    const deleteButton = {
+      text: 'Delete account',
+      style: 'destructive' as const,
+      onPress: () => { void confirmDeleteAccount(); },
+    };
+
+    if (subscription.hasActiveRevenueCatEntitlement) {
+      Alert.alert(
+        'Delete your account?',
+        confirmationMessage,
+        [
+          { text: 'Keep account', style: 'cancel' },
+          {
+            text: 'Manage subscription',
+            onPress: () => {
+              void subscription.manageSubscription().catch(() => {
+                Alert.alert(
+                  'Subscription settings unavailable',
+                  'Open your Apple Account subscription settings to manage WordWiz Plus.',
+                );
+              });
+            },
+          },
+          deleteButton,
+        ],
+      );
+      return;
+    }
+
+    Alert.alert('Delete your account?', confirmationMessage, [
+      { text: 'Keep account', style: 'cancel' },
+      deleteButton,
+    ]);
   }
 
   async function confirmDeleteAccount() {
     const deletingUserId = currentUser?.id;
+    if (!deletingUserId || isDeletingAccount) {
+      return;
+    }
 
+    setIsDeletingAccount(true);
+
+    let deletionResult: Awaited<ReturnType<typeof requestSupabaseAccountDeletion>>;
     try {
-      await requestSupabaseAccountDeletion({
+      const appleProviderTokens = await getStoredAppleProviderTokens();
+      deletionResult = await requestSupabaseAccountDeletion({
         screen: 'Dashboard',
         reason: 'delete_account',
+        ...appleProviderTokens,
       });
-      try {
-        await signOutWithSupabase({
-          screen: 'Dashboard',
-          reason: 'delete_account_cleanup',
-        });
-      } catch {
-        // The account is already deleted server-side, so the local session can be cleared by state reset below.
-      }
-      if (deletingUserId) {
-        await clearLocalLearningData(deletingUserId);
-      }
+    } catch {
+      setIsDeletingAccount(false);
+      Alert.alert(
+        'Could not delete account',
+        'Your account was not deleted. Please try again, or contact howardlt94@gmail.com if the problem continues.',
+      );
+      return;
+    }
+
+    try {
+      // These cleanup calls happen only after the server has confirmed Auth
+      // deletion. Their failure must not turn a completed deletion into a
+      // misleading "not deleted" message.
+      await subscription.syncUser(null).catch((error) => {
+        reportError(error, { area: 'account_deletion_revenuecat_cleanup' });
+      });
+      await signOutWithSupabase({
+        screen: 'Dashboard',
+        reason: 'delete_account_cleanup',
+      }).catch((error) => {
+        reportError(error, { area: 'account_deletion_auth_cleanup' });
+      });
+      await clearLocalLearningData(deletingUserId).catch((error) => {
+        reportError(error, { area: 'account_deletion_local_cleanup' });
+      });
+      await clearOAuthProviderTokens();
       cloudHydratedUserId.current = null;
       cloudHydratingUserId.current = null;
       setCurrentUser(null);
       setWords([]);
       setQuizProgress(null);
+      setPausedQuizSession(null);
       latestAnalytics.current = EMPTY_ANALYTICS;
       setAnalytics(EMPTY_ANALYTICS);
+      latestAchievementWallet.current = EMPTY_ACHIEVEMENT_WALLET;
+      setAchievementWallet(EMPTY_ACHIEVEMENT_WALLET);
       setReminderSettings(DEFAULT_REMINDER);
       setDailyLearningGoal(1);
+      setTimedLearningEnabled(false);
+      setTimeBasedLearningSettings(DEFAULT_TIME_BASED_LEARNING_SETTINGS);
+      setGamePreferences(DEFAULT_GAME_PREFERENCES);
+      setQuizPreferences(DEFAULT_QUIZ_PREFERENCES);
+      setIsAdmin(false);
       setActiveTab('home');
+      setIsDeletingAccount(false);
+      const appleRevocationNote = deletionResult.appleRevocation === 'manual_required'
+        ? ' If you used Sign in with Apple, revoke WordWiz in your Apple Account settings as well.'
+        : '';
       Alert.alert(
         'Account deleted',
-        'Your WordWiz account deletion request was completed.',
+        `Your WordWiz account and associated data were deleted.${appleRevocationNote}`,
       );
-    } catch {
-      Alert.alert(
-        'Could not delete account',
-        'Your account was not deleted. Please try again, or contact howardlt94@gmail.com if the problem continues.',
-      );
+    } finally {
+      setIsDeletingAccount(false);
     }
   }
 
@@ -3216,6 +3343,7 @@ export default function AppContent() {
         onLogout={logout}
         onChangePassword={changePassword}
         onDeleteAccount={deleteAccount}
+        isDeletingAccount={isDeletingAccount}
         isAdmin={isAdmin}
         onOpenAdmin={() => setActiveTab('admin')}
         onOpenOnboardingGuide={() => setShowOnboardingGuide(true)}
@@ -3290,6 +3418,7 @@ export default function AppContent() {
           isPasswordRecovery={isPasswordRecovery}
           onUpdatePassword={changePassword}
           onOAuthLogin={loginWithOAuth}
+          onAppleLogin={loginWithApple}
           onResendVerification={resendVerification}
         />
       ) : (
@@ -3645,6 +3774,13 @@ async function clearLocalLearningData(userId: string) {
     getUserCacheKey(userId, 'achievement-wallet'),
     getUserCacheKey(userId, 'cloud-hydrated-at'),
     getUserCacheKey(userId, 'onboarding-complete'),
+    // Remove pre-Supabase learning data too so a new account on this device
+    // cannot inherit the deleted learner's cache or onboarding state.
+    '@wordwiz/words',
+    '@wordwiz/quiz-progress',
+    '@wordwiz/analytics',
+    '@wordwiz/reminder-settings',
+    LEGACY_ONBOARDING_KEY,
   ]);
 }
 

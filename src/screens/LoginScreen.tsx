@@ -16,6 +16,11 @@ import { COLORS } from '../constants/theme';
 import { validateEmail, validateName, validatePassword } from '../services';
 import { styles } from '../styles';
 import type { Provider } from '@supabase/supabase-js';
+import {
+  AppleAuthenticationButton,
+  AppleAuthenticationButtonStyle,
+  AppleAuthenticationButtonType,
+} from 'expo-apple-authentication';
 
 type AuthMode = 'login' | 'create' | 'forgot';
 
@@ -26,6 +31,7 @@ export function LoginScreen({
   isPasswordRecovery,
   onUpdatePassword,
   onOAuthLogin,
+  onAppleLogin,
   onResendVerification,
 }: {
   onLogin: (email: string, password: string) => Promise<boolean>;
@@ -38,6 +44,7 @@ export function LoginScreen({
   isPasswordRecovery: boolean;
   onUpdatePassword: (password: string) => Promise<boolean>;
   onOAuthLogin: (provider: Provider, label: string) => Promise<boolean>;
+  onAppleLogin: () => Promise<boolean>;
   onResendVerification: (email: string) => Promise<boolean>;
 }) {
   const [mode, setMode] = useState<AuthMode>('login');
@@ -201,8 +208,20 @@ export function LoginScreen({
 
   async function continueWithProvider(provider: Provider, label: string) {
     setIsSubmitting(true);
-    await onOAuthLogin(provider, label);
-    setIsSubmitting(false);
+    try {
+      await onOAuthLogin(provider, label);
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  async function continueWithApple() {
+    setIsSubmitting(true);
+    try {
+      await onAppleLogin();
+    } finally {
+      setIsSubmitting(false);
+    }
   }
 
   const providers: {
@@ -309,26 +328,41 @@ export function LoginScreen({
             <>
               <View style={styles.oauthGrid}>
                 {providers.map((item) => (
-                  <Pressable
-                    key={item.provider}
-                    onPress={() => continueWithProvider(item.provider, item.label)}
-                    disabled={isSubmitting}
-                    style={({ pressed }) => [
-                      styles.oauthButton,
-                      isSubmitting && styles.authPrimaryButtonDisabled,
-                      pressed && !isSubmitting && styles.pressed,
-                    ]}
-                  >
-                    <View
+                  item.provider === 'apple' && Platform.OS === 'ios' ? (
+                    <AppleAuthenticationButton
+                      key={item.provider}
+                      buttonType={AppleAuthenticationButtonType.SIGN_IN}
+                      buttonStyle={AppleAuthenticationButtonStyle.BLACK}
+                      cornerRadius={20}
+                      onPress={() => { void continueWithApple(); }}
+                      pointerEvents={isSubmitting ? 'none' : 'auto'}
                       style={[
-                        styles.oauthIconBadge,
-                        { backgroundColor: item.background },
+                        styles.appleNativeButton,
+                        isSubmitting && styles.authPrimaryButtonDisabled,
+                      ]}
+                    />
+                  ) : (
+                    <Pressable
+                      key={item.provider}
+                      onPress={() => continueWithProvider(item.provider, item.label)}
+                      disabled={isSubmitting}
+                      style={({ pressed }) => [
+                        styles.oauthButton,
+                        isSubmitting && styles.authPrimaryButtonDisabled,
+                        pressed && !isSubmitting && styles.pressed,
                       ]}
                     >
-                      <OAuthLogo logo={item.logo} />
-                    </View>
-                    <Text style={styles.oauthButtonText}>{item.label}</Text>
-                  </Pressable>
+                      <View
+                        style={[
+                          styles.oauthIconBadge,
+                          { backgroundColor: item.background },
+                        ]}
+                      >
+                        <OAuthLogo logo={item.logo} />
+                      </View>
+                      <Text style={styles.oauthButtonText}>{item.label}</Text>
+                    </Pressable>
+                  )
                 ))}
               </View>
               <View style={styles.authDividerRow}>

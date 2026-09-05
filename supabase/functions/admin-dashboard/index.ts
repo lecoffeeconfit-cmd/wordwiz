@@ -1,4 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { cleanupUserOwnedData } from '../_shared/accountDeletion.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -606,6 +607,7 @@ async function runUserAction(
       if (storageError) throw storageError;
     }
   } else {
+    await cleanupUserOwnedData(adminClient, targetUserId);
     const { error } = await adminClient.auth.admin.deleteUser(targetUserId, false);
     if (error) throw error;
   }

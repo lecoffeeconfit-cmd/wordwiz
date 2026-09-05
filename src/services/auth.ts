@@ -1,9 +1,13 @@
 import type { AuthUser, StoredUser } from '../types';
 import { supabase } from './supabase';
-import type { Provider, User } from '@supabase/supabase-js';
+import * as SecureStore from 'expo-secure-store';
+import * as AppleAuthentication from 'expo-apple-authentication';
+import * as Crypto from 'expo-crypto';
+import type { Provider, Session, User } from '@supabase/supabase-js';
 import * as Linking from 'expo-linking';
 import * as WebBrowser from 'expo-web-browser';
 import { Platform } from 'react-native';
+import { reportError } from './errorReporting';
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MAX_NAME_LENGTH = 60;
@@ -17,6 +21,24 @@ type AuthRequestContext = {
   screen: string;
   reason: string;
 };
+
+export type StoredAppleProviderTokens = {
+  appleProvider: boolean;
+  appleProviderToken: string | null;
+  appleProviderRefreshToken: string | null;
+};
+
+export type AccountDeletionResult = {
+  deleted: true;
+  appleRevocation: 'revoked' | 'manual_required' | 'not_applicable';
+};
+
+const oauthTokenStoreOptions: SecureStore.SecureStoreOptions = {
+  keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+};
+const APPLE_PROVIDER_TOKEN_KEY = '@wordwiz/auth/apple-provider-token';
+const APPLE_PROVIDER_REFRESH_TOKEN_KEY = '@wordwiz/auth/apple-provider-refresh-token';
+const APPLE_PROVIDER_USER_KEY = '@wordwiz/auth/apple-provider-user';
 
 export function normalizeEmail(email: string) {
   return email.trim().toLowerCase();
@@ -113,6 +135,8 @@ export async function completeSupabaseAuthRedirect(
     const { data, error } = await supabase.auth.exchangeCodeForSession(code);
     if (error) throw error;
 
+    await persistOAuthProviderTokens(getOAuthProvider(data.session?.user), data.session);
+
     logAuthRequest('auth:email_redirect_code', data.user, context);
     return data.user ? toAuthUser(data.user) : null;
   }
@@ -123,11 +147,25 @@ export async function completeSupabaseAuthRedirect(
     return null;
   }
 
+  const providerToken = params.get('provider_token');
+  const providerRefreshToken = params.get('provider_refresh_token');
+
   const { data, error } = await supabase.auth.setSession({
     access_token: accessToken,
     refresh_token: refreshToken,
   });
   if (error) throw error;
+
+  await persistOAuthProviderTokens(
+    getOAuthProvider(data.session?.user),
+    data.session
+      ? {
+          ...data.session,
+          provider_token: providerToken ?? data.session.provider_token,
+          provider_refresh_token: providerRefreshToken ?? data.session.provider_refresh_token,
+        }
+      : null,
+  );
 
   logAuthRequest('auth:email_redirect_session', data.user, context);
   return data.user ? toAuthUser(data.user) : null;
@@ -146,6 +184,8 @@ export async function signInWithSupabase(
   if (error) {
     throw error;
   }
+
+  await clearOAuthProviderTokens();
 
   logAuthRequest('auth:sign_in_password', data.user, context);
 
@@ -177,6 +217,8 @@ export async function signUpWithSupabase({
   if (error) {
     throw error;
   }
+
+  await clearOAuthProviderTokens();
 
   logAuthRequest('auth:sign_up', data.user, context);
 
@@ -238,10 +280,142 @@ export async function updateSupabasePassword(
   return data.user ? toAuthUser(data.user) : null;
 }
 
+/**
+ * Signs in with Apple's native iOS authorization sheet and exchanges the
+ * resulting identity token for a Supabase session. Apple expects the hashed
+ * nonce in its request while Supabase verifies the original raw nonce.
+ */
+export async function signInWithApple(context?: AuthRequestContext) {
+  if (Platform.OS !== 'ios') {
+    throw new Error('Native Apple sign-in is only available on iOS.');
+  }
+
+  let rawNonce: string;
+  let hashedNonce: string;
+  try {
+    if (!(await AppleAuthentication.isAvailableAsync())) {
+      throw new Error('Sign in with Apple is not available on this device.');
+    }
+
+    rawNonce = await createAppleNonce();
+    hashedNonce = await Crypto.digestStringAsync(
+      Crypto.CryptoDigestAlgorithm.SHA256,
+      rawNonce,
+      { encoding: Crypto.CryptoEncoding.HEX },
+    );
+  } catch (error) {
+    reportError(error, {
+      area: 'apple_sign_in_native_prepare',
+      code: getErrorCode(error),
+    });
+    throw new Error('Apple sign-in could not be prepared. Please try again.');
+  }
+
+  let credential: AppleAuthentication.AppleAuthenticationCredential;
+  try {
+    credential = await AppleAuthentication.signInAsync({
+      nonce: hashedNonce,
+      requestedScopes: [
+        AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
+        AppleAuthentication.AppleAuthenticationScope.EMAIL,
+      ],
+    });
+  } catch (error) {
+    if (isAppleSignInCancellation(error)) {
+      return null;
+    }
+
+    reportError(error, {
+      area: 'apple_sign_in_native_request',
+      code: getErrorCode(error),
+    });
+    throw new Error('Apple sign-in could not be completed. Please try again.');
+  }
+
+  if (!credential.identityToken) {
+    const error = new Error('Apple sign-in did not return an identity token.');
+    reportError(error, { area: 'apple_sign_in_native_identity_token' });
+    throw error;
+  }
+
+  const { data, error } = await supabase.auth.signInWithIdToken({
+    provider: 'apple',
+    token: credential.identityToken,
+    nonce: rawNonce,
+  });
+
+  if (error) {
+    reportError(error, { area: 'apple_sign_in_native_supabase' });
+    throw new Error('Apple sign-in could not be completed. Please try again.');
+  }
+
+  if (!data.user || !data.session) {
+    const sessionError = new Error('Apple sign-in did not return a Supabase session.');
+    reportError(sessionError, { area: 'apple_sign_in_native_session' });
+    throw sessionError;
+  }
+
+  // Native Apple authentication returns a one-time authorization code. Give
+  // the trusted server a chance to exchange it for Apple's refresh token so
+  // account deletion can revoke the Apple authorization automatically.
+  await clearOAuthProviderTokens();
+  if (credential.authorizationCode) {
+    const appleProviderRefreshToken = await exchangeAppleAuthorizationCode(
+      credential.authorizationCode,
+    );
+    if (appleProviderRefreshToken) {
+      await persistOAuthProviderTokens('apple', {
+        ...data.session,
+        provider_refresh_token: appleProviderRefreshToken,
+      });
+    }
+  } else {
+    reportError(
+      new Error('Apple sign-in did not return an authorization code.'),
+      { area: 'apple_sign_in_native_authorization_code' },
+    );
+  }
+
+  // Apple returns fullName only during the first authorization, and the
+  // individual name fields can each be null. A metadata write is best effort:
+  // it must never turn a successful authentication into a failed login.
+  let appleName: string | null = null;
+  try {
+    appleName = getAppleFullName(credential.fullName);
+  } catch (error) {
+    // Name formatting is optional metadata and must never invalidate a valid
+    // Apple authentication result.
+    reportError(error, { area: 'apple_sign_in_native_name_format' });
+  }
+  let authenticatedUser = data.user;
+  if (
+    appleName &&
+    !getStringMetadata(data.user.user_metadata?.name) &&
+    !getStringMetadata(data.user.user_metadata?.full_name)
+  ) {
+    try {
+      const metadataResult = await supabase.auth.updateUser({
+        data: { name: appleName },
+      });
+      if (metadataResult.error) {
+        reportError(metadataResult.error, { area: 'apple_sign_in_native_name' });
+      } else if (metadataResult.data.user) {
+        authenticatedUser = metadataResult.data.user;
+      }
+    } catch (error) {
+      reportError(error, { area: 'apple_sign_in_native_name' });
+    }
+  }
+
+  logAuthRequest('auth:native_apple_sign_in', authenticatedUser, context);
+  return toAuthUser(authenticatedUser);
+}
+
 export async function signInWithOAuthProvider(
   provider: Provider,
   context?: AuthRequestContext,
 ) {
+  await clearOAuthProviderTokens();
   const redirectTo = getAuthRedirectUrl();
 
   const { data, error } = await supabase.auth.signInWithOAuth({
@@ -280,6 +454,9 @@ export async function signInWithOAuthProvider(
     throw new Error(`${provider} sign-in did not return a Supabase session.`);
   }
 
+  const providerToken = params.get('provider_token');
+  const providerRefreshToken = params.get('provider_refresh_token');
+
   const sessionResult = await supabase.auth.setSession({
     access_token: accessToken,
     refresh_token: refreshToken,
@@ -289,31 +466,195 @@ export async function signInWithOAuthProvider(
     throw sessionResult.error;
   }
 
+  const oauthSession = sessionResult.data.session;
+  if (!oauthSession) {
+    throw new Error(`${provider} sign-in did not return a Supabase session.`);
+  }
+
+  await persistOAuthProviderTokens(provider, {
+    ...oauthSession,
+    provider_token: providerToken ?? oauthSession.provider_token,
+    provider_refresh_token: providerRefreshToken ?? oauthSession.provider_refresh_token,
+  });
+
   logAuthRequest('auth:oauth_set_session', sessionResult.data.user, context);
 
   return sessionResult.data.user ? toAuthUser(sessionResult.data.user) : null;
 }
 
 export async function signOutWithSupabase(context?: AuthRequestContext) {
-  const { error } = await supabase.auth.signOut();
+  try {
+    const { error } = await supabase.auth.signOut();
 
-  if (error) {
-    throw error;
+    if (error) {
+      throw error;
+    }
+
+    logAuthRequest('auth:sign_out', null, context);
+  } finally {
+    // Provider tokens are only needed to revoke Sign in with Apple during the
+    // account-deletion request. They must not survive a normal sign-out.
+    await clearOAuthProviderTokens();
   }
-
-  logAuthRequest('auth:sign_out', null, context);
 }
 
-export async function requestSupabaseAccountDeletion(context?: AuthRequestContext) {
-  const { error } = await supabase.functions.invoke('delete-account', {
+export async function requestSupabaseAccountDeletion({
+  screen,
+  reason,
+  appleProvider,
+  appleProviderToken,
+  appleProviderRefreshToken,
+}: AuthRequestContext & Partial<StoredAppleProviderTokens>): Promise<AccountDeletionResult> {
+  const { data, error } = await supabase.functions.invoke('delete-account', {
     method: 'DELETE',
+    body: {
+      ...(appleProvider ? { appleProvider: true } : {}),
+      ...(appleProviderToken ? { appleProviderToken } : {}),
+      ...(appleProviderRefreshToken ? { appleProviderRefreshToken } : {}),
+    },
   });
 
   if (error) {
     throw error;
   }
 
-  logAuthRequest('edge_function:delete_account', null, context);
+  if (!data || data.deleted !== true) {
+    throw new Error('The account deletion service did not confirm deletion.');
+  }
+
+  const appleRevocation = data.appleRevocation === 'revoked'
+    ? 'revoked'
+    : data.appleRevocation === 'manual_required'
+      ? 'manual_required'
+      : 'not_applicable';
+
+  logAuthRequest('edge_function:delete_account', null, { screen, reason });
+  return { deleted: true, appleRevocation };
+}
+
+/**
+ * Provider tokens are emitted only once by Supabase after OAuth. Keep them in
+ * the OS credential store so account deletion can ask the trusted server to
+ * revoke a Sign in with Apple grant later.
+ */
+export async function persistOAuthProviderTokens(
+  provider: unknown,
+  session: Session | null,
+) {
+  if (provider !== 'apple') {
+    await clearOAuthProviderTokens();
+    return;
+  }
+  if (!session) {
+    return;
+  }
+
+  const providerToken = getOptionalToken(session.provider_token);
+  const providerRefreshToken = getOptionalToken(session.provider_refresh_token);
+  if (!providerToken && !providerRefreshToken) {
+    return;
+  }
+
+  try {
+    await Promise.all([
+      SecureStore.setItemAsync(
+        APPLE_PROVIDER_TOKEN_KEY,
+        providerToken ?? '',
+        oauthTokenStoreOptions,
+      ),
+      SecureStore.setItemAsync(
+        APPLE_PROVIDER_REFRESH_TOKEN_KEY,
+        providerRefreshToken ?? '',
+        oauthTokenStoreOptions,
+      ),
+      SecureStore.setItemAsync(
+        APPLE_PROVIDER_USER_KEY,
+        session.user.id,
+        oauthTokenStoreOptions,
+      ),
+    ]);
+  } catch (error) {
+    // A device credential-store failure does not block sign-in. The deletion
+    // flow will truthfully fall back to Apple's manual revoke instructions.
+    reportError(error, { area: 'oauth_provider_token_storage' });
+  }
+}
+
+export async function getStoredAppleProviderTokens(): Promise<StoredAppleProviderTokens | null> {
+  let providerToken: string | null = null;
+  let providerRefreshToken: string | null = null;
+  let storedProviderUserId: string | null = null;
+  try {
+    [providerToken, providerRefreshToken, storedProviderUserId] = await Promise.all([
+      SecureStore.getItemAsync(APPLE_PROVIDER_TOKEN_KEY, oauthTokenStoreOptions),
+      SecureStore.getItemAsync(APPLE_PROVIDER_REFRESH_TOKEN_KEY, oauthTokenStoreOptions),
+      SecureStore.getItemAsync(APPLE_PROVIDER_USER_KEY, oauthTokenStoreOptions),
+    ]);
+  } catch (error) {
+    reportError(error, { area: 'oauth_provider_token_read' });
+  }
+
+  if (providerToken || providerRefreshToken) {
+    try {
+      const { data } = await supabase.auth.getSession();
+      const currentUser = data.session?.user;
+      if (
+        storedProviderUserId &&
+        currentUser?.id === storedProviderUserId &&
+        getOAuthProvider(currentUser) === 'apple'
+      ) {
+        return {
+          appleProvider: true,
+          appleProviderToken: providerToken,
+          appleProviderRefreshToken: providerRefreshToken,
+        };
+      }
+    } catch (error) {
+      reportError(error, { area: 'oauth_provider_token_owner_read' });
+    }
+
+    // Do not risk revoking a token that cannot be proven to belong to the
+    // currently authenticated Apple user.
+    await clearOAuthProviderTokens();
+  }
+
+  // On web, SecureStore is unavailable. A freshly completed OAuth session may
+  // still hold the one-time provider token in memory, so use it if present.
+  try {
+    const { data } = await supabase.auth.getSession();
+    if (getOAuthProvider(data.session?.user) === 'apple') {
+      const appleProviderToken = getOptionalToken(data.session?.provider_token);
+      const appleProviderRefreshToken = getOptionalToken(data.session?.provider_refresh_token);
+      if (appleProviderToken || appleProviderRefreshToken) {
+        return { appleProvider: true, appleProviderToken, appleProviderRefreshToken };
+      }
+
+      // If the native authorization-code exchange was unavailable, preserve
+      // the provider identity so deletion can report that manual Apple
+      // authorization revocation is still required.
+      return {
+        appleProvider: true,
+        appleProviderToken: null,
+        appleProviderRefreshToken: null,
+      };
+    }
+  } catch (error) {
+    reportError(error, { area: 'oauth_provider_token_session_read' });
+  }
+
+  return null;
+}
+
+export async function clearOAuthProviderTokens() {
+  try {
+    await Promise.all([
+      SecureStore.deleteItemAsync(APPLE_PROVIDER_TOKEN_KEY, oauthTokenStoreOptions),
+      SecureStore.deleteItemAsync(APPLE_PROVIDER_REFRESH_TOKEN_KEY, oauthTokenStoreOptions),
+      SecureStore.deleteItemAsync(APPLE_PROVIDER_USER_KEY, oauthTokenStoreOptions),
+    ]);
+  } catch (error) {
+    reportError(error, { area: 'oauth_provider_token_clear' });
+  }
 }
 
 function logAuthRequest(
@@ -344,6 +685,87 @@ function estimatePayloadBytes(payload: unknown) {
 
 function getStringMetadata(value: unknown) {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+async function createAppleNonce() {
+  const bytes = await Crypto.getRandomBytesAsync(32);
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function exchangeAppleAuthorizationCode(authorizationCode: string) {
+  try {
+    const { data, error } = await supabase.functions.invoke('apple-token-exchange', {
+      body: { authorizationCode },
+    });
+    if (error) {
+      reportError(error, { area: 'apple_sign_in_native_token_exchange' });
+      return null;
+    }
+
+    const refreshToken = data && typeof data === 'object'
+      ? getOptionalToken((data as { refreshToken?: unknown }).refreshToken)
+      : null;
+    if (!refreshToken) {
+      reportError(
+        new Error('Apple token exchange did not return a refresh token.'),
+        { area: 'apple_sign_in_native_token_exchange_response' },
+      );
+      return null;
+    }
+
+    return refreshToken;
+  } catch (error) {
+    // The exchange is needed for automatic Apple revocation, but a temporary
+    // server failure must not reject an otherwise valid sign-in. Deletion will
+    // accurately show the manual revoke path until a token is captured.
+    reportError(error, { area: 'apple_sign_in_native_token_exchange' });
+    return null;
+  }
+}
+
+function getAppleFullName(fullName: AppleAuthentication.AppleAuthenticationFullName | null) {
+  if (!fullName) {
+    return null;
+  }
+
+  const hasNamePart = [
+    fullName.namePrefix,
+    fullName.givenName,
+    fullName.middleName,
+    fullName.familyName,
+    fullName.nameSuffix,
+    fullName.nickname,
+  ].some((part) => Boolean(getStringMetadata(part)));
+
+  if (!hasNamePart) {
+    return null;
+  }
+
+  return getStringMetadata(AppleAuthentication.formatFullName(fullName));
+}
+
+function isAppleSignInCancellation(error: unknown) {
+  return getErrorCode(error) === 'ERR_REQUEST_CANCELED';
+}
+
+function getErrorCode(error: unknown) {
+  if (error && typeof error === 'object' && 'code' in error) {
+    const code = (error as { code?: unknown }).code;
+    return typeof code === 'string' ? code : 'unknown';
+  }
+
+  return 'unknown';
+}
+
+function getOAuthProvider(user: User | null | undefined) {
+  const provider = user?.app_metadata?.provider;
+  return typeof provider === 'string' ? provider : null;
+}
+
+function getOptionalToken(value: unknown) {
+  return typeof value === 'string' && value.length > 0 && value.length <= 8192
+    ? value
+    : null;
 }
 
 function getWebRedirectUrl() {

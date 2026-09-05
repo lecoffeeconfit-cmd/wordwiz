@@ -233,6 +233,25 @@ test('subscription access uses the configured public iOS key and active plus ent
   assert.doesNotMatch(revenueCatSource, /test[_-]?store/i);
 });
 
+test('subscription paywall and App Store metadata include required legal details', () => {
+  const paywall = fs.readFileSync(path.join(projectRoot, 'src/modals/WordWizPlusModal.tsx'), 'utf8');
+  const appContent = fs.readFileSync(path.join(projectRoot, 'src/application/AppContent.tsx'), 'utf8');
+  const submissionMetadata = fs.readFileSync(path.join(projectRoot, 'docs/app-store-submission.md'), 'utf8');
+
+  assert.match(paywall, /title="WordWiz Plus Annual"/);
+  assert.match(paywall, /1-year subscription/);
+  assert.match(paywall, /title="WordWiz Plus Monthly"/);
+  assert.match(paywall, /1-month subscription/);
+  assert.match(paywall, /Payment is charged to your Apple ID/);
+  assert.match(paywall, /accessibilityLabel="Open Terms of Use"/);
+  assert.match(paywall, /accessibilityLabel="Open Privacy Policy"/);
+  assert.match(appContent, /https:\/\/lecoffeeconfit-cmd\.github\.io\/wordwiz-legal\//);
+  assert.match(appContent, /https:\/\/lecoffeeconfit-cmd\.github\.io\/wordwiz-legal\/terms\.html/);
+  assert.match(submissionMetadata, /https:\/\/www\.apple\.com\/legal\/internet-services\/itunes\/dev\/stdeula\//);
+  assert.match(submissionMetadata, /Privacy Policy URL/);
+  assert.match(submissionMetadata, /App Review Information/);
+});
+
 test('private keys cannot be read by the app or included through public Expo variables', () => {
   const envSource = fs.readFileSync(path.join(projectRoot, 'src/config/env.ts'), 'utf8');
   const buildCheck = fs.readFileSync(path.join(projectRoot, 'scripts/check-public-env.cjs'), 'utf8');
@@ -244,6 +263,37 @@ test('private keys cannot be read by the app or included through public Expo var
   assert.match(supabaseSource, /expo-secure-store/);
   assert.match(supabaseSource, /WHEN_UNLOCKED_THIS_DEVICE_ONLY/);
   assert.doesNotMatch(supabaseSource, /storage:\s*AsyncStorage/);
+});
+
+test('native Apple sign-in is configured for release iPhone and iPad builds', () => {
+  const appConfig = JSON.parse(fs.readFileSync(path.join(projectRoot, 'app.json'), 'utf8'));
+  const authSource = fs.readFileSync(path.join(projectRoot, 'src/services/auth.ts'), 'utf8');
+  const loginSource = fs.readFileSync(path.join(projectRoot, 'src/screens/LoginScreen.tsx'), 'utf8');
+  const appContent = fs.readFileSync(path.join(projectRoot, 'src/application/AppContent.tsx'), 'utf8');
+
+  assert.equal(appConfig.expo.ios.bundleIdentifier, 'com.lecoffeeconfit.wordwiz');
+  assert.equal(appConfig.expo.ios.supportsTablet, true);
+  assert.equal(appConfig.expo.ios.usesAppleSignIn, true);
+  assert.ok(appConfig.expo.plugins.includes('expo-apple-authentication'));
+  assert.equal(appConfig.expo.ios.infoPlist.CFBundleAllowMixedLocalizations, true);
+  assert.match(authSource, /expo-apple-authentication/);
+  assert.match(authSource, /expo-crypto/);
+  assert.match(authSource, /getRandomBytesAsync\(32\)/);
+  assert.match(authSource, /nonce: hashedNonce/);
+  assert.match(authSource, /provider: 'apple'/);
+  assert.match(authSource, /token: credential\.identityToken/);
+  assert.match(authSource, /nonce: rawNonce/);
+  assert.match(authSource, /credential\.authorizationCode/);
+  assert.match(authSource, /apple-token-exchange/);
+  assert.match(loginSource, /AppleAuthenticationButton/);
+  assert.match(appContent, /addRevokeListener/);
+  const exchangeFunction = fs.readFileSync(
+    path.join(projectRoot, 'supabase/functions/apple-token-exchange/index.ts'),
+    'utf8',
+  );
+  assert.match(exchangeFunction, /appleid\.apple\.com\/auth\/token/);
+  assert.match(exchangeFunction, /createRemoteJWKSet/);
+  assert.match(exchangeFunction, /getAppleIdentitySubject/);
 });
 
 test('password recovery returns to WordWiz and requires a new password before continuing', () => {
@@ -3432,6 +3482,87 @@ test('Community handles the disabled state, push opt-out, reports, and declined 
   assert.match(masterTierMigration, /return 'Master'/);
   assert.match(communityDocs, /standard quiz attempt earns `score × 3`/);
   assert.match(communityDocs, /achievements unlocked/);
+});
+
+test('account deletion and Connect visibility controls are explicit', () => {
+  const adminScreen = fs.readFileSync(path.join(projectRoot, 'src/screens/AdminScreen.tsx'), 'utf8');
+  const dashboard = fs.readFileSync(path.join(projectRoot, 'src/screens/DashboardScreen.tsx'), 'utf8');
+  const communityScreen = fs.readFileSync(path.join(projectRoot, 'src/screens/CommunityScreen.tsx'), 'utf8');
+
+  assert.match(adminScreen, /PERMANENT ACCOUNT ACTION/);
+  assert.match(adminScreen, /Delete user permanently/);
+  assert.match(adminScreen, /Delete this user permanently\?/);
+  assert.match(dashboard, /Delete my WordWiz account/);
+  assert.match(dashboard, /Delete account/);
+  assert.match(communityScreen, /Your profile is private/);
+  assert.match(communityScreen, /Make my Connect profile visible again/);
+  assert.match(communityScreen, /private friendships stay available/);
+});
+
+test('account deletion is user-scoped, server-backed, and cleans associated data', () => {
+  const appContent = fs.readFileSync(
+    path.join(projectRoot, 'src/application/AppContent.tsx'),
+    'utf8',
+  );
+  const auth = fs.readFileSync(path.join(projectRoot, 'src/services/auth.ts'), 'utf8');
+  const deletionFunction = fs.readFileSync(
+    path.join(projectRoot, 'supabase/functions/delete-account/index.ts'),
+    'utf8',
+  );
+  const deletionHelper = fs.readFileSync(
+    path.join(projectRoot, 'supabase/functions/_shared/accountDeletion.ts'),
+    'utf8',
+  );
+  const adminFunction = fs.readFileSync(
+    path.join(projectRoot, 'supabase/functions/admin-dashboard/index.ts'),
+    'utf8',
+  );
+  const permissionSql = fs.readFileSync(
+    path.join(projectRoot, 'supabase/admin_dashboard_permissions.sql'),
+    'utf8',
+  );
+  const deletionMigration = fs.readFileSync(
+    path.join(projectRoot, 'supabase/migrations/20260904000000_account_deletion_hardening.sql'),
+    'utf8',
+  );
+
+  assert.match(appContent, /isDeletingAccount/);
+  assert.match(appContent, /Community profile and content/);
+  assert.match(appContent, /App Store subscription is managed separately/);
+  assert.match(appContent, /subscription\.syncUser\(null\)/);
+  assert.match(appContent, /Your account was not deleted/);
+  assert.match(auth, /expo-secure-store/);
+  assert.match(auth, /WHEN_UNLOCKED_THIS_DEVICE_ONLY/);
+  assert.match(auth, /provider_refresh_token/);
+  assert.match(auth, /APPLE_PROVIDER_REFRESH_TOKEN_KEY/);
+  assert.match(auth, /APPLE_PROVIDER_USER_KEY/);
+  assert.match(auth, /appleProviderRefreshToken/);
+  assert.match(deletionFunction, /userClient\.auth\.getUser/);
+  assert.match(deletionFunction, /cleanupUserOwnedData\(adminClient, user\.id\)/);
+  assert.match(deletionFunction, /https:\/\/appleid\.apple\.com\/auth\/revoke/);
+  assert.match(deletionFunction, /APPLE_CLIENT_ID/);
+  assert.match(deletionFunction, /APPLE_CLIENT_SECRET/);
+  assert.match(deletionFunction, /admin\.deleteUser\(\s*user\.id,\s*false/);
+  assert.match(deletionHelper, /community-avatars/);
+  assert.match(deletionHelper, /feedback-screenshots/);
+  assert.match(deletionHelper, /admin_audit_log/);
+  assert.match(deletionHelper, /startsWith\(`\$\{userId\}\//);
+  assert.match(adminFunction, /cleanupUserOwnedData\(adminClient, targetUserId\)/);
+  assert.match(permissionSql, /grant delete on table public\.admin_audit_log to service_role/);
+  assert.match(deletionMigration, /grant delete on table public\.admin_audit_log to service_role/);
+
+  const schemaSources = [
+    fs.readFileSync(path.join(projectRoot, 'supabase/wordwiz_schema.sql'), 'utf8'),
+    fs.readFileSync(path.join(projectRoot, 'supabase/revenuecat_subscription_migration.sql'), 'utf8'),
+    fs.readFileSync(path.join(projectRoot, 'supabase/admin_dashboard_migration.sql'), 'utf8'),
+    fs.readFileSync(path.join(projectRoot, 'supabase/migrations/20260730000005_wordwiz_community.sql'), 'utf8'),
+    fs.readFileSync(path.join(projectRoot, 'supabase/migrations/20260808000000_feedback_system.sql'), 'utf8'),
+    fs.readFileSync(path.join(projectRoot, 'supabase/migrations/20260816000000_community_avatar_moderation.sql'), 'utf8'),
+    fs.readFileSync(path.join(projectRoot, 'supabase/migrations/20260817000001_word_collectors.sql'), 'utf8'),
+    fs.readFileSync(path.join(projectRoot, 'supabase/migrations/20260826000002_learning_streak_goal_completion.sql'), 'utf8'),
+  ].join('\n');
+  assert.match(schemaSources, /references auth\.users\(id\) on delete cascade/gi);
+  assert.ok((schemaSources.match(/on delete cascade/gi) ?? []).length >= 20);
 });
 
 test('startup coordinator always reaches a visible terminal state and supports retry', () => {

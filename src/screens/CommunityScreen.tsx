@@ -2528,7 +2528,7 @@ export function CommunityScreen({
             <Text style={community.heroTitle}>{isEditingProfile ? 'Connect profile settings' : 'Connect with learners'}</Text>
             <Text style={community.heroText}>
               {isEditingProfile
-                ? 'Choose what other learners can see. Your words, definitions, and learning data always stay private.'
+                ? 'Choose what other learners can see. Turn off “Show my Connect profile” to hide from public browsing and rankings; private friendships stay available.'
                 : 'Create a public display name to join optional rankings and connect with friends. Your words, definitions, and learning data stay private.'}
             </Text>
           </View>
@@ -2537,8 +2537,8 @@ export function CommunityScreen({
           <Preference
             label="Show my Connect profile"
             detail={profileVisible
-              ? 'Visible to people browsing Connect. Turn this off to use private mode.'
-              : 'Hidden from public browsing. Friends can still connect using your code.'}
+              ? 'Visible to people browsing Connect. Turn this off to hide from public browsing and rankings.'
+              : 'Hidden from public browsing and rankings. Private friendships stay available, and you can turn this back on any time.'}
             value={profileVisible}
             onChange={setProfileVisible}
             status={profileVisible ? 'PUBLIC' : 'PRIVATE'}
@@ -2625,7 +2625,7 @@ export function CommunityScreen({
           },
         ]}
       >
-        <Pressable onPress={openProfileEditor} accessibilityLabel="Edit Connect profile" hitSlop={8} style={community.profileSettings}>
+        <Pressable onPress={openProfileEditor} accessibilityRole="button" accessibilityLabel="Edit Connect profile" accessibilityHint="Opens settings for your public Connect profile" hitSlop={8} style={community.profileSettings}>
           <Ionicons name="settings-outline" size={23} color={COLORS.purpleDark} />
         </Pressable>
         <View style={community.profileHeaderTop}>
@@ -2670,6 +2670,24 @@ export function CommunityScreen({
           </View>
         </View>
       </Animated.View>
+      {!context.profile.profileVisible ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Make my Connect profile visible again"
+          accessibilityHint="Opens Connect profile settings"
+          onPress={openProfileEditor}
+          style={({ pressed }) => [community.privateProfileNotice, pressed && community.privateProfileNoticePressed]}
+        >
+          <View style={community.privateProfileNoticeIcon}>
+            <Ionicons name="eye-off-outline" size={18} color={COLORS.purpleDark} />
+          </View>
+          <View style={community.privateProfileNoticeCopy}>
+            <Text style={community.privateProfileNoticeTitle}>Your profile is private</Text>
+            <Text style={community.privateProfileNoticeText}>You’re hidden from public Connect browsing. Tap here to make your profile visible again.</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={18} color={COLORS.purpleDark} />
+        </Pressable>
+      ) : null}
       <View style={community.nav}>
         {(['leaderboard', 'friends', 'nudges'] as CommunitySection[]).map((item) => (
           <Pressable
@@ -3180,6 +3198,12 @@ const community = StyleSheet.create({
   profileHeader: { position: 'relative', alignItems: 'center', padding: 20, borderRadius: 28, backgroundColor: '#F8F6FF', borderWidth: 1, borderColor: '#DDD4FF', gap: 17, ...SOFT_SHADOW },
   profileHeaderTop: { alignItems: 'center', gap: 7 },
   profileSettings: { position: 'absolute', top: 15, right: 15, width: 32, height: 32, alignItems: 'center', justifyContent: 'center' },
+  privateProfileNotice: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 13, borderRadius: 18, borderWidth: 1, borderColor: '#D8D0FF', backgroundColor: '#F4F0FF' },
+  privateProfileNoticePressed: { opacity: 0.78 },
+  privateProfileNoticeIcon: { width: 34, height: 34, alignItems: 'center', justifyContent: 'center', borderRadius: 12, backgroundColor: COLORS.white },
+  privateProfileNoticeCopy: { flex: 1, gap: 2 },
+  privateProfileNoticeTitle: { color: COLORS.ink, fontSize: 13, fontWeight: '900' },
+  privateProfileNoticeText: { color: COLORS.muted, fontSize: 11, lineHeight: 15, fontWeight: '700' },
   avatar: { width: 48, height: 48, borderRadius: 17, alignItems: 'center', justifyContent: 'center', overflow: 'hidden', backgroundColor: COLORS.purplePale },
   avatarSmall: { width: 38, height: 38, borderRadius: 14 },
   avatarLarge: { width: 70, height: 70, borderRadius: 25, backgroundColor: COLORS.white },

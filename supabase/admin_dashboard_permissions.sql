@@ -21,3 +21,4 @@ grant select, insert, update on table
 to service_role;
 
 grant insert on table public.admin_audit_log to service_role;
+grant delete on table public.admin_audit_log to service_role;

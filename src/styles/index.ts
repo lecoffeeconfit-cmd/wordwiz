@@ -9439,6 +9439,14 @@ export const styles = StyleSheet.create({
     borderColor: '#E5E8F4',
     ...SOFT_SHADOW,
   },
+  appleNativeButton: {
+    flex: 1,
+    minHeight: 58,
+    paddingHorizontal: 12,
+    borderWidth: 1.5,
+    borderColor: '#E5E8F4',
+    ...SOFT_SHADOW,
+  },
   oauthIconBadge: {
     width: 34,
     height: 34,
@@ -12747,13 +12755,16 @@ export const styles = StyleSheet.create({
     marginTop: 12,
     padding: 16,
     borderRadius: 26,
-    flexDirection: 'row',
-    alignItems: 'center',
     gap: 12,
     backgroundColor: '#FFF7F8',
     borderWidth: 1,
     borderColor: '#FFD7DE',
     ...SOFT_SHADOW,
+  },
+  deleteAccountHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
   },
   deleteAccountIcon: {
     width: 46,
@@ -12792,6 +12803,13 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: COLORS.red,
+  },
+  deleteAccountButtonFull: {
+    alignSelf: 'flex-end',
+    minWidth: 128,
+  },
+  deleteAccountButtonDisabled: {
+    opacity: 0.6,
   },
   deleteAccountButtonText: {
     color: COLORS.white,

@@ -148,8 +148,8 @@ export function WordWizPlusModal({
                 <PlanOption
                   title="WordWiz Plus Annual"
                   caption={subscription.annualPackage?.product.pricePerMonthString
-                    ? `${subscription.annualPackage.product.pricePerMonthString} per month, billed yearly`
-                    : 'Billed yearly'}
+                    ? `1-year subscription · ${subscription.annualPackage.product.pricePerMonthString} per month, billed yearly`
+                    : '1-year subscription · billed yearly'}
                   price={subscription.annualPackage?.product.priceString ?? 'Unavailable'}
                   selected={annualSelected}
                   disabled={!subscription.annualPackage}
@@ -158,7 +158,7 @@ export function WordWizPlusModal({
                 />
                 <PlanOption
                   title="WordWiz Plus Monthly"
-                  caption="Billed monthly"
+                  caption="1-month subscription · billed monthly"
                   price={subscription.monthlyPackage?.product.priceString ?? 'Unavailable'}
                   selected={monthlySelected}
                   disabled={!subscription.monthlyPackage}
@@ -199,7 +199,7 @@ export function WordWizPlusModal({
             <>
               <PlanOption
                 title="WordWiz Plus Annual"
-                caption="Best value · billed yearly"
+                caption="Best value · 1-year subscription · billed yearly"
                 price="Live price in build"
                 selected={selectedPackage === 'annual'}
                 badge="BEST VALUE"
@@ -208,7 +208,7 @@ export function WordWizPlusModal({
               />
               <PlanOption
                 title="WordWiz Plus Monthly"
-                caption="Flexible monthly access"
+                caption="Flexible access · 1-month subscription · billed monthly"
                 price="Live price in build"
                 selected={selectedPackage === 'monthly'}
                 onPress={() => setSelectedPackage('monthly')}
@@ -256,9 +256,23 @@ export function WordWizPlusModal({
           </View>
 
           <View style={styles.plusLegalRow}>
-            <Pressable onPress={() => onOpenLegal('terms')}><Text style={styles.plusLegalLink}>Terms of Use</Text></Pressable>
+            <Pressable
+              accessibilityRole="link"
+              accessibilityLabel="Open Terms of Use"
+              accessibilityHint="Opens the WordWiz Terms of Use in your browser"
+              onPress={() => onOpenLegal('terms')}
+            >
+              <Text style={styles.plusLegalLink}>Terms of Use</Text>
+            </Pressable>
             <Text style={styles.plusLegalDivider}>•</Text>
-            <Pressable onPress={() => onOpenLegal('privacy')}><Text style={styles.plusLegalLink}>Privacy Policy</Text></Pressable>
+            <Pressable
+              accessibilityRole="link"
+              accessibilityLabel="Open Privacy Policy"
+              accessibilityHint="Opens the WordWiz Privacy Policy in your browser"
+              onPress={() => onOpenLegal('privacy')}
+            >
+              <Text style={styles.plusLegalLink}>Privacy Policy</Text>
+            </Pressable>
           </View>
         </ScrollView>
       </View>

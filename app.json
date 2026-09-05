@@ -37,6 +37,7 @@
           "locationWhenInUsePermission": "Allow $(PRODUCT_NAME) to use your approximate location to place you in a broad Word Collectors leaderboard. Your exact location is never shown to other learners."
         }
       ],
+      "expo-apple-authentication",
       "expo-web-browser",
       [
         "expo-speech-recognition",
@@ -88,7 +89,9 @@
     "ios": {
       "bundleIdentifier": "com.lecoffeeconfit.wordwiz",
       "supportsTablet": true,
+      "usesAppleSignIn": true,
       "infoPlist": {
+        "CFBundleAllowMixedLocalizations": true,
         "ITSAppUsesNonExemptEncryption": false,
         "NSAppTransportSecurity": {
           "NSAllowsArbitraryLoads": false
@@ -98,7 +101,7 @@
         "NSMotionUsageDescription": "WordWiz may access motion data to support interactive device features.",
         "NSLocationWhenInUseUsageDescription": "Allow $(PRODUCT_NAME) to use your approximate location to place you in a broad Word Collectors leaderboard. Your exact location is never shown to other learners."
       },
-      "buildNumber": "53"
+      "buildNumber": "62"
     },
     "android": {
       "package": "com.lecoffeeconfit.wordwiz",
