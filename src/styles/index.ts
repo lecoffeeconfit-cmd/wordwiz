@@ -12763,7 +12763,7 @@ export const styles = StyleSheet.create({
   },
   deleteAccountHeader: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     gap: 12,
   },
   deleteAccountIcon: {
@@ -12776,6 +12776,7 @@ export const styles = StyleSheet.create({
   },
   deleteAccountCopy: {
     flex: 1,
+    minWidth: 0,
   },
   deleteAccountLabel: {
     color: COLORS.red,
@@ -12797,16 +12798,13 @@ export const styles = StyleSheet.create({
     fontWeight: '700',
   },
   deleteAccountButton: {
-    minHeight: 40,
-    paddingHorizontal: 13,
-    borderRadius: 14,
+    minHeight: 42,
+    minWidth: 144,
+    paddingHorizontal: 16,
+    borderRadius: 15,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: COLORS.red,
-  },
-  deleteAccountButtonFull: {
-    alignSelf: 'flex-end',
-    minWidth: 128,
   },
   deleteAccountButtonDisabled: {
     opacity: 0.6,

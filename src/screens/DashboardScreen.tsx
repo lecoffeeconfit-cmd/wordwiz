@@ -3800,30 +3800,28 @@ export function DashboardScreen({
             <Text style={styles.deleteAccountLabel}>ACCOUNT CONTROL</Text>
             <Text style={styles.deleteAccountTitle}>Delete account</Text>
             <Text style={styles.deleteAccountText}>
-              Permanently remove your account, cloud learning data, Community
-              profile and content, and uploaded photos. App Store subscriptions
-              are managed separately in Apple Account settings.
+              Delete your account and learning data. Manage subscriptions in
+              Apple Account settings.
             </Text>
           </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Delete my WordWiz account"
+            accessibilityHint="Permanently deletes your account, cloud learning data, Community content, and uploaded photos"
+            accessibilityState={{ busy: isDeletingAccount, disabled: isDeletingAccount }}
+            disabled={isDeletingAccount}
+            onPress={onDeleteAccount}
+            style={({ pressed }) => [
+              styles.deleteAccountButton,
+              isDeletingAccount && styles.deleteAccountButtonDisabled,
+              pressed && !isDeletingAccount && styles.pressed,
+            ]}
+          >
+            <Text style={styles.deleteAccountButtonText}>
+              {isDeletingAccount ? 'Deleting...' : 'Delete account'}
+            </Text>
+          </Pressable>
         </View>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Delete my WordWiz account"
-          accessibilityHint="Permanently deletes your account, cloud learning data, Community content, and uploaded photos"
-          accessibilityState={{ busy: isDeletingAccount, disabled: isDeletingAccount }}
-          disabled={isDeletingAccount}
-          onPress={onDeleteAccount}
-          style={({ pressed }) => [
-            styles.deleteAccountButton,
-            styles.deleteAccountButtonFull,
-            isDeletingAccount && styles.deleteAccountButtonDisabled,
-            pressed && !isDeletingAccount && styles.pressed,
-          ]}
-        >
-          <Text style={styles.deleteAccountButtonText}>
-            {isDeletingAccount ? 'Deleting...' : 'Delete account'}
-          </Text>
-        </Pressable>
       </View>
 
       <View style={styles.legalCard}>
