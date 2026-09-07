@@ -9439,14 +9439,6 @@ export const styles = StyleSheet.create({
     borderColor: '#E5E8F4',
     ...SOFT_SHADOW,
   },
-  appleNativeButton: {
-    flex: 1,
-    minHeight: 58,
-    paddingHorizontal: 12,
-    borderWidth: 1.5,
-    borderColor: '#E5E8F4',
-    ...SOFT_SHADOW,
-  },
   oauthIconBadge: {
     width: 34,
     height: 34,
@@ -12798,10 +12790,9 @@ export const styles = StyleSheet.create({
     fontWeight: '700',
   },
   deleteAccountButton: {
-    minHeight: 42,
-    minWidth: 144,
-    paddingHorizontal: 16,
-    borderRadius: 15,
+    minHeight: 38,
+    paddingHorizontal: 11,
+    borderRadius: 13,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: COLORS.red,

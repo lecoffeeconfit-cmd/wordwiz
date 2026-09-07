@@ -16,11 +16,6 @@ import { COLORS } from '../constants/theme';
 import { validateEmail, validateName, validatePassword } from '../services';
 import { styles } from '../styles';
 import type { Provider } from '@supabase/supabase-js';
-import {
-  AppleAuthenticationButton,
-  AppleAuthenticationButtonStyle,
-  AppleAuthenticationButtonType,
-} from 'expo-apple-authentication';
 
 type AuthMode = 'login' | 'create' | 'forgot';
 
@@ -329,18 +324,28 @@ export function LoginScreen({
               <View style={styles.oauthGrid}>
                 {providers.map((item) => (
                   item.provider === 'apple' && Platform.OS === 'ios' ? (
-                    <AppleAuthenticationButton
+                    <Pressable
                       key={item.provider}
-                      buttonType={AppleAuthenticationButtonType.SIGN_IN}
-                      buttonStyle={AppleAuthenticationButtonStyle.BLACK}
-                      cornerRadius={20}
+                      accessibilityRole="button"
+                      accessibilityLabel="Sign in with Apple"
                       onPress={() => { void continueWithApple(); }}
-                      pointerEvents={isSubmitting ? 'none' : 'auto'}
-                      style={[
-                        styles.appleNativeButton,
+                      disabled={isSubmitting}
+                      style={({ pressed }) => [
+                        styles.oauthButton,
                         isSubmitting && styles.authPrimaryButtonDisabled,
+                        pressed && !isSubmitting && styles.pressed,
                       ]}
-                    />
+                    >
+                      <View
+                        style={[
+                          styles.oauthIconBadge,
+                          { backgroundColor: item.background },
+                        ]}
+                      >
+                        <OAuthLogo logo={item.logo} />
+                      </View>
+                      <Text style={styles.oauthButtonText}>{item.label}</Text>
+                    </Pressable>
                   ) : (
                     <Pressable
                       key={item.provider}
@@ -542,7 +547,7 @@ function OAuthLogo({ logo }: { logo: 'google' | 'apple' | 'microsoft' }) {
     );
   }
 
-  return <Ionicons name="logo-apple" size={22} color={COLORS.ink} />;
+  return <Ionicons name="logo-apple" size={24} color={COLORS.ink} />;
 }
 
 function GoogleLogo() {

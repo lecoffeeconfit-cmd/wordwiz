@@ -3494,6 +3494,26 @@ export function DashboardScreen({
 
       <Pressable
         accessibilityRole="button"
+        accessibilityLabel="Open WordWiz widget setup"
+        accessibilityHint="Choose what WordWiz shows on your Home Screen or Lock Screen"
+        onPress={onOpenWidgets}
+        style={({ pressed }) => [styles.dashboardWidgetsCard, pressed && styles.pressed]}
+      >
+        <View style={styles.dashboardWidgetsIcon}>
+          <Ionicons name="grid-outline" size={21} color={COLORS.purpleDark} />
+        </View>
+        <View style={styles.dashboardWidgetsCopy}>
+          <Text style={styles.dashboardWidgetsLabel}>QUICK ACCESS</Text>
+          <Text style={styles.dashboardWidgetsTitle}>Widgets</Text>
+          <Text style={styles.dashboardWidgetsText}>
+            Manage your WordWiz Home Screen and Lock Screen shortcuts.
+          </Text>
+        </View>
+        <Ionicons name="chevron-forward" size={19} color={COLORS.purpleDark} />
+      </Pressable>
+
+      <Pressable
+        accessibilityRole="button"
         accessibilityLabel="Open the WordWiz guide"
         onPress={onOpenOnboardingGuide}
         style={({ pressed }) => [styles.wordWizGuideCard, pressed && styles.pressed]}
@@ -3648,26 +3668,6 @@ export function DashboardScreen({
         </Pressable>
       </View>
 
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Open WordWiz widget setup"
-        accessibilityHint="Choose what WordWiz shows on your Home Screen or Lock Screen"
-        onPress={onOpenWidgets}
-        style={({ pressed }) => [styles.dashboardWidgetsCard, pressed && styles.pressed]}
-      >
-        <View style={styles.dashboardWidgetsIcon}>
-          <Ionicons name="grid-outline" size={21} color={COLORS.purpleDark} />
-        </View>
-        <View style={styles.dashboardWidgetsCopy}>
-          <Text style={styles.dashboardWidgetsLabel}>QUICK ACCESS</Text>
-          <Text style={styles.dashboardWidgetsTitle}>Widgets</Text>
-          <Text style={styles.dashboardWidgetsText}>
-            Manage your WordWiz Home Screen and Lock Screen shortcuts.
-          </Text>
-        </View>
-        <Ionicons name="chevron-forward" size={19} color={COLORS.purpleDark} />
-      </Pressable>
-
       {isAdmin && onOpenAdmin ? (
         <Pressable
           accessibilityRole="button"
@@ -3800,8 +3800,8 @@ export function DashboardScreen({
             <Text style={styles.deleteAccountLabel}>ACCOUNT CONTROL</Text>
             <Text style={styles.deleteAccountTitle}>Delete account</Text>
             <Text style={styles.deleteAccountText}>
-              Delete your account and learning data. Manage subscriptions in
-              Apple Account settings.
+              Delete your account and learning data. Subscriptions managed on
+              Apple Account.
             </Text>
           </View>
           <Pressable
@@ -3818,7 +3818,7 @@ export function DashboardScreen({
             ]}
           >
             <Text style={styles.deleteAccountButtonText}>
-              {isDeletingAccount ? 'Deleting...' : 'Delete account'}
+              {isDeletingAccount ? 'Deleting...' : 'Delete'}
             </Text>
           </Pressable>
         </View>

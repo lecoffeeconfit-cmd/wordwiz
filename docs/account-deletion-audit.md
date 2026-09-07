@@ -68,8 +68,10 @@ token for Keychain-backed storage. During deletion, the refresh token is sent
 over TLS to the server first when available, and the server calls Apple's revoke
 endpoint. If the exchange function is unavailable or no revocable token is
 available, the account is still deleted and the app tells the learner to revoke
-WordWiz manually in Apple Account settings. A supplied token rejected by Apple
-leaves the WordWiz account intact so deletion can be retried.
+WordWiz manually in Apple Account settings. If Apple rejects a supplied token,
+the WordWiz account is still deleted and the app gives the same
+manual-revocation instruction so an Apple-service error cannot block account
+deletion.
 
 Deleting a WordWiz account does not cancel an App Store subscription. RevenueCat
 is logged out locally, while the learner is directed to Apple subscription

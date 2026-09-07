@@ -285,7 +285,9 @@ test('native Apple sign-in is configured for release iPhone and iPad builds', ()
   assert.match(authSource, /nonce: rawNonce/);
   assert.match(authSource, /credential\.authorizationCode/);
   assert.match(authSource, /apple-token-exchange/);
-  assert.match(loginSource, /AppleAuthenticationButton/);
+  assert.match(loginSource, /accessibilityLabel="Sign in with Apple"/);
+  assert.match(loginSource, /onPress=\{\(\) => \{ void continueWithApple\(\); \}\}/);
+  assert.match(loginSource, /<OAuthLogo logo=\{item\.logo\} \/>/);
   assert.match(appContent, /addRevokeListener/);
   const exchangeFunction = fs.readFileSync(
     path.join(projectRoot, 'supabase/functions/apple-token-exchange/index.ts'),
@@ -3527,8 +3529,10 @@ test('account deletion is user-scoped, server-backed, and cleans associated data
   );
 
   assert.match(appContent, /isDeletingAccount/);
-  assert.match(appContent, /Community profile and content/);
-  assert.match(appContent, /App Store subscription is managed separately/);
+  assert.match(appContent, /Delete your account\?/);
+  assert.match(appContent, /Keep account/);
+  assert.match(appContent, /void confirmDeleteAccount\(\)/);
+  assert.match(appContent, /App Store subscriptions are managed separately/);
   assert.match(appContent, /subscription\.syncUser\(null\)/);
   assert.match(appContent, /Your account was not deleted/);
   assert.match(auth, /expo-secure-store/);
@@ -3540,6 +3544,8 @@ test('account deletion is user-scoped, server-backed, and cleans associated data
   assert.match(deletionFunction, /userClient\.auth\.getUser/);
   assert.match(deletionFunction, /cleanupUserOwnedData\(adminClient, user\.id\)/);
   assert.match(deletionFunction, /https:\/\/appleid\.apple\.com\/auth\/revoke/);
+  assert.match(deletionFunction, /Apple token revocation failed; continuing account deletion/);
+  assert.match(deletionFunction, /appleRevocation = 'manual_required'/);
   assert.match(deletionFunction, /APPLE_CLIENT_ID/);
   assert.match(deletionFunction, /APPLE_CLIENT_SECRET/);
   assert.match(deletionFunction, /admin\.deleteUser\(\s*user\.id,\s*false/);

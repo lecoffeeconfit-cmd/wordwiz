@@ -64,13 +64,25 @@ Deno.serve(async (request) => {
   let appleRevocation: 'revoked' | 'manual_required' | 'not_applicable' = appleProvider
     ? 'manual_required'
     : 'not_applicable';
-  try {
-    if (appleProviderToken || appleProviderRefreshToken) {
+  if (appleProviderToken || appleProviderRefreshToken) {
+    try {
       appleRevocation = await revokeAppleProviderToken(
         appleProviderToken,
         appleProviderRefreshToken,
       );
+    } catch (error) {
+      // Account deletion must not be blocked by an expired, already-revoked,
+      // or temporarily unavailable Apple token. The account is still removed,
+      // and the client tells the learner to revoke WordWiz manually if needed.
+      console.warn('Apple token revocation failed; continuing account deletion', {
+        userId: user.id,
+        error: getErrorMessage(error),
+      });
+      appleRevocation = 'manual_required';
     }
+  }
+
+  try {
     await cleanupUserOwnedData(adminClient, user.id);
   } catch (error) {
     console.error('account deletion cleanup failed', {

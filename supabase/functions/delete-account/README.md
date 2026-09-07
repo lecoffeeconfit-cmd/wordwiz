@@ -43,7 +43,8 @@ supabase secrets set APPLE_CLIENT_ID=com.lecoffeeconfit.wordwiz APPLE_CLIENT_SEC
 not the app's Supabase anon key. If these two secrets are not configured, the
 WordWiz account is still deleted, and the app tells an Apple-sign-in learner to
 revoke WordWiz manually in Apple Account settings. If a token is supplied but
-Apple rejects it, the WordWiz account is kept intact so the learner can retry.
+Apple rejects it, the WordWiz account is still deleted and the app tells the
+learner to revoke WordWiz manually in Apple Account settings.
 
 Apply the account-deletion migration before deploying the function so the
 server-only role can remove the otherwise-unlinked audit rows:

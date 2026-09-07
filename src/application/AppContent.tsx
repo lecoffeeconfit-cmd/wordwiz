@@ -2102,8 +2102,8 @@ export default function AppContent() {
     }
 
     const confirmationMessage = [
-      'This permanently deletes your WordWiz account, cloud learning data, Community profile and content, and uploaded photos. This cannot be undone.',
-      'An active App Store subscription is managed separately by Apple and is not canceled automatically. You can manage or cancel it in Apple Account subscription settings.',
+      'This permanently deletes your WordWiz account and learning data. This cannot be undone.',
+      'App Store subscriptions are managed separately in Apple Account settings.',
     ].join('\n\n');
     const deleteButton = {
       text: 'Delete account',
