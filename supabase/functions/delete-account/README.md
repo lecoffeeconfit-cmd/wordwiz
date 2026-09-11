@@ -25,11 +25,18 @@ Deploy after installing/logging into the Supabase CLI:
 
 ```bash
 supabase functions deploy apple-token-exchange
-supabase functions deploy delete-account
+supabase functions deploy delete-account --no-verify-jwt
 ```
 
-Supabase provides `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and
-`SUPABASE_SERVICE_ROLE_KEY` to deployed Edge Functions automatically.
+The delete function validates the caller inside the handler with
+`auth.getUser()`. Keep gateway JWT verification disabled for this function so
+projects using Supabase's current signing-key setup reach that authoritative
+check instead of being rejected before the handler runs.
+
+Supabase provides `SUPABASE_URL` plus either the current
+`SUPABASE_PUBLISHABLE_KEYS` / `SUPABASE_SECRET_KEYS` bundles or the legacy
+`SUPABASE_ANON_KEY` / `SUPABASE_SERVICE_ROLE_KEY` variables to deployed Edge
+Functions. The function accepts both formats.
 
 For native Sign in with Apple authorization-code exchange and token revocation,
 set these server-only secrets using the same Apple client ID used by the
@@ -51,6 +58,18 @@ server-only role can remove the otherwise-unlinked audit rows:
 
 ```bash
 supabase db push
+```
+
+Include `20260910000000_account_deletion_audit_filter_access.sql`: PostgreSQL
+requires `SELECT` on `admin_user_id` and `target_user_id` to evaluate the cleanup
+filter, in addition to `DELETE` on `admin_audit_log`. Missing filter permissions
+cause `account_deletion_cleanup_failed` even when no audit rows match. These
+grants are restricted to `service_role`.
+
+Verify the deployed database permissions with the rollback-only regression:
+
+```bash
+supabase db query --linked --file tests/sql/account_deletion_permissions.sql
 ```
 
 The existing admin-dashboard function uses the same cleanup helper, so admin

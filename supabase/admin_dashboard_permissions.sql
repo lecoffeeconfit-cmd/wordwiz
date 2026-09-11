@@ -22,3 +22,6 @@ to service_role;
 
 grant insert on table public.admin_audit_log to service_role;
 grant delete on table public.admin_audit_log to service_role;
+-- Filtered deletion requires read access to the user IDs in its WHERE clause.
+grant select (admin_user_id, target_user_id)
+  on table public.admin_audit_log to service_role;

@@ -664,22 +664,6 @@ export default function AppContent() {
     async function handleAuthRedirect(url: string | null) {
       if (!url) return;
 
-      if (url.startsWith('wordwiz://')) {
-        if (!isActive) return;
-        setShowWidgetSetup(false);
-        setActiveTab('home');
-        if (url === 'wordwiz://add-word') {
-          setWordToEdit(null);
-          setShowAddWord(true);
-        } else if (url === 'wordwiz://review') {
-          openQuiz();
-        } else if (url.startsWith('wordwiz://review/')) {
-          const wordId = decodeURIComponent(url.slice('wordwiz://review/'.length));
-          openQuiz(undefined, wordId ? [wordId] : []);
-        }
-        return;
-      }
-
       try {
         const user = await completeSupabaseAuthRedirect(url, {
           screen: 'Auth callback',
@@ -695,6 +679,25 @@ export default function AppContent() {
             'Could not open secure link',
             'That link may have expired. Request a fresh verification or password reset email and try again.',
           );
+        }
+        return;
+      }
+
+      // Check Supabase first: the native auth callback is also a wordwiz://
+      // URL, so routing every custom-scheme URL to widgets would swallow a
+      // valid email confirmation or password-reset callback.
+      if (url.startsWith('wordwiz://')) {
+        if (!isActive) return;
+        setShowWidgetSetup(false);
+        setActiveTab('home');
+        if (url === 'wordwiz://add-word') {
+          setWordToEdit(null);
+          setShowAddWord(true);
+        } else if (url === 'wordwiz://review') {
+          openQuiz();
+        } else if (url.startsWith('wordwiz://review/')) {
+          const wordId = decodeURIComponent(url.slice('wordwiz://review/'.length));
+          openQuiz(undefined, wordId ? [wordId] : []);
         }
       }
     }
@@ -1914,25 +1917,37 @@ export default function AppContent() {
       await AsyncStorage.removeItem(LEGACY_ONBOARDING_KEY);
 
       if (result.needsEmailVerification) {
-        Alert.alert(
-          'Check your email',
-          'We sent you a verification link. Confirm it to return to WordWiz and finish signing in.',
-        );
+        showPostSignUpGuidance();
         return true;
       }
 
       if (result.user) {
         setCurrentUser(result.user);
       }
-
       return true;
-    } catch {
+    } catch (error) {
+      // Supabase may return an explicit duplicate-account error depending on
+      // the project's confirmation settings. Route it to the same neutral UI
+      // as an obfuscated signup response so the app does not reveal whether
+      // an email address is registered.
+      if (isExistingAccountSignUpError(error)) {
+        showPostSignUpGuidance();
+        return true;
+      }
+
       Alert.alert(
         'Could not create account',
         'Try logging in or use a different email.',
       );
       return false;
     }
+  }
+
+  function showPostSignUpGuidance() {
+    Alert.alert(
+      'Check your email',
+      'New account? Check your inbox or spam. Already registered? Log in or reset your password.',
+    );
   }
 
   async function resendVerification(email: string) {
@@ -2156,11 +2171,12 @@ export default function AppContent() {
         reason: 'delete_account',
         ...appleProviderTokens,
       });
-    } catch {
+    } catch (error) {
+      reportError(error, { area: 'account_deletion_ui' });
       setIsDeletingAccount(false);
       Alert.alert(
         'Could not delete account',
-        'Your account was not deleted. Please try again, or contact howardlt94@gmail.com if the problem continues.',
+        getAccountDeletionMessage(error),
       );
       return;
     }
@@ -2211,6 +2227,24 @@ export default function AppContent() {
     } finally {
       setIsDeletingAccount(false);
     }
+  }
+
+  function getAccountDeletionMessage(error: unknown) {
+    const message = error instanceof Error ? error.message : '';
+    if (message.includes('account_deletion_session_invalid')) {
+      return 'Your sign-in session expired. Please sign in again and retry.';
+    }
+    if (message.includes('account_deletion_not_configured')) {
+      return 'Account deletion is temporarily unavailable because the server is not configured. Please try again later or contact howardlt94@gmail.com.';
+    }
+    if (
+      message.includes('network') ||
+      message.includes('Relay Error') ||
+      message.includes('Failed to send a request')
+    ) {
+      return 'Could not reach the account deletion service. Check your connection and try again.';
+    }
+    return 'Your account was not deleted. Please try again, or contact howardlt94@gmail.com if the problem continues.';
   }
 
   async function addWord(
@@ -4012,4 +4046,14 @@ function createUuid() {
     const value = token === 'x' ? random : (random & 0x3) | 0x8;
     return value.toString(16);
   });
+}
+
+function isExistingAccountSignUpError(error: unknown) {
+  if (!error || typeof error !== 'object') return false;
+
+  const authError = error as { code?: unknown; message?: unknown };
+  return authError.code === 'user_already_exists' || (
+    typeof authError.message === 'string' &&
+    /user already registered|user already exists/i.test(authError.message)
+  );
 }

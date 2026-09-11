@@ -945,8 +945,8 @@ export function DashboardScreen({
             ? 'sparkles'
             : 'checkmark-circle',
         color: isOmegaTest || isPracticeQuiz ? COLORS.purple : COLORS.greenDark,
-        background: isOmegaTest || isPracticeQuiz ? '#F5F0FF' : '#EEF9F3',
-        border: isOmegaTest || isPracticeQuiz ? '#E5D8FF' : '#D9F0E4',
+        background: isOmegaTest || isPracticeQuiz ? COLORS.purplePale : COLORS.greenPale,
+        border: COLORS.border,
       } satisfies ActivityTrendItem;
     });
     const cardItems = analytics.cardHistory.map((event) => ({
@@ -958,8 +958,8 @@ export function DashboardScreen({
       value: event.remembered ? 'Got it' : 'Review',
       icon: 'albums-outline' as keyof typeof Ionicons.glyphMap,
       color: event.remembered ? COLORS.teal : COLORS.purpleDark,
-      background: event.remembered ? '#EAFBF5' : '#F5F0FF',
-      border: event.remembered ? '#D6F2E8' : '#E5D8FF',
+      background: event.remembered ? COLORS.tealPale : COLORS.purplePale,
+      border: COLORS.border,
     } satisfies ActivityTrendItem));
     const gameItems = (analytics.gameHistory ?? []).map((attempt) => {
       const percent = attempt.total
@@ -975,8 +975,8 @@ export function DashboardScreen({
         value: `${percent}%`,
         icon: 'game-controller-outline' as keyof typeof Ionicons.glyphMap,
         color: COLORS.blue,
-        background: '#EEF5FF',
-        border: '#D9E9FF',
+        background: COLORS.bluePale,
+        border: COLORS.border,
       } satisfies ActivityTrendItem;
     });
 
@@ -1305,7 +1305,7 @@ export function DashboardScreen({
     <>
     <ScrollView
       ref={dashboardScrollRef}
-      style={styles.screen}
+      style={[styles.screen, styles.dashboardBackground]}
       contentContainerStyle={styles.dashboardContent}
       showsVerticalScrollIndicator={false}
     >
@@ -1388,7 +1388,7 @@ export function DashboardScreen({
       <DashboardStat
         icon="time"
         color={COLORS.blue}
-        background="#F3F7FF"
+        background={COLORS.bluePale}
         value={formatStudyTime(totalSeconds)}
         valueColor={COLORS.blueDark}
         label="Study time"
@@ -1398,7 +1398,7 @@ export function DashboardScreen({
       <DashboardStat
         icon="trophy"
         color={COLORS.orange}
-        background="#FFF7EB"
+        background={COLORS.orangePale}
         value={`${analytics.quizHistory.length}`}
         valueColor={COLORS.orangeDark}
         label="Quizzes"
@@ -1408,7 +1408,7 @@ export function DashboardScreen({
       <DashboardStat
         icon="close-circle"
         color={COLORS.red}
-        background="#FFF5F8"
+        background={COLORS.redPale}
         value={`${totalWrong}`}
         valueColor={COLORS.redDark}
         label="Missed"
@@ -1772,7 +1772,7 @@ export function DashboardScreen({
                 value={retrievalProfile.recallPercent}
                 detail={`${retrievalProfile.recallAccuracy}% accurate · bring the meaning back from memory`}
                 color={COLORS.greenDark}
-                pale="#E8FBF4"
+                pale={COLORS.tealPale}
                 isGoal
               />
               <RetrievalEvidenceCard
@@ -1780,7 +1780,7 @@ export function DashboardScreen({
                 value={retrievalProfile.recognitionPercent}
                 detail={`${retrievalProfile.recognitionAccuracy}% accurate · may use cues or quiz patterns`}
                 color={COLORS.blue}
-                pale="#EAF3FF"
+                pale={COLORS.bluePale}
               />
             </View>
           </>
@@ -4273,7 +4273,7 @@ function DashboardDetailModal({
       subtitle: `${getLearningSessionCount(analytics)} learning sessions recorded`,
       icon: 'time-outline',
       color: COLORS.blue,
-      background: '#EEF5FF',
+      background: COLORS.bluePale,
     },
     quizzes: {
       eyebrow: 'QUIZ HISTORY',
@@ -4284,7 +4284,7 @@ function DashboardDetailModal({
         : 'Your completed quizzes will appear here.',
       icon: 'trophy-outline',
       color: COLORS.orange,
-      background: '#FFF5E3',
+      background: COLORS.orangePale,
     },
     'quiz-accuracy': {
       eyebrow: 'QUIZ ACCURACY',
@@ -4295,7 +4295,7 @@ function DashboardDetailModal({
         : 'Complete a quiz to start building your accuracy history.',
       icon: 'analytics-outline',
       color: COLORS.blue,
-      background: '#EEF5FF',
+      background: COLORS.bluePale,
     },
     missed: {
       eyebrow: 'REVIEW SIGNALS',
@@ -4306,7 +4306,7 @@ function DashboardDetailModal({
         : 'Complete a quiz to see the words that need another look.',
       icon: 'close-circle-outline',
       color: COLORS.red,
-      background: '#FFF0F5',
+      background: COLORS.redPale,
     },
     streak: {
       eyebrow: 'LEARNING STREAK',
@@ -4315,7 +4315,7 @@ function DashboardDetailModal({
       subtitle: getStreakMessage(streakStats),
       icon: 'flame-outline',
       color: COLORS.teal,
-      background: '#EAFBF5',
+      background: COLORS.tealPale,
     },
   };
   const activeDetail = details[detail];

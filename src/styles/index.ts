@@ -19,7 +19,7 @@ export const styles = StyleSheet.create({
     width: 260,
     height: 260,
     borderRadius: 130,
-    backgroundColor: '#DCEBFF',
+    backgroundColor: '#D8D0C4',
     opacity: 0.9,
   },
   backgroundBlobMiddle: {
@@ -29,7 +29,7 @@ export const styles = StyleSheet.create({
     width: 265,
     height: 265,
     borderRadius: 133,
-    backgroundColor: '#FFE5EE',
+    backgroundColor: '#EFD8D3',
     opacity: 0.78,
   },
   backgroundBlobBottom: {
@@ -39,7 +39,7 @@ export const styles = StyleSheet.create({
     width: 245,
     height: 245,
     borderRadius: 123,
-    backgroundColor: '#E8FBF4',
+    backgroundColor: '#DCE9DD',
     opacity: 0.72,
   },
   safeArea: {
@@ -48,6 +48,9 @@ export const styles = StyleSheet.create({
   },
   screen: {
     flex: 1,
+  },
+  dashboardBackground: {
+    backgroundColor: COLORS.dashboardBackground,
   },
   quizKeyboardAvoidingView: {
     flex: 1,
@@ -5406,7 +5409,7 @@ export const styles = StyleSheet.create({
     paddingRight: 10,
   },
   heroLabel: {
-    color: '#E9E4FF',
+    color: '#F2E6D8',
     fontSize: 10,
     fontWeight: '900',
     letterSpacing: 1.1,
@@ -5428,7 +5431,7 @@ export const styles = StyleSheet.create({
   },
   heroText: {
     marginTop: 3,
-    color: '#F1EEFF',
+    color: '#F4E8DB',
     fontSize: 11,
     lineHeight: 15,
     fontWeight: '600',
@@ -5446,7 +5449,7 @@ export const styles = StyleSheet.create({
   },
   heroLevelNext: {
     marginTop: 4,
-    color: '#F1EEFF',
+    color: '#F4E8DB',
     fontSize: 9,
     lineHeight: 12,
     fontWeight: '800',
@@ -5472,11 +5475,11 @@ export const styles = StyleSheet.create({
     borderRadius: 5,
     overflow: 'hidden',
     justifyContent: 'flex-end',
-    backgroundColor: 'rgba(255,255,255,0.26)',
+    backgroundColor: 'rgba(255,249,240,0.30)',
     borderWidth: 1,
   },
   masteryGaugeSegmentActive: {
-    backgroundColor: 'rgba(255,255,255,0.42)',
+    backgroundColor: 'rgba(255,249,240,0.46)',
   },
   masteryGaugeSegmentFill: {
     width: '100%',
@@ -5517,13 +5520,13 @@ export const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
-    backgroundColor: 'rgba(255,251,255,0.74)',
+    backgroundColor: 'rgba(255,249,240,0.74)',
     borderWidth: 1,
     borderColor: COLORS.border,
   },
   masteryLevelLegendItemActive: {
     backgroundColor: COLORS.surface,
-    borderColor: '#CFC6FF',
+    borderColor: COLORS.border,
     ...SOFT_SHADOW,
   },
   masteryLevelLegendDot: {
@@ -5549,7 +5552,7 @@ export const styles = StyleSheet.create({
   masteryLevelInfoBackdrop: {
     flex: 1,
     justifyContent: 'flex-end',
-    backgroundColor: 'rgba(31, 39, 71, 0.45)',
+    backgroundColor: 'rgba(60, 45, 35, 0.45)',
   },
   masteryLevelInfoDismiss: {
     ...StyleSheet.absoluteFill,
@@ -5560,7 +5563,7 @@ export const styles = StyleSheet.create({
     paddingBottom: 28,
     borderTopLeftRadius: 30,
     borderTopRightRadius: 30,
-    backgroundColor: '#FFFCFF',
+    backgroundColor: COLORS.surface,
   },
   masteryLevelInfoHandle: {
     alignSelf: 'center',
@@ -5569,7 +5572,7 @@ export const styles = StyleSheet.create({
     marginTop: 10,
     marginBottom: 14,
     borderRadius: 3,
-    backgroundColor: '#DCD6EA',
+    backgroundColor: COLORS.border,
   },
   masteryLevelInfoHeader: {
     flexDirection: 'row',
@@ -5616,7 +5619,7 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 12,
-    backgroundColor: '#F4F1FA',
+    backgroundColor: COLORS.white,
   },
   masteryLevelInfoContent: {
     gap: 12,
@@ -5655,7 +5658,7 @@ export const styles = StyleSheet.create({
     marginTop: 5,
     paddingTop: 10,
     borderTopWidth: 1,
-    borderTopColor: 'rgba(31, 39, 71, 0.10)',
+    borderTopColor: 'rgba(60, 45, 35, 0.14)',
   },
   masteryLevelInfoRangeLabel: {
     color: COLORS.muted,
@@ -5672,7 +5675,7 @@ export const styles = StyleSheet.create({
     gap: 11,
     padding: 16,
     borderWidth: 1,
-    borderColor: '#E6E0F3',
+    borderColor: COLORS.border,
     borderRadius: 20,
     backgroundColor: COLORS.white,
   },
@@ -5694,7 +5697,7 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 12,
-    backgroundColor: '#EEE9FF',
+    backgroundColor: COLORS.purplePale,
   },
   masteryLevelInfoRowCopy: {
     flex: 1,
@@ -5750,7 +5753,7 @@ export const styles = StyleSheet.create({
   wordLevelGuideBackdrop: {
     flex: 1,
     justifyContent: 'flex-end',
-    backgroundColor: 'rgba(31, 39, 71, 0.45)',
+    backgroundColor: 'rgba(60, 45, 35, 0.45)',
   },
   wordLevelGuideDismiss: {
     ...StyleSheet.absoluteFill,
@@ -5761,7 +5764,7 @@ export const styles = StyleSheet.create({
     paddingBottom: 28,
     borderTopLeftRadius: 30,
     borderTopRightRadius: 30,
-    backgroundColor: '#FFFCFF',
+    backgroundColor: COLORS.surface,
   },
   wordLevelGuideHandle: {
     alignSelf: 'center',
@@ -5770,7 +5773,7 @@ export const styles = StyleSheet.create({
     marginTop: 10,
     marginBottom: 14,
     borderRadius: 3,
-    backgroundColor: '#DCD6EA',
+    backgroundColor: COLORS.border,
   },
   wordLevelGuideHeader: {
     flexDirection: 'row',
@@ -5783,7 +5786,7 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 17,
-    backgroundColor: '#E5F8F0',
+    backgroundColor: COLORS.greenPale,
   },
   wordLevelGuideHeaderCopy: {
     flex: 1,
@@ -5816,7 +5819,7 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 12,
-    backgroundColor: '#F4F1FA',
+    backgroundColor: COLORS.white,
   },
   wordLevelGuideContent: {
     gap: 12,
@@ -5827,9 +5830,9 @@ export const styles = StyleSheet.create({
     gap: 6,
     padding: 16,
     borderWidth: 1,
-    borderColor: '#CDEDE2',
+    borderColor: COLORS.border,
     borderRadius: 20,
-    backgroundColor: '#F1FBF7',
+    backgroundColor: COLORS.greenPale,
   },
   wordLevelGuideSectionLabel: {
     fontSize: 9,
@@ -5855,7 +5858,7 @@ export const styles = StyleSheet.create({
     marginTop: 4,
     paddingTop: 11,
     borderTopWidth: 1,
-    borderTopColor: '#CDEDE2',
+    borderTopColor: COLORS.border,
   },
   wordLevelGuideFormulaIcon: {
     width: 34,
@@ -5863,7 +5866,7 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 12,
-    backgroundColor: '#EAE4FF',
+    backgroundColor: COLORS.purplePale,
   },
   wordLevelGuideFormulaCopy: {
     flex: 1,
@@ -5885,7 +5888,7 @@ export const styles = StyleSheet.create({
     gap: 10,
     padding: 16,
     borderWidth: 1,
-    borderColor: '#E6E0F3',
+    borderColor: COLORS.border,
     borderRadius: 20,
     backgroundColor: COLORS.white,
   },
@@ -5944,7 +5947,7 @@ export const styles = StyleSheet.create({
     gap: 8,
     padding: 13,
     borderRadius: 16,
-    backgroundColor: '#F3F7FF',
+    backgroundColor: COLORS.bluePale,
   },
   wordLevelGuideNoteText: {
     flex: 1,
@@ -5965,7 +5968,7 @@ export const styles = StyleSheet.create({
     minHeight: 91,
     padding: 13,
     borderWidth: 1,
-    borderColor: '#EAE6F3',
+    borderColor: COLORS.border,
     borderRadius: 22,
     backgroundColor: COLORS.surface,
     ...SOFT_SHADOW,
@@ -6024,16 +6027,16 @@ export const styles = StyleSheet.create({
     ...SOFT_SHADOW,
   },
   competitiveRetentionCard: {
-    borderColor: '#D8D0FF',
-    backgroundColor: '#F8F5FF',
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.surface,
   },
   competitiveStreakCard: {
-    borderColor: '#C9E9DE',
-    backgroundColor: '#F2FAF7',
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.greenPale,
   },
   competitiveGrandmasterCard: {
     overflow: 'hidden',
-    borderColor: '#C9BFFF',
+    borderColor: COLORS.border,
     backgroundColor: 'transparent',
   },
   competitiveMetricGrandmasterBackdrop: {
@@ -6052,10 +6055,10 @@ export const styles = StyleSheet.create({
     borderRadius: 13,
   },
   competitiveRetentionIcon: {
-    backgroundColor: '#EAE4FF',
+    backgroundColor: COLORS.purplePale,
   },
   competitiveStreakIcon: {
-    backgroundColor: '#E0F5EC',
+    backgroundColor: COLORS.greenPale,
   },
   competitiveMetricLabel: {
     marginTop: 10,
@@ -6109,9 +6112,9 @@ export const styles = StyleSheet.create({
     minHeight: 91,
     padding: 13,
     borderWidth: 1,
-    borderColor: '#D6EFE7',
+    borderColor: COLORS.border,
     borderRadius: 22,
-    backgroundColor: '#F1FBF8',
+    backgroundColor: COLORS.greenPale,
     ...SOFT_SHADOW,
   },
   streakHistoryStatInteractive: {
@@ -6149,7 +6152,7 @@ export const styles = StyleSheet.create({
   },
   streakHistoryStatLabel: {
     marginTop: 5,
-    color: '#408B78',
+    color: COLORS.greenDark,
     fontSize: 8,
     letterSpacing: 0.7,
     fontWeight: '900',
@@ -6162,7 +6165,7 @@ export const styles = StyleSheet.create({
   },
   streakHistoryStatRecentLabel: {
     marginRight: 1,
-    color: '#72A99B',
+    color: COLORS.teal,
     fontSize: 7,
     letterSpacing: 0.45,
     fontWeight: '900',
@@ -6177,13 +6180,13 @@ export const styles = StyleSheet.create({
     backgroundColor: COLORS.white,
   },
   streakHistoryStatChipText: {
-    color: '#408B78',
+    color: COLORS.greenDark,
     fontSize: 8,
     fontWeight: '900',
   },
   streakHistoryStatEmpty: {
     marginTop: 6,
-    color: '#72A99B',
+    color: COLORS.teal,
     fontSize: 8,
     lineHeight: 11,
     fontWeight: '800',
@@ -6200,9 +6203,9 @@ export const styles = StyleSheet.create({
   streakCard: {
     padding: 17,
     borderWidth: 1.5,
-    borderColor: '#D1C0FF',
+    borderColor: COLORS.border,
     borderRadius: 26,
-    backgroundColor: '#F5F0FF',
+    backgroundColor: COLORS.purplePale,
     overflow: 'hidden',
     ...SOFT_SHADOW,
   },
@@ -6220,7 +6223,7 @@ export const styles = StyleSheet.create({
     width: 188,
     height: 188,
     borderRadius: 94,
-    backgroundColor: '#DCD0FF',
+    backgroundColor: COLORS.lavender,
     opacity: 0.7,
   },
   streakMagicGoldAura: {
@@ -6230,7 +6233,7 @@ export const styles = StyleSheet.create({
     width: 158,
     height: 158,
     borderRadius: 79,
-    backgroundColor: '#FFEAA6',
+    backgroundColor: COLORS.yellowPale,
     opacity: 0.34,
   },
   streakCardHeader: {
@@ -6245,8 +6248,8 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: '#8877FF',
-    backgroundColor: '#6650E8',
+    borderColor: COLORS.purple,
+    backgroundColor: COLORS.purpleDark,
     ...SOFT_SHADOW,
   },
   streakFlameStar: {
@@ -6319,7 +6322,7 @@ export const styles = StyleSheet.create({
   },
   streakMessage: {
     marginTop: 13,
-    color: '#676E92',
+    color: COLORS.muted,
     fontSize: 13,
     lineHeight: 18,
     fontWeight: '700',
@@ -6349,7 +6352,7 @@ export const styles = StyleSheet.create({
   },
   streakDayLabel: {
     marginTop: 6,
-    color: '#7A7197',
+    color: COLORS.muted,
     fontSize: 10,
     fontWeight: '800',
   },
@@ -6424,9 +6427,9 @@ export const styles = StyleSheet.create({
     marginTop: 14,
     padding: 12,
     borderWidth: 1,
-    borderColor: '#DCE7FF',
+    borderColor: COLORS.border,
     borderRadius: 18,
-    backgroundColor: 'rgba(255,255,255,0.62)',
+    backgroundColor: 'rgba(255,249,240,0.72)',
   },
   reminderCustomHeader: {
     flexDirection: 'row',
@@ -6454,7 +6457,7 @@ export const styles = StyleSheet.create({
     flex: 1,
     padding: 10,
     borderWidth: 1,
-    borderColor: '#DCE7FF',
+    borderColor: COLORS.border,
     borderRadius: 15,
     backgroundColor: COLORS.white,
   },
@@ -6567,7 +6570,7 @@ export const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
     flexDirection: 'row',
-    backgroundColor: '#F7F3FF',
+    backgroundColor: COLORS.surface,
   },
   activityRangeButton: {
     minWidth: 45,
@@ -6620,7 +6623,7 @@ export const styles = StyleSheet.create({
     borderRadius: 7,
     overflow: 'visible',
     justifyContent: 'flex-end',
-    backgroundColor: '#EFEAF8',
+    backgroundColor: COLORS.surface,
   },
   barTrackToday: {
     borderWidth: 1.5,
@@ -6766,10 +6769,10 @@ export const styles = StyleSheet.create({
     minHeight: 218,
     padding: 15,
     borderWidth: 1,
-    borderColor: '#E5DDF7',
+    borderColor: COLORS.border,
     borderRadius: 24,
     alignItems: 'center',
-    backgroundColor: '#F8F6FF',
+    backgroundColor: COLORS.surface,
     ...SOFT_SHADOW,
   },
   accuracyCardPressed: {
@@ -6788,7 +6791,7 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 9,
-    backgroundColor: 'rgba(91, 77, 228, 0.1)',
+    backgroundColor: 'rgba(107, 76, 112, 0.12)',
   },
   distributionCard: {
     flex: 1,
@@ -6815,7 +6818,7 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 9,
-    backgroundColor: 'rgba(42, 169, 135, 0.12)',
+    backgroundColor: 'rgba(85, 120, 90, 0.14)',
   },
   dashboardCardLabel: {
     alignSelf: 'flex-start',
@@ -6856,7 +6859,7 @@ export const styles = StyleSheet.create({
     ...SOFT_SHADOW,
   },
   accuracyGaugeInnerEmpty: {
-    backgroundColor: '#FCFAFF',
+    backgroundColor: COLORS.surface,
   },
   accuracyValue: {
     color: COLORS.ink,
@@ -6875,7 +6878,7 @@ export const styles = StyleSheet.create({
     color: COLORS.purpleDark,
   },
   accuracyLabelEncouraging: {
-    color: '#B36D88',
+    color: COLORS.pink,
     letterSpacing: 0.6,
   },
   accuracyDetail: {
@@ -6889,7 +6892,7 @@ export const styles = StyleSheet.create({
     fontWeight: '900',
   },
   accuracyDetailMissed: {
-    color: '#C97792',
+    color: COLORS.red,
     fontWeight: '800',
   },
   accuracyDetailReady: {
@@ -6933,7 +6936,7 @@ export const styles = StyleSheet.create({
     borderRadius: 6,
     overflow: 'hidden',
     flexDirection: 'row',
-    backgroundColor: '#EFEAF8',
+    backgroundColor: COLORS.surface,
   },
   distributionSegment: {
     position: 'relative',
@@ -6960,8 +6963,8 @@ export const styles = StyleSheet.create({
     padding: 10,
     borderRadius: 18,
     borderWidth: 1,
-    borderColor: '#E5DEF5',
-    backgroundColor: '#FCFAFF',
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.surface,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
@@ -6983,12 +6986,12 @@ export const styles = StyleSheet.create({
     height: 42,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#E3DBFF',
+    borderColor: COLORS.border,
     alignItems: 'center',
     justifyContent: 'center',
   },
   achievementRewardIconPoints: {
-    backgroundColor: '#F1EDFF',
+    backgroundColor: COLORS.purplePale,
   },
   achievementRewardIconTokens: {
     backgroundColor: COLORS.greenPale,
@@ -7010,7 +7013,7 @@ export const styles = StyleSheet.create({
   achievementRewardDivider: {
     alignSelf: 'stretch',
     width: 1,
-    backgroundColor: '#E9E4F5',
+    backgroundColor: COLORS.border,
   },
   achievementTokenVault: {
     position: 'relative',
@@ -7133,7 +7136,7 @@ export const styles = StyleSheet.create({
     minHeight: 166,
     padding: 12,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.72)',
+    borderColor: 'rgba(255,249,240,0.78)',
     borderRadius: 18,
   },
   achievementHeader: {
@@ -7178,7 +7181,7 @@ export const styles = StyleSheet.create({
     marginTop: 10,
     borderRadius: 4,
     overflow: 'visible',
-    backgroundColor: 'rgba(255,255,255,0.78)',
+    backgroundColor: 'rgba(255,249,240,0.82)',
   },
   achievementFill: {
     height: '100%',
@@ -7190,11 +7193,11 @@ export const styles = StyleSheet.create({
     padding: 12,
     borderRadius: 17,
     borderWidth: 1,
-    borderColor: '#E5DEF5',
+    borderColor: COLORS.border,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    backgroundColor: '#FAF8FF',
+    backgroundColor: COLORS.surface,
   },
   expandedListHint: {
     marginBottom: 10,
@@ -7208,7 +7211,7 @@ export const styles = StyleSheet.create({
     minWidth: 0,
   },
   masterySummaryTitle: {
-    color: '#52608A',
+    color: COLORS.metricInk,
     fontSize: 12,
     fontWeight: '800',
   },
@@ -7260,8 +7263,8 @@ export const styles = StyleSheet.create({
     color: '#B78300',
   },
   statsWordRowQueued: {
-    borderColor: '#CFC4FF',
-    backgroundColor: '#FCFAFF',
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.surface,
   },
   statsWordRowFocused: {
     borderColor: '#F2CF76',
@@ -7269,7 +7272,7 @@ export const styles = StyleSheet.create({
   },
   masteryRowComplete: {
     borderRadius: 12,
-    backgroundColor: '#F4FFFB',
+    backgroundColor: COLORS.greenPale,
   },
   masteryRowTop: {
     marginBottom: 7,
@@ -7312,8 +7315,8 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: '#F4DEA0',
-    backgroundColor: '#FFF8DE',
+    borderColor: '#D9B56A',
+    backgroundColor: COLORS.yellowPale,
   },
   masteryCompleteSparkleMini: {
     position: 'absolute',
@@ -7324,7 +7327,7 @@ export const styles = StyleSheet.create({
     height: 9,
     borderRadius: 5,
     overflow: 'visible',
-    backgroundColor: '#EFEAF8',
+    backgroundColor: COLORS.surface,
   },
   masteryFill: {
     height: '100%',
@@ -7369,11 +7372,11 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 9,
     borderWidth: 1,
-    borderColor: '#E7E0F4',
-    backgroundColor: '#FFFCFF',
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.surface,
   },
   dueReviewRowQueued: {
-    borderColor: '#CFC4FF',
+    borderColor: COLORS.border,
     backgroundColor: COLORS.purplePale,
   },
   dueReviewRowFocused: {
@@ -7503,8 +7506,8 @@ export const styles = StyleSheet.create({
     paddingVertical: 10,
     borderRadius: 17,
     borderWidth: 1.5,
-    borderColor: '#EFE4FF',
-    backgroundColor: '#FFFCFF',
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.surface,
   },
   activityTrendList: {
     gap: 8,
@@ -7621,7 +7624,7 @@ export const styles = StyleSheet.create({
     height: 8,
     borderRadius: 5,
     overflow: 'visible',
-    backgroundColor: '#EFEAF8',
+    backgroundColor: COLORS.surface,
   },
   trendFill: {
     height: '100%',
@@ -7655,7 +7658,7 @@ export const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    backgroundColor: '#F6F2FF',
+    backgroundColor: COLORS.purplePale,
   },
   omegaStatsEmptyIcon: {
     width: 39,
@@ -7663,7 +7666,7 @@ export const styles = StyleSheet.create({
     borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#EAE2FF',
+    backgroundColor: COLORS.lavender,
   },
   omegaStatsOrb: {
     width: 43,
@@ -7681,9 +7684,9 @@ export const styles = StyleSheet.create({
     width: 37,
     height: 37,
     borderRadius: 18.5,
-    backgroundColor: '#E8DEFF',
+    backgroundColor: COLORS.purplePale,
     borderWidth: 1,
-    borderColor: '#D2C2FF',
+    borderColor: COLORS.border,
   },
   omegaStatsOrbOrbit: {
     position: 'absolute',
@@ -7705,7 +7708,7 @@ export const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: COLORS.purpleDark,
     borderWidth: 1,
-    borderColor: '#A68BFF',
+    borderColor: COLORS.purple,
     ...SOFT_SHADOW,
   },
   omegaStatsEmptyCopy: {
@@ -7730,7 +7733,7 @@ export const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-around',
-    backgroundColor: '#F3EFFF',
+    backgroundColor: COLORS.purplePale,
   },
   omegaStatsMetric: {
     flex: 1,
@@ -7818,8 +7821,8 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
     borderWidth: 1,
-    borderColor: '#E5DEFA',
-    backgroundColor: '#FFFCFF',
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.surface,
   },
   omegaStatsHistoryRowIncomplete: {
     borderColor: '#F3DFA4',
@@ -7831,7 +7834,7 @@ export const styles = StyleSheet.create({
     borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#F1ECFF',
+    backgroundColor: COLORS.purplePale,
   },
   omegaStatsHistoryIconIncomplete: {
     backgroundColor: '#FFF1CF',
@@ -7892,7 +7895,7 @@ export const styles = StyleSheet.create({
     marginBottom: 9,
     padding: 17,
     borderWidth: 1.5,
-    borderColor: '#CFE0FF',
+    borderColor: COLORS.border,
     borderRadius: 24,
     backgroundColor: COLORS.bluePale,
     ...SOFT_SHADOW,
@@ -7927,7 +7930,7 @@ export const styles = StyleSheet.create({
   },
   insightText: {
     marginTop: 4,
-    color: '#637AA8',
+    color: COLORS.muted,
     fontSize: 11,
     lineHeight: 16,
     fontWeight: '600',
@@ -7939,13 +7942,13 @@ export const styles = StyleSheet.create({
     borderRadius: 9,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.66)',
+    backgroundColor: 'rgba(255,249,240,0.72)',
   },
   insightDetails: {
     marginTop: 14,
     paddingTop: 12,
     borderTopWidth: 1,
-    borderTopColor: 'rgba(40,121,232,0.16)',
+    borderTopColor: 'rgba(140,104,75,0.2)',
     gap: 10,
   },
   insightDetailRow: {
@@ -7958,7 +7961,7 @@ export const styles = StyleSheet.create({
     borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.72)',
+    backgroundColor: 'rgba(255,249,240,0.78)',
   },
   insightDetailCopy: {
     flex: 1,
@@ -7971,7 +7974,7 @@ export const styles = StyleSheet.create({
   },
   insightDetailText: {
     marginTop: 1,
-    color: '#6E619C',
+    color: COLORS.muted,
     fontSize: 10,
     lineHeight: 14,
     fontWeight: '600',
@@ -7980,7 +7983,7 @@ export const styles = StyleSheet.create({
     marginTop: 15,
     padding: 16,
     borderWidth: 1.5,
-    borderColor: '#DCE7FF',
+    borderColor: COLORS.border,
     borderRadius: 24,
     backgroundColor: COLORS.bluePale,
     ...SOFT_SHADOW,
@@ -8008,7 +8011,7 @@ export const styles = StyleSheet.create({
   },
   legalCardText: {
     marginTop: 3,
-    color: '#5268C9',
+    color: COLORS.blueDark,
     fontSize: 11,
     lineHeight: 16,
     fontWeight: '600',
@@ -10915,9 +10918,9 @@ export const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 11,
-    backgroundColor: '#F7F4FF',
+    backgroundColor: COLORS.surface,
     borderWidth: 1,
-    borderColor: '#D9D0FF',
+    borderColor: COLORS.border,
   },
   dashboardWidgetsIcon: {
     width: 43,
@@ -11701,8 +11704,8 @@ export const styles = StyleSheet.create({
     padding: 14,
     borderRadius: 24,
     borderWidth: 1,
-    borderColor: '#D9D0FF',
-    backgroundColor: '#FAF9FF',
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.surface,
   },
   subscriptionOverviewHeader: {
     flexDirection: 'row',
@@ -11716,7 +11719,7 @@ export const styles = StyleSheet.create({
     overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#EEE9FF',
+    backgroundColor: COLORS.purplePale,
   },
   subscriptionOverviewIconPremium: {
     borderWidth: 2,
@@ -11750,16 +11753,16 @@ export const styles = StyleSheet.create({
     borderRadius: 9,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#E8F2FF',
+    backgroundColor: COLORS.bluePale,
   },
   subscriptionStatusPillActive: {
-    backgroundColor: '#E6FBF3',
+    backgroundColor: COLORS.greenPale,
   },
   subscriptionStatusPillTrial: {
-    backgroundColor: '#FFF2D9',
+    backgroundColor: COLORS.yellowPale,
   },
   subscriptionStatusPillExpired: {
-    backgroundColor: '#FFF0F3',
+    backgroundColor: COLORS.redPale,
   },
   subscriptionStatusPillText: {
     color: COLORS.blue,
@@ -11771,10 +11774,10 @@ export const styles = StyleSheet.create({
     color: COLORS.greenDark,
   },
   subscriptionStatusPillTextTrial: {
-    color: '#B17614',
+    color: COLORS.orangeDark,
   },
   subscriptionStatusPillTextExpired: {
-    color: '#B35E77',
+    color: COLORS.redDark,
   },
   subscriptionOverviewDetails: {
     marginTop: 13,
@@ -11783,7 +11786,7 @@ export const styles = StyleSheet.create({
     flexDirection: 'row',
     backgroundColor: COLORS.white,
     borderWidth: 1,
-    borderColor: '#ECE7F6',
+    borderColor: COLORS.border,
   },
   subscriptionOverviewDetail: {
     flex: 1,
@@ -11805,7 +11808,7 @@ export const styles = StyleSheet.create({
   subscriptionOverviewDivider: {
     width: 1,
     marginHorizontal: 10,
-    backgroundColor: '#E9E4F4',
+    backgroundColor: COLORS.border,
   },
   subscriptionOverviewNote: {
     marginTop: 9,
@@ -11829,7 +11832,7 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 4,
-    backgroundColor: '#EEE9FF',
+    backgroundColor: COLORS.purplePale,
   },
   subscriptionManageActionText: {
     flexShrink: 1,
@@ -12597,13 +12600,13 @@ export const styles = StyleSheet.create({
     marginTop: 12,
     padding: 16,
     borderRadius: 26,
-    backgroundColor: '#F7F4FF',
+    backgroundColor: COLORS.surface,
     borderWidth: 1,
-    borderColor: '#DED6FF',
+    borderColor: COLORS.border,
     ...SOFT_SHADOW,
   },
   passwordSecurityCardExpanded: {
-    borderColor: '#CFC1FF',
+    borderColor: COLORS.purple,
   },
   passwordSecurityHeader: {
     flexDirection: 'row',
@@ -12616,7 +12619,7 @@ export const styles = StyleSheet.create({
     borderRadius: 17,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#EAE4FF',
+    backgroundColor: COLORS.purplePale,
   },
   passwordSecurityCopy: {
     flex: 1,
@@ -12649,7 +12652,7 @@ export const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: COLORS.white,
     borderWidth: 1,
-    borderColor: '#D7CEFF',
+    borderColor: COLORS.border,
   },
   passwordSecurityActionText: {
     color: COLORS.purpleDark,
@@ -12660,7 +12663,7 @@ export const styles = StyleSheet.create({
     marginTop: 14,
     paddingTop: 14,
     borderTopWidth: 1,
-    borderTopColor: '#E1DBF8',
+    borderTopColor: COLORS.border,
     gap: 10,
   },
   passwordEditorHint: {
@@ -12678,7 +12681,7 @@ export const styles = StyleSheet.create({
     gap: 9,
     backgroundColor: COLORS.white,
     borderWidth: 1,
-    borderColor: '#DED6FF',
+    borderColor: COLORS.border,
   },
   passwordEditorInput: {
     flex: 1,
@@ -12711,7 +12714,7 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 11,
     borderWidth: 1,
-    borderColor: '#DED7FF',
+    borderColor: COLORS.border,
     backgroundColor: COLORS.purplePale,
   },
   adminDashboardIcon: {
@@ -12748,9 +12751,9 @@ export const styles = StyleSheet.create({
     padding: 16,
     borderRadius: 26,
     gap: 12,
-    backgroundColor: '#FFF7F8',
+    backgroundColor: COLORS.redPale,
     borderWidth: 1,
-    borderColor: '#FFD7DE',
+    borderColor: COLORS.border,
     ...SOFT_SHADOW,
   },
   deleteAccountHeader: {
@@ -12814,7 +12817,7 @@ export const styles = StyleSheet.create({
     gap: 10,
     backgroundColor: COLORS.purplePale,
     borderWidth: 1,
-    borderColor: '#DED7FF',
+    borderColor: COLORS.border,
   },
   flaggedWordsIcon: {
     width: 38,
@@ -13021,7 +13024,7 @@ export const styles = StyleSheet.create({
     gap: 12,
     backgroundColor: COLORS.tealPale,
     borderWidth: 1,
-    borderColor: '#CDEFE3',
+    borderColor: COLORS.border,
   },
   helpFeedbackIcon: {
     width: 43,

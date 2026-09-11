@@ -316,6 +316,40 @@ test('password recovery returns to WordWiz and requires a new password before co
   assert.match(loginSource, /label="Confirm new password"/);
 });
 
+test('post-signup guidance is privacy-safe and offers account recovery actions', () => {
+  const appSource = fs.readFileSync(
+    path.join(projectRoot, 'src/application/AppContent.tsx'),
+    'utf8',
+  );
+  const loginSource = fs.readFileSync(
+    path.join(projectRoot, 'src/screens/LoginScreen.tsx'),
+    'utf8',
+  );
+
+  assert.match(loginSource, /Check your email/);
+  assert.match(loginSource, /Check your inbox or spam/);
+  assert.match(loginSource, /Already registered\? Log in below/);
+  assert.match(appSource, /Check your inbox or spam/);
+  assert.match(appSource, /Already registered\? Log in or reset your password/);
+  assert.match(appSource, /showPostSignUpGuidance\(\)/);
+  assert.match(appSource, /isExistingAccountSignUpError\(error\)/);
+  assert.doesNotMatch(loginSource, /email is already taken/i);
+});
+
+test('native Supabase callbacks are not swallowed by widget deep links', () => {
+  const appSource = fs.readFileSync(
+    path.join(projectRoot, 'src/application/AppContent.tsx'),
+    'utf8',
+  );
+  const authCallbackIndex = appSource.indexOf('const user = await completeSupabaseAuthRedirect');
+  const widgetRoutingIndex = appSource.indexOf("if (url.startsWith('wordwiz://'))");
+
+  assert.ok(authCallbackIndex >= 0);
+  assert.ok(widgetRoutingIndex >= 0);
+  assert.ok(authCallbackIndex < widgetRoutingIndex);
+  assert.match(appSource, /the native auth callback is also a wordwiz:\/\//);
+});
+
 test('free word limit is enforced atomically in Supabase and cannot be bypassed by direct insert', () => {
   const migration = fs.readFileSync(
     path.join(projectRoot, 'supabase/revenuecat_subscription_migration.sql'),
@@ -3527,6 +3561,10 @@ test('account deletion is user-scoped, server-backed, and cleans associated data
     path.join(projectRoot, 'supabase/migrations/20260904000000_account_deletion_hardening.sql'),
     'utf8',
   );
+  const deletionReadme = fs.readFileSync(
+    path.join(projectRoot, 'supabase/functions/delete-account/README.md'),
+    'utf8',
+  );
 
   assert.match(appContent, /isDeletingAccount/);
   assert.match(appContent, /Delete your account\?/);
@@ -3535,6 +3573,8 @@ test('account deletion is user-scoped, server-backed, and cleans associated data
   assert.match(appContent, /App Store subscriptions are managed separately/);
   assert.match(appContent, /subscription\.syncUser\(null\)/);
   assert.match(appContent, /Your account was not deleted/);
+  assert.match(appContent, /account_deletion_not_configured/);
+  assert.match(appContent, /account_deletion_ui/);
   assert.match(auth, /expo-secure-store/);
   assert.match(auth, /WHEN_UNLOCKED_THIS_DEVICE_ONLY/);
   assert.match(auth, /provider_refresh_token/);
@@ -3542,6 +3582,9 @@ test('account deletion is user-scoped, server-backed, and cleans associated data
   assert.match(auth, /APPLE_PROVIDER_USER_KEY/);
   assert.match(auth, /appleProviderRefreshToken/);
   assert.match(deletionFunction, /userClient\.auth\.getUser/);
+  assert.match(deletionFunction, /SUPABASE_PUBLISHABLE_KEYS/);
+  assert.match(deletionFunction, /SUPABASE_SECRET_KEYS/);
+  assert.match(deletionFunction, /account_deletion_cleanup_failed/);
   assert.match(deletionFunction, /cleanupUserOwnedData\(adminClient, user\.id\)/);
   assert.match(deletionFunction, /https:\/\/appleid\.apple\.com\/auth\/revoke/);
   assert.match(deletionFunction, /Apple token revocation failed; continuing account deletion/);
@@ -3549,6 +3592,10 @@ test('account deletion is user-scoped, server-backed, and cleans associated data
   assert.match(deletionFunction, /APPLE_CLIENT_ID/);
   assert.match(deletionFunction, /APPLE_CLIENT_SECRET/);
   assert.match(deletionFunction, /admin\.deleteUser\(\s*user\.id,\s*false/);
+  assert.match(auth, /refreshSession\(\)/);
+  assert.match(auth, /getFunctionErrorMessage/);
+  assert.match(deletionReadme, /functions deploy delete-account --no-verify-jwt/);
+  assert.match(deletionReadme, /validates the caller inside the handler with\s+`auth\.getUser\(\)`/);
   assert.match(deletionHelper, /community-avatars/);
   assert.match(deletionHelper, /feedback-screenshots/);
   assert.match(deletionHelper, /admin_audit_log/);

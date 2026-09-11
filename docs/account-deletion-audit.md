@@ -27,6 +27,16 @@ Server files:
   authorized admin-initiated deletion.
 - `supabase/migrations/20260904000000_account_deletion_hardening.sql` — grants
   the server-only role permission to remove user-associated audit rows.
+- `supabase/migrations/20260910000000_account_deletion_audit_filter_access.sql`
+  — grants the server-only role read access to the two audit user-ID columns
+  required by the deletion filter.
+
+The September 10 deletion failure was reproduced against the deployed function:
+it returned `account_deletion_cleanup_failed` because PostgreSQL rejected audit
+cleanup with `42501`. The server had `DELETE` permission but lacked `SELECT` on
+the columns used in its `WHERE` clause, so even an account with no audit records
+could not be deleted. The follow-up migration grants only those two columns to
+`service_role`; it does not grant mobile or anonymous clients audit access.
 
 ## Data coverage
 
@@ -85,7 +95,7 @@ From the Supabase project directory, after confirming the project ref:
 supabase db push
 supabase secrets set APPLE_CLIENT_ID=com.lecoffeeconfit.wordwiz APPLE_CLIENT_SECRET='your-server-generated-apple-client-secret-jwt'
 supabase functions deploy apple-token-exchange
-supabase functions deploy delete-account
+supabase functions deploy delete-account --no-verify-jwt
 supabase functions deploy admin-dashboard
 ```
 
@@ -110,3 +120,14 @@ npm run typecheck
 npm test
 git diff --check
 ```
+
+Run the database regression check after applying migrations:
+
+```bash
+supabase db query --linked --file tests/sql/account_deletion_permissions.sql
+```
+
+It exercises the actual cleanup filter as `service_role`, checks both matching
+and empty results, verifies another user's audit row survives, and checks that
+client roles have no audit access. Random fixture IDs are generated inside a
+transaction that rolls back all test data.

@@ -505,17 +505,46 @@ export async function requestSupabaseAccountDeletion({
   appleProviderToken,
   appleProviderRefreshToken,
 }: AuthRequestContext & Partial<StoredAppleProviderTokens>): Promise<AccountDeletionResult> {
-  const { data, error } = await supabase.functions.invoke('delete-account', {
+  const body = {
+    ...(appleProvider ? { appleProvider: true } : {}),
+    ...(appleProviderToken ? { appleProviderToken } : {}),
+    ...(appleProviderRefreshToken ? { appleProviderRefreshToken } : {}),
+  };
+
+  const invokeDeletion = (accessToken: string | null) => supabase.functions.invoke('delete-account', {
     method: 'DELETE',
-    body: {
-      ...(appleProvider ? { appleProvider: true } : {}),
-      ...(appleProviderToken ? { appleProviderToken } : {}),
-      ...(appleProviderRefreshToken ? { appleProviderRefreshToken } : {}),
-    },
+    ...(accessToken ? { headers: { Authorization: `Bearer ${accessToken}` } } : {}),
+    body,
   });
 
+  const { data: sessionData } = await supabase.auth.getSession();
+  let accessToken = sessionData.session?.access_token ?? null;
+  let result = await invokeDeletion(accessToken);
+
+  // A long-lived app can still be showing an authenticated screen while its
+  // access token has just expired. Retry only an explicit 401, so a request
+  // that reached and deleted the account is never duplicated after a relay or
+  // network failure.
+  if (result.error && result.response?.status === 401) {
+    const { data: refreshedSessionData, error: refreshError } =
+      await supabase.auth.refreshSession();
+    const refreshedAccessToken = refreshedSessionData.session?.access_token ?? null;
+    if (!refreshError && refreshedAccessToken && refreshedAccessToken !== accessToken) {
+      accessToken = refreshedAccessToken;
+      result = await invokeDeletion(accessToken);
+    }
+  }
+
+  const { data, error, response } = result;
+
   if (error) {
-    throw error;
+    const detail = await getFunctionErrorMessage(error, response);
+    reportError(error, {
+      area: 'account_deletion_request',
+      status: response?.status ?? null,
+      serverCode: detail,
+    });
+    throw new Error(`account_deletion_failed:${detail || error.message}`);
   }
 
   if (!data || data.deleted !== true) {
@@ -530,6 +559,37 @@ export async function requestSupabaseAccountDeletion({
 
   logAuthRequest('edge_function:delete_account', null, { screen, reason });
   return { deleted: true, appleRevocation };
+}
+
+async function getFunctionErrorMessage(error: unknown, response?: unknown): Promise<string> {
+  const context = typeof error === 'object' && error && 'context' in error
+    ? (error as { context?: unknown }).context
+    : null;
+
+  for (const candidate of [context, response]) {
+    if (
+      candidate &&
+      typeof candidate === 'object' &&
+      'json' in candidate &&
+      typeof (candidate as { json?: unknown }).json === 'function'
+    ) {
+      try {
+        const readable = typeof (candidate as { clone?: unknown }).clone === 'function'
+          ? (candidate as unknown as { clone: () => unknown }).clone()
+          : candidate;
+        const payload = await (readable as {
+          json: () => Promise<{ error?: unknown; code?: unknown; message?: unknown }>;
+        }).json();
+        if (typeof payload.code === 'string') return payload.code;
+        if (typeof payload.error === 'string') return payload.error;
+        if (typeof payload.message === 'string') return payload.message;
+      } catch {
+        // Fall through to the typed Supabase error below.
+      }
+    }
+  }
+
+  return error instanceof Error ? error.message : '';
 }
 
 /**

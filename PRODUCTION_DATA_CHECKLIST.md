@@ -19,22 +19,34 @@ production-ready in Supabase.
 3. Test a starter collection with a production-like account. Confirm the full
    deck appears once, its study set is created, and the check above returns all
    five RPCs before releasing a TestFlight build.
-4. Deploy the delete-account Edge Function:
+4. Apply pending Supabase migrations, including the account-deletion hardening
+   grant for the server-only role:
+
+```bash
+supabase db push
+```
+
+5. Deploy the delete-account Edge Function:
 
 ```bash
 supabase functions deploy delete-account
 ```
 
-5. Deploy the Wordnik enrichment Edge Function:
+6. Deploy the Wordnik enrichment Edge Function:
 
 ```bash
 supabase functions deploy wordnik-enrich
 ```
 
-6. In Supabase Auth settings:
+7. In Supabase Auth settings:
    - keep email confirmation enabled
-   - configure the production site URL
-   - add local and production redirect URLs
+   - configure the production site URL (never use `localhost` for a
+     production/native build)
+   - add `wordwiz://auth/callback` for iOS/Android builds
+   - add the real HTTPS web origin for a hosted web build
+   - keep `http://localhost:8091` only for local web development
+   - make the confirmation template link use `{{ .ConfirmationURL }}` so the
+     requested platform redirect is preserved
    - configure Google, Apple, and Microsoft providers if using social login
 
 ## App Store privacy

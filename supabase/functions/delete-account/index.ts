@@ -18,19 +18,30 @@ Deno.serve(async (request) => {
   }
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL');
-  const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY');
-  const supabaseServiceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+  // Supabase now exposes project keys in JSON bundles on newer projects while
+  // older projects still provide the legacy single-value variables. Supporting
+  // both keeps account deletion working across either project configuration.
+  const supabasePublishableKey = getDefaultProjectKey('SUPABASE_PUBLISHABLE_KEYS') ??
+    Deno.env.get('SUPABASE_ANON_KEY')?.trim();
+  const supabaseSecretKey = getDefaultProjectKey('SUPABASE_SECRET_KEYS') ??
+    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')?.trim();
   const authorization = request.headers.get('Authorization');
 
-  if (!supabaseUrl || !supabaseAnonKey || !supabaseServiceRoleKey) {
-    return jsonResponse({ error: 'Function environment is not configured' }, 500);
+  if (!supabaseUrl || !supabasePublishableKey || !supabaseSecretKey) {
+    return jsonResponse({
+      error: 'Function environment is not configured',
+      code: 'account_deletion_not_configured',
+    }, 500);
   }
 
   if (!authorization) {
-    return jsonResponse({ error: 'Missing Authorization header' }, 401);
+    return jsonResponse({
+      error: 'Missing Authorization header',
+      code: 'account_deletion_auth_required',
+    }, 401);
   }
 
-  const userClient = createClient(supabaseUrl, supabaseAnonKey, {
+  const userClient = createClient(supabaseUrl, supabasePublishableKey, {
     global: {
       headers: {
         Authorization: authorization,
@@ -44,10 +55,13 @@ Deno.serve(async (request) => {
   } = await userClient.auth.getUser();
 
   if (userError || !user) {
-    return jsonResponse({ error: 'Invalid or expired session' }, 401);
+    return jsonResponse({
+      error: 'Invalid or expired session',
+      code: 'account_deletion_session_invalid',
+    }, 401);
   }
 
-  const adminClient = createClient(supabaseUrl, supabaseServiceRoleKey);
+  const adminClient = createClient(supabaseUrl, supabaseSecretKey);
   let body: Record<string, unknown>;
   let appleProvider: boolean;
   let appleProviderToken: string | null;
@@ -58,7 +72,10 @@ Deno.serve(async (request) => {
     appleProviderToken = readOptionalProviderToken(body, 'appleProviderToken');
     appleProviderRefreshToken = readOptionalProviderToken(body, 'appleProviderRefreshToken');
   } catch {
-    return jsonResponse({ error: 'Invalid account deletion request' }, 400);
+    return jsonResponse({
+      error: 'Invalid account deletion request',
+      code: 'account_deletion_invalid_request',
+    }, 400);
   }
 
   let appleRevocation: 'revoked' | 'manual_required' | 'not_applicable' = appleProvider
@@ -89,7 +106,10 @@ Deno.serve(async (request) => {
       userId: user.id,
       error: getErrorMessage(error),
     });
-    return jsonResponse({ error: 'Could not complete account deletion' }, 500);
+    return jsonResponse({
+      error: 'Could not complete account deletion',
+      code: 'account_deletion_cleanup_failed',
+    }, 500);
   }
 
   const { error: deleteError } = await adminClient.auth.admin.deleteUser(
@@ -102,7 +122,10 @@ Deno.serve(async (request) => {
       userId: user.id,
       error: getErrorMessage(deleteError),
     });
-    return jsonResponse({ error: 'Could not complete account deletion' }, 500);
+    return jsonResponse({
+      error: 'Could not complete account deletion',
+      code: 'account_deletion_auth_delete_failed',
+    }, 500);
   }
 
   return jsonResponse({ deleted: true, appleRevocation });
@@ -163,8 +186,8 @@ async function revokeAppleProviderToken(
   });
 
   if (!response.ok) {
-    // Do not delete the WordWiz account if a supplied Apple token could not be
-    // revoked. The learner remains signed in and can retry safely.
+    // The caller treats Apple revocation as best-effort and continues deleting
+    // the WordWiz account with a manual-revocation notice.
     throw new Error(`Apple token revocation returned HTTP ${response.status}.`);
   }
 
@@ -177,6 +200,23 @@ function getErrorMessage(error: unknown) {
     if (typeof message === 'string' && message.trim()) return message;
   }
   return 'Unknown server error';
+}
+
+function getDefaultProjectKey(variableName: string) {
+  const serializedKeys = Deno.env.get(variableName)?.trim();
+  if (!serializedKeys) return undefined;
+
+  try {
+    const keys = JSON.parse(serializedKeys) as Record<string, unknown>;
+    if (typeof keys.default === 'string' && keys.default.trim()) {
+      return keys.default.trim();
+    }
+    return Object.values(keys).find(
+      (value): value is string => typeof value === 'string' && value.trim().length > 0,
+    )?.trim();
+  } catch {
+    return undefined;
+  }
 }
 
 function jsonResponse(body: Record<string, unknown>, status = 200) {

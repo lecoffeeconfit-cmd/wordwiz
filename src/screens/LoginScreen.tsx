@@ -290,10 +290,10 @@ export function LoginScreen({
                 <Ionicons name="mail-unread-outline" size={22} color={COLORS.blue} />
               </View>
               <View style={styles.verificationCopy}>
-                <Text style={styles.verificationTitle}>Verify your email</Text>
+                <Text style={styles.verificationTitle}>Check your email</Text>
                 <Text style={styles.verificationText}>
-                  We sent a confirmation link to {verificationEmail}. Open it
-                  to return here and finish signing in.
+                  New account? Check your inbox or spam.
+                  {' '}Already registered? Log in below.
                 </Text>
                 <Pressable
                   onPress={resendVerification}
