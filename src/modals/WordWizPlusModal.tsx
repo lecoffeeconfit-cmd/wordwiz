@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Animated, Modal, Pressable, ScrollView, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Animated, Modal, Platform, Pressable, ScrollView, Text, View } from 'react-native';
 import type { PurchasesPackage } from 'react-native-purchases';
 import { COLORS } from '../constants/theme';
 import { styles } from '../styles';
@@ -25,6 +25,8 @@ export function WordWizPlusModal({
   const subscription = useSubscription();
   const [selectedPackage, setSelectedPackage] = useState<'annual' | 'monthly'>('annual');
   const [message, setMessage] = useState<string | null>(null);
+  const storeAccount = Platform.OS === 'android' ? 'Google Play account' : 'Apple ID';
+  const storeName = Platform.OS === 'android' ? 'Google Play' : 'Apple';
 
   const selected = selectedPackage === 'annual' && subscription.annualPackage
     ? subscription.annualPackage
@@ -60,7 +62,7 @@ export function WordWizPlusModal({
       return;
     }
     if (result.status === 'not-found') {
-      Alert.alert('No active subscription found', 'We could not find an active WordWiz Plus subscription for this Apple ID.');
+      Alert.alert('No active subscription found', `We could not find an active WordWiz Plus subscription for this ${storeAccount}.`);
       return;
     }
     setMessage(result.message);
@@ -70,7 +72,7 @@ export function WordWizPlusModal({
     try {
       await subscription.manageSubscription();
     } catch {
-      setMessage('Apple subscription settings are unavailable right now. Please try again shortly.');
+      setMessage(`${storeName} subscription settings are unavailable right now. Please try again shortly.`);
     }
   }
 
@@ -140,7 +142,7 @@ export function WordWizPlusModal({
           {subscription.isLoading ? (
             <View style={styles.plusLoadingCard}>
               <ActivityIndicator color={COLORS.purpleDark} />
-              <Text style={styles.plusLoadingText}>Loading your Apple plans…</Text>
+              <Text style={styles.plusLoadingText}>Loading your {storeName} plans…</Text>
             </View>
           ) : subscription.isSupported ? (
             <>
@@ -192,7 +194,7 @@ export function WordWizPlusModal({
                 </>}
               </Pressable>
               <Text style={styles.plusRenewalText}>
-                Payment is charged to your Apple ID. Your subscription renews automatically unless canceled at least 24 hours before the end of the current period.
+                Payment is charged to your {storeAccount}. Your subscription renews automatically unless canceled at least 24 hours before the end of the current period.
               </Text>
             </>
           ) : (
@@ -216,7 +218,11 @@ export function WordWizPlusModal({
               />
               <View style={styles.plusMessage}>
                 <Ionicons name="phone-portrait-outline" size={18} color={COLORS.purpleDark} />
-                <Text style={styles.plusMessageText}>Preview the plans here. Live App Store prices and purchases appear in an EAS development build or TestFlight.</Text>
+                <Text style={styles.plusMessageText}>
+                  {Platform.OS === 'android'
+                    ? 'Preview the plans here. Live Google Play prices and purchases appear in an EAS development build or Google Play test build.'
+                    : 'Preview the plans here. Live App Store prices and purchases appear in an EAS development build or TestFlight.'}
+                </Text>
               </View>
               <Pressable accessibilityRole="button" disabled style={[styles.plusSubscribeButton, styles.plusButtonDisabled]}>
                 <Text style={styles.plusSubscribeButtonText}>AVAILABLE IN TEST BUILD</Text>

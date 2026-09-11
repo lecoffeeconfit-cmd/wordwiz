@@ -1377,7 +1377,9 @@ function openEtymonline(term: string) {
     return;
   }
 
-  Linking.openURL(`https://www.etymonline.com/search?q=${query}`);
+  void Linking.openURL(`https://www.etymonline.com/search?q=${query}`).catch(() => {
+    Alert.alert('Could not open page', 'Please check your internet connection and try again.');
+  });
 }
 
 function pickWordnikDetails(details: WordDetails): Partial<WordDetails> {

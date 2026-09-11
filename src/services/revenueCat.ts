@@ -117,7 +117,7 @@ class RevenueCatService {
       let customerInfoRequest: Promise<CustomerInfo>;
       if (!this.isConfigured) {
         Purchases.configure({
-          apiKey: env.revenueCatIosApiKey!.trim(),
+          apiKey: getRevenueCatApiKey()!.trim(),
           appUserID: userId,
         });
         this.isConfigured = true;
@@ -318,8 +318,8 @@ class RevenueCatService {
   }
 
   private isNativeAvailable() {
-    return Platform.OS === 'ios' &&
-      Boolean(env.revenueCatIosApiKey?.trim()) &&
+    return (Platform.OS === 'ios' || Platform.OS === 'android') &&
+      Boolean(getRevenueCatApiKey()?.trim()) &&
       Boolean(NativeModules.RNPurchases);
   }
 
@@ -334,13 +334,22 @@ export function hasPlusAccess(customerInfo: CustomerInfo | null | undefined) {
 }
 
 function getUnsupportedMessage() {
-  if (!env.isRevenueCatIosConfigured) {
+  if (Platform.OS === 'ios' && !env.isRevenueCatIosConfigured) {
+    return 'Subscriptions are not configured in this build yet.';
+  }
+  if (Platform.OS === 'android' && !env.isRevenueCatAndroidConfigured) {
     return 'Subscriptions are not configured in this build yet.';
   }
   if (Platform.OS === 'web') {
-    return 'Apple in-app purchases are available in the WordWiz iOS app.';
+    return 'In-app purchases are available in the WordWiz iOS and Android apps.';
   }
-  return 'Purchases need an EAS development build or TestFlight build. They are not available in Expo Go.';
+  return 'Purchases need an EAS development build, TestFlight, or Google Play test build. They are not available in Expo Go.';
+}
+
+function getRevenueCatApiKey() {
+  if (Platform.OS === 'ios') return env.revenueCatIosApiKey;
+  if (Platform.OS === 'android') return env.revenueCatAndroidApiKey;
+  return undefined;
 }
 
 function getLoadStatusMessage(

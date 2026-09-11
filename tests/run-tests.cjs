@@ -221,19 +221,21 @@ test('flashcard swipes only claim deliberate horizontal movement', () => {
   assert.equal(cards.getCardSwipeDirection(72, 60), null);
 });
 
-test('subscription access uses the configured public iOS key and active plus entitlement', () => {
+test('subscription access uses platform-specific public keys and the active Plus entitlement', () => {
   const envSource = fs.readFileSync(path.join(projectRoot, 'src/config/env.ts'), 'utf8');
   const revenueCatSource = fs.readFileSync(path.join(projectRoot, 'src/services/revenueCat.ts'), 'utf8');
 
   assert.match(envSource, /EXPO_PUBLIC_REVENUECAT_IOS_API_KEY/);
+  assert.match(envSource, /EXPO_PUBLIC_REVENUECAT_ANDROID_API_KEY/);
   assert.match(revenueCatSource, /env\.revenueCatIosApiKey/);
+  assert.match(revenueCatSource, /env\.revenueCatAndroidApiKey/);
   assert.match(revenueCatSource, /entitlements\.active\[PLUS_ENTITLEMENT_ID\]/);
   assert.match(revenueCatSource, /Promise\.allSettled/);
   assert.match(revenueCatSource, /revenuecat_offerings/);
   assert.doesNotMatch(revenueCatSource, /test[_-]?store/i);
 });
 
-test('subscription paywall and App Store metadata include required legal details', () => {
+test('subscription paywall and store metadata include required legal details', () => {
   const paywall = fs.readFileSync(path.join(projectRoot, 'src/modals/WordWizPlusModal.tsx'), 'utf8');
   const appContent = fs.readFileSync(path.join(projectRoot, 'src/application/AppContent.tsx'), 'utf8');
   const submissionMetadata = fs.readFileSync(path.join(projectRoot, 'docs/app-store-submission.md'), 'utf8');
@@ -242,7 +244,8 @@ test('subscription paywall and App Store metadata include required legal details
   assert.match(paywall, /1-year subscription/);
   assert.match(paywall, /title="WordWiz Plus Monthly"/);
   assert.match(paywall, /1-month subscription/);
-  assert.match(paywall, /Payment is charged to your Apple ID/);
+  assert.match(paywall, /Payment is charged to your \{storeAccount\}/);
+  assert.match(paywall, /Google Play account/);
   assert.match(paywall, /accessibilityLabel="Open Terms of Use"/);
   assert.match(paywall, /accessibilityLabel="Open Privacy Policy"/);
   assert.match(appContent, /https:\/\/lecoffeeconfit-cmd\.github\.io\/wordwiz-legal\//);
@@ -250,6 +253,27 @@ test('subscription paywall and App Store metadata include required legal details
   assert.match(submissionMetadata, /https:\/\/www\.apple\.com\/legal\/internet-services\/itunes\/dev\/stdeula\//);
   assert.match(submissionMetadata, /Privacy Policy URL/);
   assert.match(submissionMetadata, /App Review Information/);
+});
+
+test('Android release configuration preserves the production application ID and uses an app bundle', () => {
+  const appConfig = JSON.parse(fs.readFileSync(path.join(projectRoot, 'app.json'), 'utf8'));
+  const easConfig = JSON.parse(fs.readFileSync(path.join(projectRoot, 'eas.json'), 'utf8'));
+  const manifestPlugin = fs.readFileSync(
+    path.join(projectRoot, 'plugins/withAndroidMainActivitySingleTop.cjs'),
+    'utf8',
+  );
+
+  assert.equal(appConfig.expo.android.package, 'com.lecoffeeconfit.wordwiz');
+  assert.equal(appConfig.expo.android.versionCode, undefined);
+  assert.equal(appConfig.expo.android.softwareKeyboardLayoutMode, 'resize');
+  assert.ok(appConfig.expo.android.blockedPermissions.includes('android.permission.CAMERA'));
+  assert.ok(appConfig.expo.android.blockedPermissions.includes('android.permission.SYSTEM_ALERT_WINDOW'));
+  assert.ok(appConfig.expo.plugins.includes('expo-system-ui'));
+  assert.ok(appConfig.expo.plugins.includes('./plugins/withAndroidMainActivitySingleTop.cjs'));
+  assert.equal(easConfig.cli.appVersionSource, 'remote');
+  assert.equal(easConfig.build.production.autoIncrement, true);
+  assert.equal(easConfig.build.production.android.buildType, 'app-bundle');
+  assert.match(manifestPlugin, /android:launchMode.*singleTop/);
 });
 
 test('private keys cannot be read by the app or included through public Expo variables', () => {

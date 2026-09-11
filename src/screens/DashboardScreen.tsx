@@ -3,7 +3,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Canvas as SkiaCanvas, Circle as SkiaCircle, Group as SkiaGroup, Path as SkiaPath, Skia, vec } from '@shopify/react-native-skia';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { LayoutChangeEvent } from 'react-native';
-import { ActivityIndicator, Alert, Animated, Easing, FlatList, Image, Modal, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, Animated, Easing, FlatList, Image, Modal, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { COLORS, WORDWIZ_GRADIENT_COLORS } from '../constants/theme';
 import type { AnalyticsData, GamePreferences, GameTimerMode, LegalPage, QuizAnswer, QuizDifficultyPreference, QuizPreferences, QuizProgress, QuizQuestion, QuizQuestionMode, ReminderSettings, SortMode, TimeBasedLearningSettings, Word } from '../types';
 import type { QuizFeedbackSummary } from '../utils';
@@ -378,7 +378,9 @@ export function DashboardScreen({
     : isSubscribed
       ? subscriptionDate
         ? formatSubscriptionDate(subscriptionDate)
-        : 'Managed by Apple'
+        : Platform.OS === 'android'
+          ? 'Managed by Google Play'
+          : 'Managed by Apple'
       : subscription.monthlyWordsAdded === null
         ? 'Checking usage'
         : `${subscription.monthlyWordsAdded} of ${subscription.monthlyWordLimit} added`;
@@ -1055,7 +1057,10 @@ export function DashboardScreen({
       return;
     }
     if (result.status === 'not-found') {
-      Alert.alert('No active subscription found', 'We could not find an active WordWiz Plus subscription for this Apple ID.');
+      Alert.alert(
+        'No active subscription found',
+        `We could not find an active WordWiz Plus subscription for this ${Platform.OS === 'android' ? 'Google Play account' : 'Apple ID'}.`,
+      );
       return;
     }
     Alert.alert('Could not restore purchases', result.message);
@@ -1067,7 +1072,7 @@ export function DashboardScreen({
     } catch {
       Alert.alert(
         'Subscription settings unavailable',
-        'Apple subscription settings are unavailable right now. Please try again shortly.',
+        `${Platform.OS === 'android' ? 'Google Play' : 'Apple'} subscription settings are unavailable right now. Please try again shortly.`,
       );
     }
   }
@@ -3492,25 +3497,27 @@ export function DashboardScreen({
         )}
       </DashboardSection>
 
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Open WordWiz widget setup"
-        accessibilityHint="Choose what WordWiz shows on your Home Screen or Lock Screen"
-        onPress={onOpenWidgets}
-        style={({ pressed }) => [styles.dashboardWidgetsCard, pressed && styles.pressed]}
-      >
-        <View style={styles.dashboardWidgetsIcon}>
-          <Ionicons name="grid-outline" size={21} color={COLORS.purpleDark} />
-        </View>
-        <View style={styles.dashboardWidgetsCopy}>
-          <Text style={styles.dashboardWidgetsLabel}>QUICK ACCESS</Text>
-          <Text style={styles.dashboardWidgetsTitle}>Widgets</Text>
-          <Text style={styles.dashboardWidgetsText}>
-            Manage your WordWiz Home Screen and Lock Screen shortcuts.
-          </Text>
-        </View>
-        <Ionicons name="chevron-forward" size={19} color={COLORS.purpleDark} />
-      </Pressable>
+      {Platform.OS === 'ios' ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Open WordWiz widget setup"
+          accessibilityHint="Choose what WordWiz shows on your Home Screen or Lock Screen"
+          onPress={onOpenWidgets}
+          style={({ pressed }) => [styles.dashboardWidgetsCard, pressed && styles.pressed]}
+        >
+          <View style={styles.dashboardWidgetsIcon}>
+            <Ionicons name="grid-outline" size={21} color={COLORS.purpleDark} />
+          </View>
+          <View style={styles.dashboardWidgetsCopy}>
+            <Text style={styles.dashboardWidgetsLabel}>QUICK ACCESS</Text>
+            <Text style={styles.dashboardWidgetsTitle}>Widgets</Text>
+            <Text style={styles.dashboardWidgetsText}>
+              Manage your WordWiz Home Screen and Lock Screen shortcuts.
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={19} color={COLORS.purpleDark} />
+        </Pressable>
+      ) : null}
 
       <Pressable
         accessibilityRole="button"
@@ -3801,7 +3808,7 @@ export function DashboardScreen({
             <Text style={styles.deleteAccountTitle}>Delete account</Text>
             <Text style={styles.deleteAccountText}>
               Delete your account and learning data. Subscriptions managed on
-              Apple Account.
+              {Platform.OS === 'android' ? ' Google Play.' : ' Apple Account.'}
             </Text>
           </View>
           <Pressable

@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import type { ReactNode } from 'react';
-import { Linking, Pressable, Text, View } from 'react-native';
+import { Alert, Linking, Pressable, Text, View } from 'react-native';
 import { COLORS } from '../../constants/theme';
 import type { Word } from '../../types';
 import { styles } from '../../styles';
@@ -230,7 +230,9 @@ function openEtymonline(term: string) {
     return;
   }
 
-  Linking.openURL(`https://www.etymonline.com/search?q=${query}`);
+  void Linking.openURL(`https://www.etymonline.com/search?q=${query}`).catch(() => {
+    Alert.alert('Could not open page', 'Please check your internet connection and try again.');
+  });
 }
 
 export function InfoChip({

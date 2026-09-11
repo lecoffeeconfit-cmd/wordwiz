@@ -2118,7 +2118,9 @@ export default function AppContent() {
 
     const confirmationMessage = [
       'This permanently deletes your WordWiz account and learning data. This cannot be undone.',
-      'App Store subscriptions are managed separately in Apple Account settings.',
+      Platform.OS === 'android'
+        ? 'Google Play subscriptions are managed separately in Google Play settings.'
+        : 'App Store subscriptions are managed separately in Apple Account settings.',
     ].join('\n\n');
     const deleteButton = {
       text: 'Delete account',
@@ -2138,7 +2140,9 @@ export default function AppContent() {
               void subscription.manageSubscription().catch(() => {
                 Alert.alert(
                   'Subscription settings unavailable',
-                  'Open your Apple Account subscription settings to manage WordWiz Plus.',
+                  Platform.OS === 'android'
+                    ? 'Open Google Play subscription settings to manage WordWiz Plus.'
+                    : 'Open your Apple Account subscription settings to manage WordWiz Plus.',
                 );
               });
             },
@@ -3185,7 +3189,7 @@ export default function AppContent() {
   }
 
   function renderScreen() {
-    if (showWidgetSetup) {
+    if (showWidgetSetup && Platform.OS === 'ios') {
       return (
         <WidgetSetupScreen
           words={words}

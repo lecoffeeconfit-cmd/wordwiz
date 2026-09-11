@@ -2,6 +2,7 @@ const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
 const sentryDsn = process.env.EXPO_PUBLIC_SENTRY_DSN;
 const revenueCatIosApiKey = process.env.EXPO_PUBLIC_REVENUECAT_IOS_API_KEY;
+const revenueCatAndroidApiKey = process.env.EXPO_PUBLIC_REVENUECAT_ANDROID_API_KEY;
 const appEnvironment =
   process.env.EXPO_PUBLIC_APP_ENVIRONMENT ??
   process.env.NODE_ENV ??
@@ -22,7 +23,9 @@ export const env = {
   // RevenueCat public SDK keys are intentionally safe to bundle in a client app.
   // Keep the value in EAS/environment configuration so it is never duplicated in source.
   revenueCatIosApiKey,
+  revenueCatAndroidApiKey,
   isRevenueCatIosConfigured: Boolean(revenueCatIosApiKey?.trim()),
+  isRevenueCatAndroidConfigured: Boolean(revenueCatAndroidApiKey?.trim()),
   appEnvironment,
 };
 

@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { AccessibilityInfo, Animated, FlatList, Image, Pressable, ScrollView, Text, useWindowDimensions, View } from 'react-native';
+import { AccessibilityInfo, Animated, FlatList, Image, Platform, Pressable, ScrollView, Text, useWindowDimensions, View } from 'react-native';
 import { COLORS } from '../constants/theme';
 import type { AnalyticsData, LegalPage, QuizAnswer, QuizProgress, QuizQuestion, ReminderSettings, SortMode, Word } from '../types';
 import { styles } from '../styles';
@@ -591,37 +591,39 @@ export function HomeScreen({
         </Pressable>
       </View>
 
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Open WordWiz widget setup"
-        accessibilityHint="Choose what WordWiz shows on your Home Screen or Lock Screen"
-        onPress={onOpenWidgets}
-        style={({ pressed }) => [styles.homeWidgetsCard, pressed && styles.pressed]}
-      >
-        <View style={styles.homeWidgetsIcon}>
-          <Ionicons name="grid-outline" size={22} color={COLORS.purpleDark} />
-        </View>
-        <View style={styles.homeWidgetsCopy}>
-          <Text style={styles.homeWidgetsLabel}>STAY IN THE FLOW</Text>
-          <Text style={styles.homeWidgetsTitle}>Widgets</Text>
-          <Text style={styles.homeWidgetsSubtitle}>
-            Keep a word, your streak, or today’s reviews close by.
-          </Text>
-          <View style={styles.homeWidgetsTags}>
-            <View style={styles.homeWidgetsTag}>
-              <Ionicons name="sunny-outline" size={11} color={COLORS.orange} />
-              <Text style={styles.homeWidgetsTagText}>Word of the Day</Text>
-            </View>
-            <View style={styles.homeWidgetsTag}>
-              <Ionicons name="flame-outline" size={11} color="#D68C27" />
-              <Text style={styles.homeWidgetsTagText}>Streak</Text>
+      {Platform.OS === 'ios' ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Open WordWiz widget setup"
+          accessibilityHint="Choose what WordWiz shows on your Home Screen or Lock Screen"
+          onPress={onOpenWidgets}
+          style={({ pressed }) => [styles.homeWidgetsCard, pressed && styles.pressed]}
+        >
+          <View style={styles.homeWidgetsIcon}>
+            <Ionicons name="grid-outline" size={22} color={COLORS.purpleDark} />
+          </View>
+          <View style={styles.homeWidgetsCopy}>
+            <Text style={styles.homeWidgetsLabel}>STAY IN THE FLOW</Text>
+            <Text style={styles.homeWidgetsTitle}>Widgets</Text>
+            <Text style={styles.homeWidgetsSubtitle}>
+              Keep a word, your streak, or today’s reviews close by.
+            </Text>
+            <View style={styles.homeWidgetsTags}>
+              <View style={styles.homeWidgetsTag}>
+                <Ionicons name="sunny-outline" size={11} color={COLORS.orange} />
+                <Text style={styles.homeWidgetsTagText}>Word of the Day</Text>
+              </View>
+              <View style={styles.homeWidgetsTag}>
+                <Ionicons name="flame-outline" size={11} color="#D68C27" />
+                <Text style={styles.homeWidgetsTagText}>Streak</Text>
+              </View>
             </View>
           </View>
-        </View>
-        <View style={styles.homeWidgetsAction}>
-          <Ionicons name="arrow-forward" size={17} color={COLORS.purpleDark} />
-        </View>
-      </Pressable>
+          <View style={styles.homeWidgetsAction}>
+            <Ionicons name="arrow-forward" size={17} color={COLORS.purpleDark} />
+          </View>
+        </Pressable>
+      ) : null}
 
       <View style={styles.homeAchievementsCard}>
         <Pressable
